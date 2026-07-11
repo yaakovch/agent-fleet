@@ -59,7 +59,7 @@ export function createDefaultSettings(): WidgetSettings {
   return {
     version: SETTINGS_VERSION,
     codexProfiles: [],
-    codexSortMode: 'highestAverageUse',
+    codexSortMode: 'highestAverageLeft',
     claudeEnabled: false,
     passiveOpacity: DEFAULT_PASSIVE_OPACITY,
     activeOpacity: DEFAULT_ACTIVE_OPACITY,
@@ -163,6 +163,6 @@ function clampOpacity(value: unknown, fallback: number): number {
 }
 
 function normalizeCodexSortMode(value: unknown, fallback: CodexSortMode): CodexSortMode {
-  if (value === 'lowestRemaining') return 'highestAverageUse';
-  return value === 'highestAverageUse' || value === 'profileOrder' ? value : fallback;
+  if (value === 'lowestRemaining' || value === 'highestAverageUse') return 'highestAverageLeft';
+  return value === 'highestAverageLeft' || value === 'profileOrder' ? value : fallback;
 }

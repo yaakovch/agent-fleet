@@ -5,7 +5,7 @@ import { createLimitWindow, emptyProvider, sortProviderSnapshots, type ProviderL
 import { createDefaultSettings } from '../src/shared/settings';
 
 describe('multi-profile state manager', () => {
-  it('refreshes sequentially, continues after failure, sorts by average use, and pins Claude last', async () => {
+  it('refreshes sequentially, continues after failure, sorts by average remaining, and pins Claude last', async () => {
     const order: string[] = [];
     let active = 0;
     let maxActive = 0;
@@ -37,7 +37,7 @@ describe('multi-profile state manager', () => {
 
     expect(order).toEqual(TEST_PROFILES.map((profile) => profile.id));
     expect(maxActive).toBe(1);
-    expect(state.providers.map((provider) => provider.id)).toEqual(['codex3', 'codex4', 'codex1', 'codex2', 'claude']);
+    expect(state.providers.map((provider) => provider.id)).toEqual(['codex1', 'codex4', 'codex3', 'codex2', 'claude']);
     expect(state.providers.find((provider) => provider.id === 'codex2')?.status).toBe('error');
   });
 
@@ -87,7 +87,7 @@ describe('multi-profile state manager', () => {
     expect(state.providers[0].label).toBe('Custom Profile');
   });
 
-  it('sorts Codex profiles by highest average use and sends exhausted profiles below usable profiles', () => {
+  it('sorts Codex profiles by highest average remaining and sends exhausted profiles below usable profiles', () => {
     const sorted = sortProviderSnapshots(
       [
         makeCodexSnapshotWithUsage('codex1', 80, 0, 5000),
@@ -104,7 +104,7 @@ describe('multi-profile state manager', () => {
       ['codex1', 'codex2', 'codex3', 'codex4']
     );
 
-    expect(sorted.map((provider) => provider.id)).toEqual(['codex2', 'codex1', 'codex4', 'codex3', 'claude']);
+    expect(sorted.map((provider) => provider.id)).toEqual(['codex4', 'codex1', 'codex2', 'codex3', 'claude']);
   });
 
   it('can explicitly sort Codex profiles by configured order', () => {

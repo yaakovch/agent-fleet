@@ -3,7 +3,7 @@ export type CodexProfileId = string;
 export type ProviderId = string;
 export type LimitWindowId = 'fiveHour' | 'weekly';
 export type ProviderStatus = 'loading' | 'ok' | 'stale' | 'unavailable' | 'error';
-export type CodexSortMode = 'profileOrder' | 'highestAverageUse';
+export type CodexSortMode = 'profileOrder' | 'highestAverageLeft';
 
 export const DEFAULT_CODEX_PROFILE_IDS: readonly CodexProfileId[] = ['codex1', 'codex2', 'codex3', 'codex4'];
 
@@ -105,7 +105,7 @@ export function withFreshness(snapshot: ProviderLimitSnapshot, nowMs = Date.now(
 export function sortProviderSnapshots(
   providers: readonly ProviderLimitSnapshot[],
   codexOrder: readonly CodexProfileId[] = DEFAULT_CODEX_PROFILE_IDS,
-  codexSortMode: CodexSortMode = 'highestAverageUse'
+  codexSortMode: CodexSortMode = 'highestAverageLeft'
 ): ProviderLimitSnapshot[] {
   const codexOrderIndex = new Map(codexOrder.map((id, index) => [id, index]));
   const codex = providers
@@ -130,9 +130,9 @@ function compareCodexProviders(
   if (leftGroup !== rightGroup) return leftGroup - rightGroup;
 
   if (leftGroup === 0) {
-    const leftAverageUsed = getAverageUsed(left);
-    const rightAverageUsed = getAverageUsed(right);
-    if (leftAverageUsed !== rightAverageUsed) return leftAverageUsed > rightAverageUsed ? -1 : 1;
+    const leftAverageRemaining = getAverageRemaining(left);
+    const rightAverageRemaining = getAverageRemaining(right);
+    if (leftAverageRemaining !== rightAverageRemaining) return leftAverageRemaining > rightAverageRemaining ? -1 : 1;
   }
 
   if (leftGroup === 1) {
@@ -152,11 +152,13 @@ function getCodexSortGroup(snapshot: ProviderLimitSnapshot): number {
   return remaining.some((value) => value === 0) ? 1 : 0;
 }
 
-function getAverageUsed(snapshot: ProviderLimitSnapshot): number {
-  const used = Object.values(snapshot.windows)
-    .map((window) => window?.usedPercent)
+function getAverageRemaining(snapshot: ProviderLimitSnapshot): number {
+  const remaining = Object.values(snapshot.windows)
+    .map((window) => window?.remainingPercent)
     .filter((value): value is number => typeof value === 'number');
-  return used.length > 0 ? used.reduce((total, value) => total + value, 0) / used.length : Number.NEGATIVE_INFINITY;
+  return remaining.length > 0
+    ? remaining.reduce((total, value) => total + value, 0) / remaining.length
+    : Number.NEGATIVE_INFINITY;
 }
 
 function getSoonestReset(snapshot: ProviderLimitSnapshot): number {
