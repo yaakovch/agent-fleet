@@ -5,7 +5,9 @@
 - Renamed the project to Agent Fleet while retaining the legacy application ID for upgrade continuity.
 - Added the approved product specification and private-beta implementation plan.
 - Added an exact-source private beta build and release pipeline.
-- Began the tray dashboard, fleet bridge, session, and schedule management expansion.
+- Added the fixture-driven tray dashboard prototype with overview, sessions,
+  launcher, schedules, fleet/pairing, settings, attention states, and contextual
+  confirmations while preserving the limits overlay.
 
 ## 0.9.0-beta.1 - 2026-07-11
 
