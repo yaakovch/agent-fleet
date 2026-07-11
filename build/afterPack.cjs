@@ -11,6 +11,7 @@ module.exports = async function afterPack(context) {
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
-    [FuseV1Options.GrantFileProtocolExtraPrivileges]: false
+    // Packaged renderer modules are loaded from file://.
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]: true
   });
 };
