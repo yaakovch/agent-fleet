@@ -47,5 +47,5 @@ portable:
 publish:
   provider: github
   owner: yaakovch
-  repo: ai-limits-widget
+  repo: agent-fleet
   releaseType: draft
