@@ -97,12 +97,12 @@ appRoot.addEventListener('click', (event) => {
 
 appRoot.addEventListener('input', (event) => {
   if (!isConfigView || !settingsDraft) return;
-  updateSettingsFromInput(event.target as HTMLInputElement);
+  updateSettingsFromInput(event.target as HTMLInputElement | HTMLSelectElement);
 });
 
 appRoot.addEventListener('change', (event) => {
   if (!isConfigView || !settingsDraft) return;
-  updateSettingsFromInput(event.target as HTMLInputElement);
+  updateSettingsFromInput(event.target as HTMLInputElement | HTMLSelectElement);
 });
 
 window.limitsWidget.onStateUpdated((state) => {
@@ -296,6 +296,7 @@ function renderWidgetSettingsSection(): string {
     <section class="settings-section"><h2>Widget</h2><div class="settings-grid">
       <label>Passive opacity<input data-setting="passiveOpacity" type="number" min="${MIN_OPACITY}" max="1" step="0.05" value="${settingsDraft.passiveOpacity}"></label>
       <label>Active opacity<input data-setting="activeOpacity" type="number" min="${MIN_OPACITY}" max="1" step="0.05" value="${settingsDraft.activeOpacity}"></label>
+      <label>Codex row order<select data-setting="codexSortMode"><option value="profileOrder" ${settingsDraft.codexSortMode === 'profileOrder' ? 'selected' : ''}>Configured order</option><option value="lowestRemaining" ${settingsDraft.codexSortMode === 'lowestRemaining' ? 'selected' : ''}>Lowest remaining first</option></select></label>
       <label class="checkbox-row"><input data-setting="launchOnLogin" type="checkbox" ${settingsDraft.launchOnLogin ? 'checked' : ''} ${appInfo?.portable ? 'disabled' : ''}>Launch on login</label>
       <label class="checkbox-row"><input data-setting="automaticUpdates" type="checkbox" ${settingsDraft.automaticUpdates ? 'checked' : ''} ${appInfo?.packaged && !appInfo.portable ? '' : 'disabled'}>Automatic update checks</label>
     </div>${appInfo?.portable ? '<p class="section-note">Launch on login and automatic installation are unavailable in the portable build.</p>' : ''}</section>`;
@@ -365,22 +366,27 @@ function renderOnboardingStep(): string {
   }
   if (onboardingStep === 1) return `<div><div class="section-title-row"><div><h2>Codex profiles</h2><p class="section-note">Review, edit, and test the profiles that will be shown.</p></div><div class="inline-actions"><button data-action="discover-wsl">${icon('search')}Scan again</button><button data-action="add-profile">${icon('plus')}Add</button></div></div><div class="profile-settings-list">${settingsDraft.codexProfiles.length ? settingsDraft.codexProfiles.map(renderProfileSettings).join('') : '<div class="empty-panel">No profiles selected. You can continue and add them later.</div>'}</div></div>`;
   if (onboardingStep === 2) return `<div><h2>Claude Code integration</h2><p>The app reads Claude limits through a local status-line collector. Installation backs up Claude settings and never replaces a different status line.</p><div class="integration-panel"><span class="status-pill status-${claudeIntegration?.status ?? 'missing'}">${escapeHtml(claudeIntegration?.status ?? 'checking')}</span><p>${escapeHtml(claudeIntegration?.message ?? '')}</p><div class="inline-actions">${claudeIntegration?.status === 'ready' ? `<button data-action="remove-claude">${icon('trash-2')}Remove</button>` : `<button class="primary" data-action="install-claude" ${claudeIntegration?.status === 'conflict' ? 'disabled' : ''}>${icon('wrench')}Install / repair</button>`}</div></div><label class="checkbox-row"><input data-setting="claudeEnabled" type="checkbox" ${settingsDraft.claudeEnabled ? 'checked' : ''}>Show Claude Code in the widget</label></div>`;
-  return `<div><h2>Widget preferences</h2><div class="settings-grid"><label>Passive opacity<input data-setting="passiveOpacity" type="number" min="0" max="1" step="0.05" value="${settingsDraft.passiveOpacity}"></label><label>Active opacity<input data-setting="activeOpacity" type="number" min="0" max="1" step="0.05" value="${settingsDraft.activeOpacity}"></label><label class="checkbox-row"><input data-setting="launchOnLogin" type="checkbox" ${settingsDraft.launchOnLogin ? 'checked' : ''} ${appInfo?.portable ? 'disabled' : ''}>Launch on login</label><label class="checkbox-row"><input data-setting="automaticUpdates" type="checkbox" ${settingsDraft.automaticUpdates ? 'checked' : ''} ${appInfo?.packaged && !appInfo.portable ? '' : 'disabled'}>Automatic update checks</label></div><div class="setup-summary"><strong>Ready to finish</strong><span>${settingsDraft.codexProfiles.length} Codex profile(s)</span><span>Claude ${settingsDraft.claudeEnabled ? 'enabled' : 'disabled'}</span><span>Settings remain local in ${escapeHtml(appInfo?.dataDirectory ?? '')}</span></div></div>`;
+  return `<div><h2>Widget preferences</h2><div class="settings-grid"><label>Passive opacity<input data-setting="passiveOpacity" type="number" min="0" max="1" step="0.05" value="${settingsDraft.passiveOpacity}"></label><label>Active opacity<input data-setting="activeOpacity" type="number" min="0" max="1" step="0.05" value="${settingsDraft.activeOpacity}"></label><label>Codex row order<select data-setting="codexSortMode"><option value="profileOrder" ${settingsDraft.codexSortMode === 'profileOrder' ? 'selected' : ''}>Configured order</option><option value="lowestRemaining" ${settingsDraft.codexSortMode === 'lowestRemaining' ? 'selected' : ''}>Lowest remaining first</option></select></label><label class="checkbox-row"><input data-setting="launchOnLogin" type="checkbox" ${settingsDraft.launchOnLogin ? 'checked' : ''} ${appInfo?.portable ? 'disabled' : ''}>Launch on login</label><label class="checkbox-row"><input data-setting="automaticUpdates" type="checkbox" ${settingsDraft.automaticUpdates ? 'checked' : ''} ${appInfo?.packaged && !appInfo.portable ? '' : 'disabled'}>Automatic update checks</label></div><div class="setup-summary"><strong>Ready to finish</strong><span>${settingsDraft.codexProfiles.length} Codex profile(s)</span><span>Claude ${settingsDraft.claudeEnabled ? 'enabled' : 'disabled'}</span><span>Settings remain local in ${escapeHtml(appInfo?.dataDirectory ?? '')}</span></div></div>`;
 }
 
 function renderProfileInput(field: keyof CodexProfileSettings, label: string, value: string): string {
   return `<label>${escapeHtml(label)}<input data-profile-field="${field}" value="${escapeAttr(value)}"></label>`;
 }
 
-function updateSettingsFromInput(input: HTMLInputElement): void {
+function updateSettingsFromInput(input: HTMLInputElement | HTMLSelectElement): void {
   if (!settingsDraft) return;
   const setting = input.dataset.setting as keyof WidgetSettings | undefined;
-  if (setting === 'passiveOpacity' || setting === 'activeOpacity') settingsDraft[setting] = clampNumber(input.valueAsNumber, MIN_OPACITY, 1);
-  if (setting === 'launchOnLogin' || setting === 'claudeEnabled' || setting === 'automaticUpdates') settingsDraft[setting] = input.checked;
+  if (setting === 'passiveOpacity' || setting === 'activeOpacity') {
+    settingsDraft[setting] = clampNumber((input as HTMLInputElement).valueAsNumber, MIN_OPACITY, 1);
+  }
+  if (setting === 'codexSortMode') settingsDraft.codexSortMode = input.value === 'lowestRemaining' ? 'lowestRemaining' : 'profileOrder';
+  if (setting === 'launchOnLogin' || setting === 'claudeEnabled' || setting === 'automaticUpdates') {
+    settingsDraft[setting] = (input as HTMLInputElement).checked;
+  }
   const field = input.dataset.profileField as keyof CodexProfileSettings | undefined;
   const profile = findProfileElement(input);
   if (!field || !profile) return;
-  if (field === 'enabled') profile.enabled = input.checked;
+  if (field === 'enabled') profile.enabled = (input as HTMLInputElement).checked;
   else if (field !== 'order') profile[field] = input.value;
 }
 

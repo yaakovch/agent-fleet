@@ -1,4 +1,4 @@
-import type { CodexProfileId } from './limits';
+import type { CodexProfileId, CodexSortMode } from './limits';
 
 export type InteractionMode = 'passive' | 'active';
 
@@ -17,6 +17,7 @@ export interface CodexProfileSettings {
 export interface WidgetSettings {
   version: 2;
   codexProfiles: CodexProfileSettings[];
+  codexSortMode: CodexSortMode;
   claudeEnabled: boolean;
   passiveOpacity: number;
   activeOpacity: number;
@@ -58,6 +59,7 @@ export function createDefaultSettings(): WidgetSettings {
   return {
     version: SETTINGS_VERSION,
     codexProfiles: [],
+    codexSortMode: 'profileOrder',
     claudeEnabled: false,
     passiveOpacity: DEFAULT_PASSIVE_OPACITY,
     activeOpacity: DEFAULT_ACTIVE_OPACITY,
@@ -85,6 +87,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
     settings: {
       version: SETTINGS_VERSION,
       codexProfiles: profiles,
+      codexSortMode: normalizeCodexSortMode(raw.codexSortMode, defaults.codexSortMode),
       claudeEnabled,
       passiveOpacity: clampOpacity(raw.passiveOpacity, defaults.passiveOpacity),
       activeOpacity: clampOpacity(raw.activeOpacity, defaults.activeOpacity),
@@ -157,4 +160,8 @@ function normalizeOptionalText(value: unknown): string {
 function clampOpacity(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.max(MIN_OPACITY, Math.min(1, value));
+}
+
+function normalizeCodexSortMode(value: unknown, fallback: CodexSortMode): CodexSortMode {
+  return value === 'lowestRemaining' || value === 'profileOrder' ? value : fallback;
 }

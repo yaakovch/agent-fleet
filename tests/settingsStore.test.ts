@@ -25,6 +25,7 @@ describe('settings store', () => {
     expect(result.recovered).toBe(false);
     expect(result.settings.codexProfiles).toEqual([]);
     expect(result.settings.claudeEnabled).toBe(false);
+    expect(result.settings.codexSortMode).toBe('profileOrder');
     expect(result.settings.onboardingComplete).toBe(false);
   });
 
@@ -71,6 +72,7 @@ describe('settings store', () => {
     expect(result.migrated).toBe(true);
     expect(result.settings.version).toBe(2);
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');
+    expect(result.settings.codexSortMode).toBe('profileOrder');
     expect(result.settings.onboardingComplete).toBe(true);
   });
 

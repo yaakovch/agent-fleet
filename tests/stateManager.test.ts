@@ -5,7 +5,7 @@ import { createLimitWindow, emptyProvider, sortProviderSnapshots, type ProviderL
 import { createDefaultSettings } from '../src/shared/settings';
 
 describe('multi-profile state manager', () => {
-  it('refreshes sequentially, continues after failure, sorts by urgency, and pins Claude last', async () => {
+  it('refreshes sequentially, continues after failure, keeps configured profile order, and pins Claude last', async () => {
     const order: string[] = [];
     let active = 0;
     let maxActive = 0;
@@ -37,13 +37,7 @@ describe('multi-profile state manager', () => {
 
     expect(order).toEqual(TEST_PROFILES.map((profile) => profile.id));
     expect(maxActive).toBe(1);
-    expect(state.providers.map((provider) => provider.id)).toEqual([
-      'codex3',
-      'codex4',
-      'codex1',
-      'codex2',
-      'claude'
-    ]);
+    expect(state.providers.map((provider) => provider.id)).toEqual(['codex1', 'codex2', 'codex3', 'codex4', 'claude']);
     expect(state.providers.find((provider) => provider.id === 'codex2')?.status).toBe('error');
   });
 
@@ -93,7 +87,7 @@ describe('multi-profile state manager', () => {
     expect(state.providers[0].label).toBe('Custom Profile');
   });
 
-  it('pushes zero-remaining Codex profiles below non-zero data and orders them by reset time', () => {
+  it('can explicitly sort Codex profiles by lowest remaining limits', () => {
     const sorted = sortProviderSnapshots(
       [
         makeCodexSnapshot('codex1', 100, 5000),
@@ -107,10 +101,25 @@ describe('multi-profile state manager', () => {
           windows: { fiveHour: createLimitWindow('fiveHour', 10, null, 300) }
         }
       ],
-      ['codex1', 'codex2', 'codex3', 'codex4']
+      ['codex1', 'codex2', 'codex3', 'codex4'],
+      'lowestRemaining'
     );
 
     expect(sorted.map((provider) => provider.id)).toEqual(['codex2', 'codex4', 'codex3', 'codex1', 'claude']);
+  });
+
+  it('sorts Codex profiles by configured order by default', () => {
+    const sorted = sortProviderSnapshots(
+      [
+        makeCodexSnapshot('codex1', 100, 5000),
+        makeCodexSnapshot('codex2', 40, 5000),
+        makeCodexSnapshot('codex3', 100, 2000),
+        makeCodexSnapshot('codex4', 10, 5000)
+      ],
+      ['codex3', 'codex1', 'codex4', 'codex2']
+    );
+
+    expect(sorted.map((provider) => provider.id)).toEqual(['codex3', 'codex1', 'codex4', 'codex2']);
   });
 });
 

@@ -3,6 +3,7 @@ export type CodexProfileId = string;
 export type ProviderId = string;
 export type LimitWindowId = 'fiveHour' | 'weekly';
 export type ProviderStatus = 'loading' | 'ok' | 'stale' | 'unavailable' | 'error';
+export type CodexSortMode = 'profileOrder' | 'lowestRemaining';
 
 export const DEFAULT_CODEX_PROFILE_IDS: readonly CodexProfileId[] = ['codex1', 'codex2', 'codex3', 'codex4'];
 
@@ -110,12 +111,13 @@ export function getProviderUrgency(snapshot: ProviderLimitSnapshot): number {
 
 export function sortProviderSnapshots(
   providers: readonly ProviderLimitSnapshot[],
-  codexOrder: readonly CodexProfileId[] = DEFAULT_CODEX_PROFILE_IDS
+  codexOrder: readonly CodexProfileId[] = DEFAULT_CODEX_PROFILE_IDS,
+  codexSortMode: CodexSortMode = 'profileOrder'
 ): ProviderLimitSnapshot[] {
   const codexOrderIndex = new Map(codexOrder.map((id, index) => [id, index]));
   const codex = providers
     .filter((provider) => provider.provider === 'codex')
-    .sort((left, right) => compareCodexProviders(left, right, codexOrderIndex));
+    .sort((left, right) => compareCodexProviders(left, right, codexOrderIndex, codexSortMode));
   const claude = providers.filter((provider) => provider.provider === 'claude');
   return [...codex, ...claude];
 }
@@ -123,8 +125,13 @@ export function sortProviderSnapshots(
 function compareCodexProviders(
   left: ProviderLimitSnapshot,
   right: ProviderLimitSnapshot,
-  codexOrderIndex: ReadonlyMap<CodexProfileId, number>
+  codexOrderIndex: ReadonlyMap<CodexProfileId, number>,
+  codexSortMode: CodexSortMode
 ): number {
+  if (codexSortMode === 'profileOrder') {
+    return getOrderIndex(left.id, codexOrderIndex) - getOrderIndex(right.id, codexOrderIndex);
+  }
+
   const leftGroup = getCodexSortGroup(left);
   const rightGroup = getCodexSortGroup(right);
   if (leftGroup !== rightGroup) return leftGroup - rightGroup;

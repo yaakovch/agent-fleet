@@ -8,7 +8,8 @@
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; background: transparent; }
 button { font: inherit; }
-input { font: inherit; }
+input,
+select { font: inherit; }
 button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 
 .widget {
@@ -292,7 +293,8 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
   line-height: 15px;
 }
 
-.settings-shell input {
+.settings-shell input,
+.settings-shell select {
   min-width: 0;
   border: 1px solid #3a4554;
   border-radius: 6px;
@@ -300,7 +302,8 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
   color: #eef2f6;
   padding: 7px 8px;
 }
-.settings-shell input:disabled { opacity: 0.55; cursor: not-allowed; }
+.settings-shell input:disabled,
+.settings-shell select:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .checkbox-row {
   display: flex !important;

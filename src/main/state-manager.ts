@@ -11,6 +11,7 @@ import {
   emptyProvider,
   sortProviderSnapshots,
   type CodexProfileId,
+  type CodexSortMode,
   type CombinedLimitState,
   type DiagnosticItem,
   type ProviderLimitSnapshot,
@@ -31,6 +32,7 @@ interface StateManagerDependencies {
 
 export class LimitStateManager extends EventEmitter {
   private profiles: readonly WslCodexProfile[];
+  private codexSortMode: CodexSortMode;
   private claudeEnabled: boolean;
   private settingsDiagnostic: string | undefined;
   private readonly collectCodexProfile: (profile: WslCodexProfile) => Promise<ProviderLimitSnapshot>;
@@ -48,6 +50,7 @@ export class LimitStateManager extends EventEmitter {
     super();
     const settings = dependencies.settings ?? createDefaultSettings();
     this.profiles = dependencies.profiles ?? codexProfilesFromSettings(settings);
+    this.codexSortMode = settings.codexSortMode;
     this.claudeEnabled = dependencies.claudeEnabled ?? settings.claudeEnabled;
     this.settingsDiagnostic = dependencies.settingsDiagnostic;
     this.collectCodexProfile = dependencies.collectCodexProfile ?? collectCodexProfileLimits;
@@ -80,7 +83,7 @@ export class LimitStateManager extends EventEmitter {
     const providers = sortProviderSnapshots([
       ...this.profiles.map((profile) => withFreshness(this.codexProviders[profile.id]!)),
       ...(this.claudeEnabled ? [withFreshness(this.claudeProvider)] : [])
-    ], this.profiles.map((profile) => profile.id));
+    ], this.profiles.map((profile) => profile.id), this.codexSortMode);
     return {
       updatedAt: Math.floor(Date.now() / 1000),
       refreshing: this.refreshing,
@@ -116,6 +119,7 @@ export class LimitStateManager extends EventEmitter {
 
   applySettings(settings: WidgetSettings, settingsDiagnostic?: string): void {
     this.profiles = codexProfilesFromSettings(settings);
+    this.codexSortMode = settings.codexSortMode;
     this.claudeEnabled = settings.claudeEnabled;
     this.settingsDiagnostic = settingsDiagnostic;
     this.codexProviders = initializeCodexProviders(this.profiles, this.loadCache(), this.codexProviders);
