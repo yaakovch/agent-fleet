@@ -5,7 +5,7 @@ import { createLimitWindow, emptyProvider, sortProviderSnapshots, type ProviderL
 import { createDefaultSettings } from '../src/shared/settings';
 
 describe('multi-profile state manager', () => {
-  it('refreshes sequentially, continues after failure, keeps configured profile order, and pins Claude last', async () => {
+  it('refreshes sequentially, continues after failure, sorts by average use, and pins Claude last', async () => {
     const order: string[] = [];
     let active = 0;
     let maxActive = 0;
@@ -37,7 +37,7 @@ describe('multi-profile state manager', () => {
 
     expect(order).toEqual(TEST_PROFILES.map((profile) => profile.id));
     expect(maxActive).toBe(1);
-    expect(state.providers.map((provider) => provider.id)).toEqual(['codex1', 'codex2', 'codex3', 'codex4', 'claude']);
+    expect(state.providers.map((provider) => provider.id)).toEqual(['codex3', 'codex4', 'codex1', 'codex2', 'claude']);
     expect(state.providers.find((provider) => provider.id === 'codex2')?.status).toBe('error');
   });
 
@@ -87,13 +87,13 @@ describe('multi-profile state manager', () => {
     expect(state.providers[0].label).toBe('Custom Profile');
   });
 
-  it('can explicitly sort Codex profiles by lowest remaining limits', () => {
+  it('sorts Codex profiles by highest average use and sends exhausted profiles below usable profiles', () => {
     const sorted = sortProviderSnapshots(
       [
-        makeCodexSnapshot('codex1', 100, 5000),
-        makeCodexSnapshot('codex2', 40, 5000),
-        makeCodexSnapshot('codex3', 100, 2000),
-        makeCodexSnapshot('codex4', 10, 5000),
+        makeCodexSnapshotWithUsage('codex1', 80, 0, 5000),
+        makeCodexSnapshotWithUsage('codex2', 45, 45, 5000),
+        makeCodexSnapshotWithUsage('codex3', 100, 10, 2000),
+        makeCodexSnapshotWithUsage('codex4', 30, 10, 5000),
         {
           ...emptyProvider('claude', 'claude', 'Claude Code'),
           status: 'ok',
@@ -101,14 +101,13 @@ describe('multi-profile state manager', () => {
           windows: { fiveHour: createLimitWindow('fiveHour', 10, null, 300) }
         }
       ],
-      ['codex1', 'codex2', 'codex3', 'codex4'],
-      'lowestRemaining'
+      ['codex1', 'codex2', 'codex3', 'codex4']
     );
 
-    expect(sorted.map((provider) => provider.id)).toEqual(['codex2', 'codex4', 'codex3', 'codex1', 'claude']);
+    expect(sorted.map((provider) => provider.id)).toEqual(['codex2', 'codex1', 'codex4', 'codex3', 'claude']);
   });
 
-  it('sorts Codex profiles by configured order by default', () => {
+  it('can explicitly sort Codex profiles by configured order', () => {
     const sorted = sortProviderSnapshots(
       [
         makeCodexSnapshot('codex1', 100, 5000),
@@ -116,7 +115,8 @@ describe('multi-profile state manager', () => {
         makeCodexSnapshot('codex3', 100, 2000),
         makeCodexSnapshot('codex4', 10, 5000)
       ],
-      ['codex3', 'codex1', 'codex4', 'codex2']
+      ['codex3', 'codex1', 'codex4', 'codex2'],
+      'profileOrder'
     );
 
     expect(sorted.map((provider) => provider.id)).toEqual(['codex3', 'codex1', 'codex4', 'codex2']);
@@ -134,6 +134,15 @@ const TEST_PROFILES: readonly WslCodexProfile[] = [1, 2, 3, 4].map((number) => (
 }));
 
 function makeCodexSnapshot(id: string, usedPercent: number, resetAt: number | null = null): ProviderLimitSnapshot {
+  return makeCodexSnapshotWithUsage(id, usedPercent, usedPercent / 2, resetAt);
+}
+
+function makeCodexSnapshotWithUsage(
+  id: string,
+  fiveHourUsedPercent: number,
+  weeklyUsedPercent: number,
+  resetAt: number | null = null
+): ProviderLimitSnapshot {
   return {
     id,
     provider: 'codex',
@@ -142,8 +151,8 @@ function makeCodexSnapshot(id: string, usedPercent: number, resetAt: number | nu
     source: 'test',
     fetchedAt: Math.floor(Date.now() / 1000),
     windows: {
-      fiveHour: createLimitWindow('fiveHour', usedPercent, resetAt, 300),
-      weekly: createLimitWindow('weekly', usedPercent / 2, resetAt, 10080)
+      fiveHour: createLimitWindow('fiveHour', fiveHourUsedPercent, resetAt, 300),
+      weekly: createLimitWindow('weekly', weeklyUsedPercent, resetAt, 10080)
     }
   };
 }
