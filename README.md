@@ -1,23 +1,32 @@
-# AI Limits Widget
+# Agent Fleet
 
-AI Limits Widget is a local-only Windows desktop widget for comparing Codex and Claude Code 5-hour and weekly usage limits. It supports multiple Codex profiles under WSL, a transparent click-through desktop mode, safe settings transfer, and a tray-owned workflow.
+Agent Fleet is a local-first Windows tray application for managing personal AI
+coding sessions across Windows, WSL, Linux, and Termux. It is growing from AI
+Limits Widget into one dashboard for wtmux sessions, launchers, scheduled
+messages, host health, attention events, and Codex/Claude usage limits.
+
+The existing transparent, click-through limits overlay remains available as an
+optional companion view. Agent Fleet exchanges metadata only: it never moves
+prompts, responses, transcripts, terminal output, or authentication material.
+See [PRIVACY.md](PRIVACY.md) and [SPEC.md](SPEC.md).
+
+## Status
+
+`0.10.0-beta.1` is under active development for a private multi-machine beta.
+The existing unsigned `0.9.0-beta.1` release is retained as a legacy
+prerelease. Unsigned public builds are manual downloads only; automatic public
+updates require trusted signed artifacts.
+
+The source repository is public. The wtmux bridge, personal fleet registry, and
+private beta release feed are intentionally separate and private.
 
 ## Requirements
 
 - Windows 10 or 11, x64
-- WSL with at least one Linux distribution for Codex profiles
-- Codex installed inside the selected WSL distribution
+- WSL with at least one Linux distribution
+- Codex inside WSL for local limit collection
+- wtmux and SSH/Tailscale access for fleet features as they land
 - Claude Code for the optional Claude status-line integration
-
-The app never reads, copies, exports, or uploads authentication tokens. See [PRIVACY.md](PRIVACY.md).
-
-## Install And Setup
-
-Download the signed Setup EXE from [GitHub Releases](https://github.com/yaakovch/ai-limits-widget/releases). The installer is per-user and does not require administrator rights. A portable EXE is also published; it stores configuration in `%APPDATA%\AI Limits Widget` but does not install updates or launch on login.
-
-On first run, import a previously exported settings file or scan WSL. Discovery checks distribution names, the default Linux user and HOME, `command -v codex`, and top-level `.codex*` directories. Confirm and test profiles before finishing.
-
-Claude integration is opt-in. The app explains the change, backs up `~/.claude/settings.json`, and refuses to replace an unrelated status line.
 
 ## Development
 
@@ -39,12 +48,22 @@ npm run sbom
 npm run finalize:release
 ```
 
-The packaged artifacts are written to `dist/`. Public releases require Authenticode signing; local builds are intentionally unsigned.
+Artifacts are written to `dist/`. Local and private-beta builds may be
+unsigned. Stable public releases require Authenticode signing.
 
 ## Settings Transfer
 
-Settings → Import/Export transfers provider and widget configuration in a versioned JSON envelope. Imports are validated and previewed before replacement. The previous configuration is backed up and can be restored with Rollback. Usage caches, logs, window position, Claude settings, and authentication data are excluded.
+Settings → Import/Export transfers provider and widget configuration in a
+versioned JSON envelope. Imports are validated and previewed before replacement.
+The previous configuration is backed up and can be restored with Rollback.
+Usage caches, logs, window position, Claude settings, and authentication data
+are excluded.
 
 ## Release Process
 
-Version tags must match `package.json`. GitHub Actions builds an unpacked app, submits it for SignPath open-source signing, packages the signed app, signs the final Setup/Portable artifacts, regenerates updater metadata and checksums, verifies signatures, and creates a draft release. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete gate.
+Version tags must match `package.json`. The signed public workflow packages and
+verifies Authenticode artifacts, updater metadata, checksums, an SBOM, and build
+provenance. Private beta builds are manually dispatched from a separate private
+feed and always record the exact public source commit. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and
+[implementation_plan.md](implementation_plan.md).

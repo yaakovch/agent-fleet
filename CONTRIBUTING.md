@@ -16,3 +16,5 @@ Keep provider authentication outside this repository. Tests and documentation mu
 6. Publish the generated draft. `1.0.0` is first published as a prerelease, validated as an update from `0.9`, then promoted unchanged to stable.
 
 SignPath project identifiers and API tokens belong in GitHub Actions secrets. Stable releases must not bypass the signing job.
+
+Private beta releases are built in the private beta-feed repository from an exact public Agent Fleet commit. Public unsigned prereleases remain manual downloads and are never eligible for automatic updates.

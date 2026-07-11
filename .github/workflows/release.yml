@@ -1,4 +1,4 @@
-name: Signed Release
+name: Signed Agent Fleet Release
 
 on:
   push:
@@ -127,7 +127,7 @@ jobs:
             '--draft',
             '--generate-notes',
             '--title',
-            'AI Limits Widget ${{ github.ref_name }}'
+            'Agent Fleet ${{ github.ref_name }}'
           )
           if ('${{ github.ref_name }}' -match '-') { $releaseArgs += '--prerelease' }
           gh @releaseArgs

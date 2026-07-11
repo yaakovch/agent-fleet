@@ -6,7 +6,7 @@ Security fixes target the latest stable release. Prereleases receive fixes until
 
 ## Reporting
 
-Do not open a public issue for a vulnerability. Use GitHub private vulnerability reporting for `yaakovch/ai-limits-widget` and include the affected version, reproduction steps, and impact. Do not include authentication tokens or private settings.
+Do not open a public issue for a vulnerability. Use GitHub private vulnerability reporting for `yaakovch/agent-fleet` and include the affected version, reproduction steps, and impact. Do not include authentication tokens or private settings.
 
 ## Release Trust
 
