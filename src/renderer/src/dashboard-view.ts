@@ -131,6 +131,7 @@ export class DashboardPrototype {
   private toast = '';
   private snapshot: FleetSnapshot;
   private cacheSavedAt: string | null = null;
+  private launcherHostId = '';
 
   constructor(
     private readonly root: HTMLElement,
@@ -145,6 +146,11 @@ export class DashboardPrototype {
     });
     root.addEventListener('change', (event) => {
       const select = event.target as HTMLSelectElement;
+      if (select.dataset.launcherHost !== undefined) {
+        this.launcherHostId = select.value;
+        this.render();
+        return;
+      }
       if (select.dataset.dashboardScenario === undefined) return;
       this.scenario = isScenario(select.value) ? select.value : 'live';
       this.modal = null;
@@ -237,7 +243,17 @@ export class DashboardPrototype {
       return true;
     }
     if (action === 'dashboard-copy') return this.showToast('Attach command copied');
-    if (action === 'dashboard-launch') return this.showToast('Launcher request validated; live execution is intentionally not wired at Gate 1');
+    if (action === 'dashboard-launch') {
+      const hostId = this.root.querySelector<HTMLSelectElement>('[data-launcher-host]')?.value;
+      const project = this.root.querySelector<HTMLSelectElement>('[data-launcher-project]')?.value;
+      const backend = this.root.querySelector<HTMLSelectElement>('[data-launcher-backend]')?.value;
+      const tool = this.root.querySelector<HTMLSelectElement>('[data-launcher-tool]')?.value;
+      if (!hostId || !project || (backend !== 'linux' && backend !== 'windows') || !isFleetTool(tool)) {
+        return this.showToast('Choose a valid host, project, backend, and tool');
+      }
+      void window.limitsWidget.createFleetSession(hostId, project, backend, tool).then((result) => this.showToast(result.message));
+      return true;
+    }
     if (action === 'dashboard-new-schedule') {
       this.openScheduleModal();
       return true;
@@ -407,18 +423,23 @@ export class DashboardPrototype {
   }
 
   private renderLauncher(): string {
+    const hosts = this.snapshot.hosts.filter((host) => host.status === 'healthy');
+    const selectedHostId = hosts.some((host) => host.id === this.launcherHostId) ? this.launcherHostId : hosts[0]?.id ?? '';
+    const projects = [...new Set(this.snapshot.sessions
+      .filter((session) => session.hostId === selectedHostId)
+      .map((session) => session.project)
+      .filter(Boolean))].sort();
+    const canLaunch = this.scenario === 'live' && hosts.length > 0 && projects.length > 0;
     return `<div class="launcher-layout">
       <section class="fleet-card launcher-form">
         <div class="card-heading"><div><h2>Start a session</h2><p>Every target is explicit and validated before launch</p></div><span class="safe-badge">${icon('shield-check')}Safe argv</span></div>
         <div class="launcher-grid">
-          ${selectField('Host', 'work-m', ['work-m · This PC', 'home-m · Laptop'])}
-          ${selectField('Backend', 'WSL', ['WSL', 'Linux', 'Windows'])}
-          ${selectField('Project', 'wtmux', ['wtmux', 'agent-fleet', 'Choose a folder…'])}
-          ${selectField('Tool', 'Codex', ['Codex', 'Claude Code', 'GitHub Copilot', 'Shell'])}
-          ${selectField('Codex profile', 'codex2', ['codex2', 'codex3', 'Default'])}
-          <label>Session name<input value="fleet-dashboard" maxlength="64"><small>Preview: work-m · wtmux · fleet-dashboard</small></label>
+          <label>Host<select data-launcher-host>${hosts.map((host) => `<option value="${escapeAttr(host.id)}" ${host.id === selectedHostId ? 'selected' : ''}>${escapeHtml(host.name)}</option>`).join('')}</select></label>
+          <label>Project<select data-launcher-project>${projects.map((project) => `<option value="${escapeAttr(project)}">${escapeHtml(project)}</option>`).join('')}</select></label>
+          <label>Backend<select data-launcher-backend><option value="linux">Linux / WSL</option><option value="windows">Windows</option></select></label>
+          <label>Tool<select data-launcher-tool><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="copilot">GitHub Copilot</option><option value="shell">Shell</option></select></label>
         </div>
-        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>Codex in wtmux</strong><p>work-m · WSL · /home/user/projects/wtmux · profile codex2</p></div><button class="primary-button" disabled title="Launcher mutations are coming in the next beta">${icon('rocket')}Coming next</button></div>
+        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host revalidates the project and fixed tool enum before launch.</p></div><button class="primary-button" data-action="dashboard-launch" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Launch and open</button></div>
       </section>
       <aside class="dashboard-stack">
         <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>
@@ -570,6 +591,10 @@ function toolIcon(tool: FleetTool): string {
   if (tool === 'claude') return icon('message-square-text');
   if (tool === 'copilot') return icon('command');
   return icon('square-terminal');
+}
+
+function isFleetTool(value: string | undefined): value is FleetTool {
+  return value === 'shell' || value === 'codex' || value === 'claude' || value === 'copilot';
 }
 
 function severityIcon(severity: FleetAttention['severity']): string {

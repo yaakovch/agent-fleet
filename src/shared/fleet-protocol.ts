@@ -86,13 +86,14 @@ export interface FleetBridgeView {
   errorCode: string;
 }
 
-export type FleetMutationMethod = 'session.kill' | 'schedule.cancel' | 'schedule.create';
+export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create';
 
 export interface FleetMutationResult {
   operationId: string;
   status: string;
   snapshot: FleetSnapshot;
   scheduleId?: string;
+  sessionId?: string;
 }
 
 const FORBIDDEN_KEYS = new Set(['message', 'prompt', 'output', 'transcript', 'panetitle', 'command']);

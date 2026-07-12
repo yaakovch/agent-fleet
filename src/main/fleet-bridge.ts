@@ -265,9 +265,13 @@ export class FleetBridgeSupervisor extends EventEmitter {
     const keys = Object.keys(result).sort();
     const baseKeys = ['operationId', 'snapshot', 'status'].sort();
     const scheduleKeys = [...baseKeys, 'scheduleId'].sort();
-    if (!sameKeys(keys, baseKeys) && !sameKeys(keys, scheduleKeys)) throw new Error('Mutation result fields are invalid');
+    const sessionKeys = [...baseKeys, 'sessionId'].sort();
+    if (!sameKeys(keys, baseKeys) && !sameKeys(keys, scheduleKeys) && !sameKeys(keys, sessionKeys)) {
+      throw new Error('Mutation result fields are invalid');
+    }
     if (!safeToken(result.operationId, 160) || !safeToken(result.status, 32)) throw new Error('Mutation result identity is invalid');
     if ('scheduleId' in result && !safeToken(result.scheduleId, 160)) throw new Error('Mutation scheduleId is invalid');
+    if ('sessionId' in result && !safeToken(result.sessionId, 320)) throw new Error('Mutation sessionId is invalid');
     const snapshot = parseBridgeFleetSnapshot(result.snapshot);
     this.snapshot = snapshot;
     this.cacheSavedAt = new Date().toISOString();
@@ -279,7 +283,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
       operationId: result.operationId,
       status: result.status,
       snapshot: toFleetSnapshot(snapshot, this.options.launch.distro),
-      ...(typeof result.scheduleId === 'string' ? { scheduleId: result.scheduleId } : {})
+      ...(typeof result.scheduleId === 'string' ? { scheduleId: result.scheduleId } : {}),
+      ...(typeof result.sessionId === 'string' ? { sessionId: result.sessionId } : {})
     };
     pending.resolve(output);
     this.emitChanged();

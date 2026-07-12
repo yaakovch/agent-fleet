@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   killFleetSession: 'fleet:killSession',
   cancelFleetSchedule: 'fleet:cancelSchedule',
   createFleetContinueSchedule: 'fleet:createContinueSchedule',
+  createFleetSession: 'fleet:createSession',
   getSettings: 'limits:getSettings',
   saveSettings: 'limits:saveSettings',
   testCodexProfile: 'limits:testCodexProfile',

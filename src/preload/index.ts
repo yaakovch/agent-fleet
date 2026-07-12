@@ -26,6 +26,13 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.cancelFleetSchedule, scheduleId),
   createFleetContinueSchedule: (sessionId: string, deliverAt: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.createFleetContinueSchedule, sessionId, deliverAt),
+  createFleetSession: (
+    hostId: string,
+    project: string,
+    backend: 'linux' | 'windows',
+    tool: 'shell' | 'codex' | 'claude' | 'copilot'
+  ): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.createFleetSession, hostId, project, backend, tool),
   getSettings: (): Promise<SettingsLoadResult> => ipcRenderer.invoke(IPC_CHANNELS.getSettings),
   saveSettings: (settings: WidgetSettings): Promise<SettingsLoadResult> => ipcRenderer.invoke(IPC_CHANNELS.saveSettings, settings),
   testCodexProfile: (profile: CodexProfileSettings): Promise<{ ok: boolean; message: string }> =>

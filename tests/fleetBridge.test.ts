@@ -66,6 +66,24 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('accepts the created session identity from a typed launcher mutation', async () => {
+    const directory = temporaryDirectory();
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: process.execPath, args: [writeFakeBridge(directory, fixture)], distro: 'Test Linux' },
+      logger
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    const result = await supervisor.mutate('session.create', {
+      hostId: 'test-host', project: 'project', backend: 'linux', tool: 'codex', idempotencyKey: 'launch-1'
+    });
+    expect(result.status).toBe('created');
+    expect(result.sessionId).toBe('test-host:session-1');
+    supervisor.stop();
+  }, 20_000);
+
   it('resets the stream when a mutation times out so its late response cannot poison correlation', async () => {
     const directory = temporaryDirectory();
     const script = writeFakeBridge(directory, fixture, 100);
@@ -174,8 +192,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
   const result = request.method === 'fleet.snapshot' ? snapshot : {
     operationId: request.params.idempotencyKey,
-    status: request.method === 'session.kill' ? 'killed' : 'cancelled',
-    snapshot
+    status: request.method === 'session.create' ? 'created' : request.method === 'session.kill' ? 'killed' : 'cancelled',
+    snapshot,
+    ...(request.method === 'session.create' ? { sessionId: 'test-host:session-1' } : {})
   };
   setTimeout(() => emit({ protocolVersion: 1, type: 'response', requestId: request.requestId,
     timestamp: new Date().toISOString(), ok: true, result }), responseDelayMs);

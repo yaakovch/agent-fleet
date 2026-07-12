@@ -503,6 +503,34 @@ handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliv
     return fleetMutationFailure(error);
   }
 });
+handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool) => {
+  if (![hostId, project, backend, tool].every((value) => typeof value === 'string')) {
+    return { ok: false, message: 'Launcher selection is invalid' };
+  }
+  const fleet = getFleetView().snapshot;
+  const host = fleet.hosts.find((item) => item.id === hostId && item.status === 'healthy');
+  const knownProject = fleet.sessions.some((item) => item.hostId === hostId && item.project === project);
+  if (!host || !knownProject) return { ok: false, message: 'Host or project is no longer available' };
+  if (backend !== 'linux' && backend !== 'windows') return { ok: false, message: 'Backend is invalid' };
+  if (!['shell', 'codex', 'claude', 'copilot'].includes(tool)) return { ok: false, message: 'Tool is invalid' };
+  if (backend === 'windows' && host.platform !== 'wsl') return { ok: false, message: 'Windows backend requires a WSL host' };
+  try {
+    const result = await fleetBridge.mutate('session.create', {
+      hostId,
+      project,
+      backend,
+      tool,
+      idempotencyKey: randomUUID()
+    });
+    if (result.sessionId) {
+      const opened = await openFleetSessionById(result.sessionId);
+      return { ok: opened.ok, message: opened.ok ? `Created and opened ${project}` : `Created ${project}; ${opened.message}` };
+    }
+    return { ok: true, message: `Created ${project}` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
 
 function fleetMutationFailure(error: unknown): { ok: false; message: string } {
   logger.warn('Fleet mutation failed', error);
