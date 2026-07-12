@@ -31,6 +31,7 @@ import type {
   WslDiscoveryResult
 } from '../../shared/app';
 import type { CombinedLimitState, ProviderLimitSnapshot, ProviderStatus } from '../../shared/limits';
+import { DashboardPrototype } from './dashboard-view';
 import {
   cloneSettings,
   createDefaultSettings,
@@ -70,6 +71,7 @@ const appElement = document.querySelector<HTMLDivElement>('#app');
 if (!appElement) throw new Error('Missing app root');
 const appRoot = appElement;
 const view = window.location.hash.slice(1);
+const isDashboardView = view === 'dashboard';
 const isSettingsView = view === 'settings';
 const isOnboardingView = view === 'onboarding';
 const isConfigView = isSettingsView || isOnboardingView;
@@ -87,6 +89,7 @@ let importPreview: SettingsImportSelection | null = null;
 let discoveryResult: WslDiscoveryResult | null = null;
 let onboardingStep = 0;
 const profileTestMessages = new Map<string, string>();
+const dashboard = isDashboardView ? new DashboardPrototype(appRoot) : null;
 
 appRoot.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
@@ -107,18 +110,19 @@ appRoot.addEventListener('change', (event) => {
 
 window.limitsWidget.onStateUpdated((state) => {
   latestState = state;
-  if (!isConfigView) renderWidget(state);
+  if (!isConfigView && !isDashboardView) renderWidget(state);
 });
 window.limitsWidget.onInteractionModeUpdated((mode) => {
   interactionMode = mode;
-  if (!isConfigView && latestState) renderWidget(latestState);
+  if (!isConfigView && !isDashboardView && latestState) renderWidget(latestState);
 });
 window.limitsWidget.onUpdaterStateUpdated((state) => {
   updaterState = state;
   if (isConfigView) renderConfigView();
 });
 
-if (isConfigView) void loadConfigView();
+if (isDashboardView) dashboard?.render();
+else if (isConfigView) void loadConfigView();
 else {
   void window.limitsWidget.getInteractionMode().then((mode) => {
     interactionMode = mode;
@@ -131,6 +135,7 @@ else {
 }
 
 async function handleAction(action: string, target: HTMLElement): Promise<void> {
+  if (dashboard?.handleAction(action, target)) return;
   if (action === 'refresh') await refreshNow();
   if (action === 'diagnostics') {
     diagnosticsOpen = !diagnosticsOpen;
@@ -262,7 +267,7 @@ function renderSettings(): void {
   appRoot.innerHTML = `
     <main class="settings-shell">
       <header class="settings-header">
-        <div><h1>AI Limits Widget</h1><p>${escapeHtml(settingsMessage || 'Providers, appearance, transfer, updates, and support.')}</p></div>
+        <div><h1>Agent Fleet</h1><p>${escapeHtml(settingsMessage || 'Providers, overlay appearance, transfer, updates, and support.')}</p></div>
         <div class="settings-actions"><button data-action="reset-settings">${icon('rotate-ccw')}Reset</button><button class="primary" data-action="save-settings">${icon('save')}Save</button></div>
       </header>
       ${renderTransferSection()}
@@ -351,7 +356,7 @@ function renderOnboarding(): void {
   const steps = ['Start', 'Codex', 'Claude', 'Finish'];
   appRoot.innerHTML = `
     <main class="settings-shell onboarding-shell">
-      <header class="settings-header"><div><h1>Set up AI Limits Widget</h1><p>${escapeHtml(settingsMessage || 'Configure local providers. No authentication data leaves this computer.')}</p></div></header>
+      <header class="settings-header"><div><h1>Set up Agent Fleet</h1><p>${escapeHtml(settingsMessage || 'Configure local providers. No authentication data leaves this computer.')}</p></div></header>
       <nav class="stepper" aria-label="Setup progress">${steps.map((label, index) => `<span class="${index === onboardingStep ? 'current' : index < onboardingStep ? 'complete' : ''}">${index < onboardingStep ? icon('check') : index + 1}<small>${label}</small></span>`).join('')}</nav>
       <section class="onboarding-content">${renderOnboardingStep()}</section>
       <footer class="onboarding-footer">${onboardingStep > 0 ? '<button data-action="onboarding-back">Back</button>' : '<span></span>'}${onboardingStep < 3 ? '<button class="primary" data-action="onboarding-next">Continue</button>' : `<button class="primary" data-action="finish-onboarding">${icon('check')}Finish setup</button>`}</footer>

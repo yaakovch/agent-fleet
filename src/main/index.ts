@@ -47,8 +47,8 @@ import { loadWindowPosition, saveWindowPosition } from './window-state';
 import { discoverWslProfiles } from './wsl-discovery';
 
 const APP_ID = 'com.yaakovch.ailimitswidget';
-const PRODUCT_NAME = 'AI Limits Widget';
-const RELEASE_URL = 'https://github.com/yaakovch/ai-limits-widget/releases/latest';
+const PRODUCT_NAME = 'Agent Fleet';
+const RELEASE_URL = 'https://github.com/yaakovch/agent-fleet/releases/latest';
 const dataDirectory = getWidgetDataDir();
 
 app.setName(PRODUCT_NAME);
@@ -69,6 +69,7 @@ const stateManager = new LimitStateManager({
 });
 
 let mainWindow: BrowserWindow | null = null;
+let dashboardWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let settingsWindowView: 'settings' | 'onboarding' = 'settings';
 let tray: Tray | null = null;
@@ -117,6 +118,38 @@ function createWindow(): void {
   setWidgetInteractionMode('passive');
 }
 
+function showDashboard(): void {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.show();
+    dashboardWindow.focus();
+    return;
+  }
+  dashboardWindow = new BrowserWindow({
+    width: 1180,
+    height: 780,
+    minWidth: 920,
+    minHeight: 640,
+    title: PRODUCT_NAME,
+    backgroundColor: '#0b0f14',
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: secureWebPreferences()
+  });
+  secureWindow(dashboardWindow);
+  dashboardWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      dashboardWindow?.hide();
+    }
+  });
+  dashboardWindow.on('closed', () => (dashboardWindow = null));
+  dashboardWindow.once('ready-to-show', () => {
+    dashboardWindow?.show();
+    dashboardWindow?.focus();
+  });
+  loadRenderer(dashboardWindow, 'dashboard');
+}
+
 function createSettingsWindow(view: 'settings' | 'onboarding' = 'settings'): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindowView !== view) {
@@ -133,7 +166,7 @@ function createSettingsWindow(view: 'settings' | 'onboarding' = 'settings'): voi
     height: 800,
     minWidth: 660,
     minHeight: 680,
-    title: view === 'onboarding' ? 'Set up AI Limits Widget' : 'AI Limits Widget Settings',
+    title: view === 'onboarding' ? 'Set up Agent Fleet' : 'Agent Fleet Settings',
     backgroundColor: '#111318',
     webPreferences: secureWebPreferences()
   });
@@ -176,10 +209,7 @@ function clampWindowPosition(position: Pick<Rectangle, 'x' | 'y'>, width: number
 
 function createTray(): void {
   tray = new Tray(createTrayIcon());
-  tray.on('click', () => {
-    if (!mainWindow?.isVisible()) setWidgetInteractionMode('passive');
-    else setWidgetInteractionMode(interactionMode === 'active' ? 'passive' : 'active');
-  });
+  tray.on('click', () => showDashboard());
   updateTrayMenu();
   updateTrayTooltip();
 }
@@ -190,16 +220,28 @@ function updateTrayMenu(): void {
   const updateState = updater?.getState();
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: isActive ? 'Make passive' : 'Make active', click: () => setWidgetInteractionMode(isActive ? 'passive' : 'active') },
+      { label: 'Open Agent Fleet', click: () => showDashboard() },
+      { type: 'separator' as const },
+      { label: 'Recent sessions', enabled: false },
+      { label: '  work-m · wtmux', click: () => showDashboard() },
+      { label: '  home-m · client', click: () => showDashboard() },
+      { label: 'Favorite: wtmux · Codex 2', click: () => showDashboard() },
+      { label: 'Pending messages: 2', click: () => showDashboard() },
+      { type: 'separator' as const },
       {
-        label: mainWindow?.isVisible() ? 'Hide widget' : 'Show widget',
+        label: isActive ? 'Make limits overlay passive' : 'Make limits overlay active',
+        click: () => setWidgetInteractionMode(isActive ? 'passive' : 'active')
+      },
+      {
+        label: mainWindow?.isVisible() ? 'Hide limits overlay' : 'Show limits overlay',
         click: () => {
           if (mainWindow?.isVisible()) mainWindow.hide();
           else setWidgetInteractionMode('passive');
           updateTrayMenu();
         }
       },
-      { label: 'Refresh now', click: () => void stateManager.refreshAll() },
+      { label: 'Refresh fleet', click: () => void stateManager.refreshAll() },
+      { label: 'Pause notifications for 1 hour', click: () => showDashboard() },
       { label: 'Settings', click: () => createSettingsWindow() },
       ...(!appSettings.onboardingComplete
         ? [{ label: 'Finish setup', click: () => createSettingsWindow('onboarding') }]
@@ -324,7 +366,11 @@ function getAppInfo(): AppInfo {
 }
 
 function getDialogOwner(): BrowserWindow {
-  const owner = settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : mainWindow;
+  const owner = settingsWindow && !settingsWindow.isDestroyed()
+    ? settingsWindow
+    : dashboardWindow && !dashboardWindow.isDestroyed()
+      ? dashboardWindow
+      : mainWindow;
   if (!owner) throw new Error('No application window is available for the dialog');
   return owner;
 }
@@ -428,8 +474,8 @@ handle(IPC_CHANNELS.openReleasePage, () => shell.openExternal(RELEASE_URL));
 handle(IPC_CHANNELS.openSettings, () => createSettingsWindow());
 handle(IPC_CHANNELS.getInteractionMode, () => interactionMode);
 handle(IPC_CHANNELS.setInteractionMode, (_event, mode) => setWidgetInteractionMode(mode === 'active' ? 'active' : 'passive'));
-handle(IPC_CHANNELS.windowHide, () => {
-  mainWindow?.hide();
+handle(IPC_CHANNELS.windowHide, (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.hide();
   updateTrayMenu();
 });
 handle(IPC_CHANNELS.windowQuit, () => {
@@ -454,7 +500,7 @@ if (isUninstallCleanup) {
 } else if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
     if (!appSettings.onboardingComplete) createSettingsWindow('onboarding');
-    else setWidgetInteractionMode('active');
+    else showDashboard();
   });
 
   app.whenReady().then(() => {
@@ -487,10 +533,11 @@ if (isUninstallCleanup) {
     updater.setEnabled(appSettings.automaticUpdates);
     stateManager.start();
     if (!appSettings.onboardingComplete) createSettingsWindow('onboarding');
+    if (!app.isPackaged) showDashboard();
     logger.info(PRODUCT_NAME, app.getVersion(), app.isPackaged ? 'packaged' : 'development', migrationResult);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
-      setWidgetInteractionMode('active');
+      showDashboard();
     });
   });
 }
