@@ -505,7 +505,14 @@ export class DashboardPrototype {
   }
 
   private renderHostCard(host: FleetHost): string {
-    return `<article class="host-card" data-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(host.detail)}</p><dl><div><dt>Sessions</dt><dd>${host.sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(host.wtmuxVersion)}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>v${host.protocolVersion}</dd></div></dl><div class="host-card-actions"><button class="quiet-button">${icon('heart-pulse')}Doctor</button>${host.status === 'attention' ? `<button class="primary-button" data-action="dashboard-repair-host">${icon('wrench')}Review update</button>` : `<button class="quiet-button">${icon('more-horizontal')}More</button>`}</div></article>`;
+    const offline = host.status === 'offline';
+    const detail = offline ? `${host.detail} · Showing last known data` : host.detail;
+    const secondaryAction = host.status === 'attention'
+      ? `<button class="primary-button" data-action="dashboard-repair-host">${icon('wrench')}Review update</button>`
+      : offline
+        ? `<button class="primary-button" data-action="dashboard-refresh" title="Retry this host connection">${icon('refresh-cw')}Retry connection</button>`
+        : `<button class="quiet-button">${icon('more-horizontal')}More</button>`;
+    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${host.sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(host.wtmuxVersion)}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>v${host.protocolVersion}</dd></div></dl><div class="host-card-actions"><button class="quiet-button">${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
   }
 
   private renderScheduleRow(schedule: FleetSchedule): string {
