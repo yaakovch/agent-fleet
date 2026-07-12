@@ -255,10 +255,10 @@ export class DashboardPrototype {
     return `<header class="fleet-header">
       <div><h1>${titles[this.view][0]}</h1><p>${titles[this.view][1]}</p></div>
       <div class="fleet-header-actions">
-        <label class="prototype-scenario">Scenario<select data-dashboard-scenario aria-label="Prototype scenario">
-          ${(['live', 'offline', 'empty', 'error'] as const).map((scenario) => `<option value="${scenario}" ${this.scenario === scenario ? 'selected' : ''}>${capitalize(scenario)}</option>`).join('')}
-        </select></label>
-        <button class="fleet-icon-button" data-action="dashboard-pause" title="Pause notifications">${icon('pause')}</button>
+        <div class="header-quick-actions">
+          <button class="quiet-button" data-action="dashboard-new-schedule">${icon('calendar-clock')}Schedule</button>
+          <button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button>
+        </div>
         <button class="fleet-icon-button notification-button" data-action="dashboard-attention" title="Notifications">${icon('bell')}<span>3</span></button>
         <button class="fleet-icon-button" data-action="dashboard-close" title="Close dashboard">${icon('x')}</button>
       </div>
@@ -286,35 +286,32 @@ export class DashboardPrototype {
     const healthyHosts = this.snapshot.hosts.filter((host) => host.status === 'healthy').length;
     const pending = this.snapshot.schedules.filter((item) => item.status === 'pending').length;
     return `<div class="dashboard-stack">
-      <section class="attention-strip">
-        ${this.snapshot.attention.map((item) => this.renderAttention(item)).join('')}
+      <section class="attention-center fleet-card">
+        <div class="attention-heading"><div><h2>Needs attention</h2><span>${this.snapshot.attention.length}</span></div><button data-action="dashboard-attention">View all</button></div>
+        <div class="attention-list">${this.snapshot.attention.slice(0, 2).map((item) => this.renderAttention(item)).join('')}</div>
       </section>
       <section class="fleet-metrics">
-        ${metric('network', 'Hosts online', `${healthyHosts + 1} / ${this.snapshot.hosts.length}`, 'One runtime needs attention', 'attention')}
-        ${metric('square-terminal', 'Live sessions', String(this.snapshot.sessions.length), '2 active · 2 waiting', 'healthy')}
-        ${metric('calendar-clock', 'Pending messages', String(pending), 'Next delivery at 05:05', 'healthy')}
-        ${metric('heart-pulse', 'Controller bridge', this.scenario === 'live' ? 'Live' : 'Cached', `Revision ${this.snapshot.revision}`, this.scenario === 'live' ? 'healthy' : 'offline')}
+        ${metric('network', 'Hosts online', `${healthyHosts + 1} / ${this.snapshot.hosts.length}`, 'home-m needs an update', 'attention')}
+        ${metric('square-terminal', 'Sessions', String(this.snapshot.sessions.length), '2 active · 2 waiting', 'healthy')}
+        ${metric('calendar-clock', 'Scheduled', String(pending), 'Next at 05:05', 'healthy')}
       </section>
       <section class="overview-grid">
         <article class="fleet-card recent-sessions-card">
-          ${cardHeader('Recent sessions', 'Activity across all hosts', 'View all', 'sessions')}
-          <div class="session-list compact">${this.snapshot.sessions.slice(0, 4).map((session) => this.renderSessionRow(session, true)).join('')}</div>
-        </article>
-        <article class="fleet-card host-health-card">
-          ${cardHeader('Host health', 'Heartbeat every 10 seconds', 'Fleet', 'fleet')}
-          <div class="host-list compact">${this.snapshot.hosts.map((host) => this.renderHostRow(host)).join('')}</div>
-        </article>
-        <article class="fleet-card limit-card">
-          <div class="card-heading"><div><h2>Local usage limits</h2><p>Profiles configured on this PC</p></div><button class="quiet-button" data-action="dashboard-refresh">${icon('refresh-cw')}Refresh</button></div>
-          <div class="dashboard-limits">${this.snapshot.limits.map((limit) => `<div><span><strong>${escapeHtml(limit.label)}</strong><small class="limit-${limit.status}">${limit.status}</small></span>${limitBar('5 hour', limit.fiveHourRemaining)}${limitBar('Weekly', limit.weeklyRemaining)}</div>`).join('')}</div>
+          ${cardHeader('Recent sessions', 'Jump back into active work', 'All sessions', 'sessions')}
+          <div class="session-list compact">${this.snapshot.sessions.slice(0, 3).map((session) => this.renderSessionRow(session, true)).join('')}</div>
         </article>
         <article class="fleet-card favorites-card">
-          <div class="card-heading"><div><h2>Favorite launchers</h2><p>One click, explicit target</p></div>${icon('star')}</div>
-          <div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.backend)} · ${escapeHtml(favorite.project)}</small></span>${icon('play')}</button>`).join('')}</div>
+          <div class="card-heading"><div><h2>Quick launch</h2><p>Your favorite presets</p></div>${icon('star')}</div>
+          <div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('play')}</button>`).join('')}</div>
+          <button class="favorite-new" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button>
         </article>
-        <article class="fleet-card activity-card">
-          <div class="card-heading"><div><h2>Recent activity</h2><p>Persistent metadata events</p></div>${icon('activity')}</div>
-          <div class="event-list">${this.snapshot.events.slice(0, 4).map((event) => `<div><span class="event-marker status-${event.severity}">${eventIcon(event.kind)}</span><span><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.detail)} · ${relativeTime(event.occurredAt)}</small></span></div>`).join('')}</div>
+        <article class="fleet-card limit-card">
+          <div class="card-heading"><div><h2>Usage limits</h2><p>Profiles on this PC</p></div><button class="quiet-button" data-action="dashboard-refresh">${icon('refresh-cw')}Refresh</button></div>
+          <div class="dashboard-limits">${this.snapshot.limits.map((limit) => `<div><span><strong>${escapeHtml(limit.label)}</strong><small class="limit-${limit.status}">${limit.status}</small></span>${limitBar('5 hour', limit.fiveHourRemaining)}${limitBar('Weekly', limit.weeklyRemaining)}</div>`).join('')}</div>
+        </article>
+        <article class="fleet-card host-health-card">
+          ${cardHeader('Hosts', 'Current fleet status', 'Manage', 'fleet')}
+          <div class="host-list compact">${this.snapshot.hosts.map((host) => this.renderHostRow(host)).join('')}</div>
         </article>
       </section>
     </div>`;
@@ -377,6 +374,7 @@ export class DashboardPrototype {
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Notifications</h2><p>All enabled Agent Fleet PCs may notify for the fleet</p></div>${icon('bell')}</div><div class="dashboard-form-grid"><label class="toggle-row"><span><strong>Hard limits and delivery failures</strong><small>Critical attention</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Host offline and recovery</strong><small>After three missed heartbeats</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Schedule delivery success</strong><small>Deduplicated across restarts</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Version drift and pairing</strong><small>Actionable fleet changes</small></span><input type="checkbox" checked></label></div><button class="quiet-button" data-action="dashboard-pause">${icon('pause')}Pause on this PC for one hour</button></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Tray appearance</h2><p>Worst unresolved fleet state controls severity</p></div>${icon('gauge')}</div><div class="tray-variants"><span><i class="status-healthy"></i>Healthy</span><span><i class="status-attention"></i>Attention</span><span><i class="status-failure"></i>Failure</span><span><i class="status-offline"></i>Disconnected</span></div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Privacy and diagnostics</h2><p>Metadata only, local and bounded</p></div>${icon('shield-check')}</div><p class="privacy-copy">Prompts, responses, transcripts, terminal screens, and credentials are never collected. Diagnostics are generated only when requested and can be previewed before sharing.</p><div class="inline-dashboard-actions"><button class="quiet-button">${icon('folder-open')}Preview diagnostics</button><button class="quiet-button">${icon('wrench')}Run doctor</button></div></section>
+      <section class="fleet-card dashboard-settings-card prototype-settings"><div class="card-heading"><div><h2>Prototype preview</h2><p>Review non-live dashboard states</p></div>${icon('sliders-horizontal')}</div><label>Data state<select data-dashboard-scenario aria-label="Prototype scenario">${(['live', 'offline', 'empty', 'error'] as const).map((scenario) => `<option value="${scenario}" ${this.scenario === scenario ? 'selected' : ''}>${capitalize(scenario)}</option>`).join('')}</select></label></section>
     </div>`;
   }
 
