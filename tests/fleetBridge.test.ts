@@ -19,7 +19,7 @@ describe('fleet bridge supervisor', () => {
     const launch = fleetBridgeLaunchFromSettings(createDefaultSettings());
     expect(launch).toEqual({
       command: 'wsl.exe',
-      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio'],
+      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'],
       distro: 'Ubuntu'
     });
   });

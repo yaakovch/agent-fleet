@@ -465,8 +465,8 @@ export function fleetBridgeLaunchFromSettings(settings: WidgetSettings): FleetBr
     ?? settings.codexProfiles.find((item) => item.distro && item.user && item.home);
   const distro = process.env.AGENT_FLEET_WSL_DISTRO || profile?.distro || 'Ubuntu';
   const args = profile
-    ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio']
-    : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio'];
+    ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio', '--pairing']
+    : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'];
   return { command: 'wsl.exe', args, distro };
 }
 
