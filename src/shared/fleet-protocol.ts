@@ -104,8 +104,10 @@ export interface PairingInvitation {
   invitationId: string;
   shortCode: string;
   bootstrapPeer: string;
+  bootstrapUser: string;
   expiresAt: string;
   link: string;
+  termuxCommand: string;
 }
 
 export interface PairingProposalReview extends BridgePairingRequest {

@@ -215,9 +215,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     ...(request.method === 'session.create' ? { sessionId: 'test-host:session-1' } : {}),
     ...(request.method === 'pairing.invite' ? { invitation: {
       invitationId: 'invite-1', shortCode: 'baba-bebe-bibi-bobo-dada-dede',
-      bootstrapPeer: 'controller.tailnet.ts.net', expiresAt: '2026-07-12T05:10:00Z',
+      bootstrapPeer: 'controller.tailnet.ts.net', bootstrapUser: 'controller', expiresAt: '2026-07-12T05:10:00Z',
       link: 'wtmux://pair?token=psecretToken1234567890A',
-      file: { pairingVersion: 1, bootstrapPeer: 'controller.tailnet.ts.net',
+      termuxCommand: 'wtmux-pair-client pair --invitation wtmux://pair?token=psecretToken1234567890A',
+      file: { pairingVersion: 1, bootstrapPeer: 'controller.tailnet.ts.net', bootstrapUser: 'controller',
         token: 'psecretToken1234567890A', expiresAt: '2026-07-12T05:10:00Z' }
     }} : {})
   };
