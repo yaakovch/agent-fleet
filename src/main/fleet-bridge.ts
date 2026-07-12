@@ -11,7 +11,9 @@ import {
   toFleetSnapshot,
   type BridgeFleetSnapshot,
   type FleetBridgeStatus,
-  type FleetBridgeView
+  type FleetBridgeView,
+  type FleetMutationMethod,
+  type FleetMutationResult
 } from '../shared/fleet-protocol';
 
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
@@ -34,6 +36,7 @@ export interface FleetBridgeOptions {
   launch: FleetBridgeLaunch;
   logger: FleetBridgeLogger;
   spawnProcess?: typeof spawn;
+  mutationTimeoutMs?: number;
 }
 
 interface CacheEnvelope {
@@ -41,6 +44,19 @@ interface CacheEnvelope {
   protocolVersion: 1;
   savedAt: string;
   snapshot: BridgeFleetSnapshot;
+}
+
+interface PendingMutation {
+  requestId: string;
+  resolve: (result: FleetMutationResult) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
+export class FleetMutationError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
 }
 
 export class FleetBridgeSupervisor extends EventEmitter {
@@ -60,6 +76,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
   private lastFrameAt = 0;
   private requestNumber = 0;
   private pendingRequestId = '';
+  private pendingMutation: PendingMutation | null = null;
 
   constructor(private readonly options: FleetBridgeOptions) {
     super();
@@ -88,6 +105,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
     this.settleTimer = null;
     safeKill(this.child);
     this.child = null;
+    this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge stopped');
   }
 
   refresh(): void {
@@ -101,6 +119,39 @@ export class FleetBridgeSupervisor extends EventEmitter {
       : emptyFleetSnapshot(this.options.launch.distro);
     snapshot.controller.status = this.status === 'live' ? 'healthy' : this.status === 'error' ? 'failure' : 'offline';
     return { status: this.status, snapshot, cacheSavedAt: this.cacheSavedAt, errorCode: this.errorCode };
+  }
+
+  mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult> {
+    if (this.status !== 'live' || !this.snapshot || !this.child || this.child.killed || !this.child.stdin.writable) {
+      return Promise.reject(new FleetMutationError('host_offline', 'Fleet controller is not live'));
+    }
+    if (this.pendingRequestId) {
+      return Promise.reject(new FleetMutationError('conflict', 'Another fleet request is still in progress'));
+    }
+    this.requestNumber += 1;
+    const requestId = `desktop-mutation-${this.requestNumber}`;
+    this.pendingRequestId = requestId;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.finishPendingMutation();
+        reject(new FleetMutationError('timeout', 'Fleet mutation timed out; refresh before retrying'));
+        this.errorCode = 'mutation_timeout';
+        safeKill(this.child);
+      }, this.options.mutationTimeoutMs ?? 15_000);
+      timeout.unref();
+      this.pendingMutation = { requestId, resolve, reject, timeout };
+      const request = {
+        protocolVersion: FLEET_PROTOCOL_VERSION,
+        type: 'request',
+        requestId,
+        method,
+        timestamp: new Date().toISOString(),
+        params: { ...params, expectedRevision: this.snapshot!.revision }
+      };
+      this.child!.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
+        if (error) this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge write failed');
+      });
+    });
   }
 
   private startChild(): void {
@@ -170,6 +221,10 @@ export class FleetBridgeSupervisor extends EventEmitter {
       if (!this.snapshot || value.revision !== this.snapshot.revision) this.requestSnapshot();
       return;
     }
+    if (this.pendingMutation && value.requestId === this.pendingMutation.requestId) {
+      this.acceptMutationResponse(value);
+      return;
+    }
     exactKeys(value, ['protocolVersion', 'type', 'requestId', 'timestamp', 'ok', 'result'], 'response');
     if (value.type !== 'response' || value.ok !== true || value.requestId !== this.pendingRequestId) {
       throw new Error('Invalid or uncorrelated bridge response');
@@ -188,6 +243,45 @@ export class FleetBridgeSupervisor extends EventEmitter {
     this.retryAttempt = 0;
     if (!isSettling) this.saveCache(snapshot, this.cacheSavedAt);
     else this.scheduleSettlePoll();
+    this.emitChanged();
+  }
+
+  private acceptMutationResponse(value: Record<string, unknown>): void {
+    const pending = this.pendingMutation;
+    if (!pending) throw new Error('Mutation response is not pending');
+    if (value.ok === false) {
+      exactKeys(value, ['protocolVersion', 'type', 'requestId', 'timestamp', 'ok', 'error'], 'mutation error');
+      const error = object(value.error, 'mutation error detail');
+      exactKeys(error, ['code', 'message'], 'mutation error detail');
+      const code = safeToken(error.code, 64) ? error.code : 'internal_failure';
+      const message = safeText(error.message, 256) ? error.message : 'Fleet mutation failed';
+      this.finishPendingMutation();
+      pending.reject(new FleetMutationError(code, message));
+      return;
+    }
+    exactKeys(value, ['protocolVersion', 'type', 'requestId', 'timestamp', 'ok', 'result'], 'mutation response');
+    if (value.type !== 'response' || value.ok !== true) throw new Error('Mutation response is invalid');
+    const result = object(value.result, 'mutation result');
+    const keys = Object.keys(result).sort();
+    const baseKeys = ['operationId', 'snapshot', 'status'].sort();
+    const scheduleKeys = [...baseKeys, 'scheduleId'].sort();
+    if (!sameKeys(keys, baseKeys) && !sameKeys(keys, scheduleKeys)) throw new Error('Mutation result fields are invalid');
+    if (!safeToken(result.operationId, 160) || !safeToken(result.status, 32)) throw new Error('Mutation result identity is invalid');
+    if ('scheduleId' in result && !safeToken(result.scheduleId, 160)) throw new Error('Mutation scheduleId is invalid');
+    const snapshot = parseBridgeFleetSnapshot(result.snapshot);
+    this.snapshot = snapshot;
+    this.cacheSavedAt = new Date().toISOString();
+    this.status = 'live';
+    this.errorCode = '';
+    this.saveCache(snapshot, this.cacheSavedAt);
+    this.finishPendingMutation();
+    const output: FleetMutationResult = {
+      operationId: result.operationId,
+      status: result.status,
+      snapshot: toFleetSnapshot(snapshot, this.options.launch.distro),
+      ...(typeof result.scheduleId === 'string' ? { scheduleId: result.scheduleId } : {})
+    };
+    pending.resolve(output);
     this.emitChanged();
   }
 
@@ -233,6 +327,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
     if (!this.child && this.retryTimer) return;
     this.child = null;
     this.pendingRequestId = '';
+    this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge disconnected');
     if (this.stopped) return;
     this.errorCode = code;
     if (this.status !== 'error') this.status = this.snapshot ? 'cached' : 'offline';
@@ -244,6 +339,19 @@ export class FleetBridgeSupervisor extends EventEmitter {
       this.startChild();
     }, delay);
     this.retryTimer.unref();
+  }
+
+  private finishPendingMutation(): void {
+    if (this.pendingMutation) clearTimeout(this.pendingMutation.timeout);
+    this.pendingMutation = null;
+    this.pendingRequestId = '';
+  }
+
+  private rejectPendingMutation(code: string, message: string): void {
+    const pending = this.pendingMutation;
+    if (!pending) return;
+    this.finishPendingMutation();
+    pending.reject(new FleetMutationError(code, message));
   }
 
   private loadCache(): void {
@@ -301,6 +409,18 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], labe
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new Error(`${label} fields are invalid`);
   }
+}
+
+function sameKeys(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
+function safeToken(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum && /^[A-Za-z0-9._:-]+$/u.test(value);
+}
+
+function safeText(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
 function safeKill(child: ChildProcessWithoutNullStreams | null): void {

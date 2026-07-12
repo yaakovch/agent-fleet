@@ -58,7 +58,14 @@ import { FLEET_FIXTURE } from './fleet-fixtures';
 
 type DashboardView = 'overview' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
 type DashboardScenario = 'live' | 'offline' | 'empty' | 'error';
-type ModalState = { title: string; body: string; confirm: string; destructive?: boolean } | null;
+type ModalState = {
+  title: string;
+  body: string;
+  confirm: string;
+  destructive?: boolean;
+  action?: { kind: 'kill-session' | 'cancel-schedule' | 'create-schedule'; id: string };
+  deliverAt?: string;
+} | null;
 
 const dashboardIcons = {
   Activity,
@@ -215,10 +222,12 @@ export class DashboardPrototype {
       return true;
     }
     if (action === 'modal-confirm') {
-      const result = this.modal?.confirm ?? 'Action';
+      const pending = this.modal?.action;
+      const sessionId = this.root.querySelector<HTMLSelectElement>('[data-modal-session]')?.value;
+      const localTime = this.root.querySelector<HTMLInputElement>('[data-modal-deliver-at]')?.value;
       this.modal = null;
-      this.toast = `${result} queued in prototype mode`;
       this.render();
+      if (pending) void this.executeMutation(pending, sessionId, localTime);
       return true;
     }
     if (action === 'dashboard-open-session') {
@@ -229,7 +238,10 @@ export class DashboardPrototype {
     }
     if (action === 'dashboard-copy') return this.showToast('Attach command copied');
     if (action === 'dashboard-launch') return this.showToast('Launcher request validated; live execution is intentionally not wired at Gate 1');
-    if (action === 'dashboard-new-schedule') return this.showToast('New schedule editor opened in prototype mode');
+    if (action === 'dashboard-new-schedule') {
+      this.openScheduleModal();
+      return true;
+    }
     if (action === 'dashboard-edit-schedule') return this.showToast('Pending schedule is ready to edit');
     if (action === 'dashboard-pair') return this.showToast('Created a ten-minute pairing invitation preview');
     if (action === 'dashboard-review-pairing') return this.showToast('Pairing proposal review opened');
@@ -238,7 +250,15 @@ export class DashboardPrototype {
       void window.limitsWidget.refreshFleet();
       return this.showToast('Fleet refresh requested');
     }
-    if (action === 'dashboard-attention') return this.showToast('Attention item opened');
+    if (action === 'dashboard-attention') {
+      const attentionId = control.closest<HTMLElement>('[data-attention-id]')?.dataset.attentionId;
+      const item = this.snapshot.attention.find((candidate) => candidate.id === attentionId);
+      if (item?.targetSessionId) {
+        this.openScheduleModal(item.targetSessionId, item.suggestedAt);
+        return true;
+      }
+      return this.showToast(this.snapshot.attention.length ? 'Choose an attention item' : 'Nothing needs attention');
+    }
     if (action === 'dashboard-favorite') return this.showToast('Favorite launcher selected');
     return false;
   }
@@ -247,6 +267,40 @@ export class DashboardPrototype {
     this.toast = message;
     this.render();
     return true;
+  }
+
+  private async executeMutation(
+    action: NonNullable<ModalState>['action'],
+    selectedSessionId?: string,
+    localTime?: string
+  ): Promise<void> {
+    if (!action) return;
+    let result: { ok: boolean; message: string };
+    if (action.kind === 'kill-session') result = await window.limitsWidget.killFleetSession(action.id);
+    else if (action.kind === 'cancel-schedule') result = await window.limitsWidget.cancelFleetSchedule(action.id);
+    else if (!selectedSessionId || !localTime) result = { ok: false, message: 'Choose a session and future time' };
+    else {
+      const instant = new Date(localTime);
+      result = Number.isFinite(instant.getTime())
+        ? await window.limitsWidget.createFleetContinueSchedule(selectedSessionId, instant.toISOString())
+        : { ok: false, message: 'Choose a valid future time' };
+    }
+    this.showToast(result.message);
+  }
+
+  private openScheduleModal(defaultSessionId = '', suggestedAt?: string): void {
+    if (!this.snapshot.sessions.length) {
+      this.showToast('No live session is available');
+      return;
+    }
+    this.modal = {
+      title: 'Schedule continue',
+      body: 'Agent Fleet will send the standard continue action once at the selected time. Custom prompt text never crosses the desktop bridge.',
+      confirm: 'Schedule continue',
+      action: { kind: 'create-schedule', id: defaultSessionId },
+      deliverAt: suggestedAt
+    };
+    this.render();
   }
 
   private renderSidebar(): string {
@@ -376,7 +430,7 @@ export class DashboardPrototype {
   private renderSchedules(): string {
     const schedules = this.snapshot.schedules.filter((schedule) => this.scheduleTab === 'pending' ? schedule.status === 'pending' : schedule.status !== 'pending');
     return `<div class="dashboard-stack">
-      <div class="view-toolbar"><div class="segmented"><button class="${this.scheduleTab === 'pending' ? 'active' : ''}" data-action="schedule-tab" data-tab="pending">Pending <b>${this.snapshot.schedules.filter((item) => item.status === 'pending').length}</b></button><button class="${this.scheduleTab === 'history' ? 'active' : ''}" data-action="schedule-tab" data-tab="history">30-day history</button></div></div>
+      <div class="view-toolbar"><div class="segmented"><button class="${this.scheduleTab === 'pending' ? 'active' : ''}" data-action="schedule-tab" data-tab="pending">Pending <b>${this.snapshot.schedules.filter((item) => item.status === 'pending').length}</b></button><button class="${this.scheduleTab === 'history' ? 'active' : ''}" data-action="schedule-tab" data-tab="history">30-day history</button></div><span class="toolbar-spacer"></span><button class="primary-button" data-action="dashboard-new-schedule" ${this.scenario === 'live' ? '' : 'disabled'}>${icon('plus')}Schedule continue</button></div>
       <section class="fleet-card schedule-table"><div class="schedule-header"><span>Destination</span><span>Type</span><span>${this.scheduleTab === 'pending' ? 'Delivery' : 'Outcome'}</span><span>Status</span><span></span></div>${schedules.map((schedule) => this.renderScheduleRow(schedule)).join('')}</section>
       <p class="retention-note">${icon('history')}History is retained for 30 days. Times use your local zone; destination host zone is shown alongside.</p>
     </div>`;
@@ -402,7 +456,7 @@ export class DashboardPrototype {
   }
 
   private renderAttention(item: FleetAttention): string {
-    return `<button class="attention-item attention-${item.severity}" data-action="dashboard-attention"><span>${severityIcon(item.severity)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></span><b>${escapeHtml(item.actionLabel)}${icon('chevron-right')}</b></button>`;
+    return `<button class="attention-item attention-${item.severity}" data-action="dashboard-attention" data-attention-id="${escapeAttr(item.id)}"><span>${severityIcon(item.severity)}</span><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></span><b>${escapeHtml(item.targetSessionId ? 'Schedule continue' : item.actionLabel)}${icon('chevron-right')}</b></button>`;
   }
 
   private renderSessionRow(session: FleetSession, compact: boolean): string {
@@ -413,7 +467,7 @@ export class DashboardPrototype {
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
-      <span class="session-actions"><button data-action="dashboard-open-session" title="Open in Windows Terminal">${icon('panel-top-open')}<span>Open</span></button></span>
+      <span class="session-actions"><button data-action="dashboard-open-session" title="Open in Windows Terminal">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
     </div>`;
   }
 
@@ -427,7 +481,7 @@ export class DashboardPrototype {
 
   private renderScheduleRow(schedule: FleetSchedule): string {
     const session = this.snapshot.sessions.find((item) => item.id === schedule.sessionId);
-    return `<div class="schedule-row" data-schedule-id="${escapeAttr(schedule.id)}"><span><strong>${escapeHtml(session?.name ?? 'Ended session')}</strong><small>${escapeHtml(schedule.hostId)} · ${escapeHtml(session?.project ?? 'unknown')}</small></span><span><q>${escapeHtml(schedule.summary)}</q><small>Created ${relativeTime(schedule.createdAt)}</small></span><span><strong>${formatDateTime(schedule.completedAt ?? schedule.deliverAt)}</strong><small>${escapeHtml(schedule.hostTimeZone)}</small></span><span><b class="schedule-status schedule-${schedule.status}">${scheduleStatusIcon(schedule.status)}${capitalize(schedule.status)}</b>${schedule.detail ? `<small>${escapeHtml(schedule.detail)}</small>` : ''}</span><span></span></div>`;
+    return `<div class="schedule-row" data-schedule-id="${escapeAttr(schedule.id)}"><span><strong>${escapeHtml(session?.name ?? 'Ended session')}</strong><small>${escapeHtml(schedule.hostId)} · ${escapeHtml(session?.project ?? 'unknown')}</small></span><span><q>${escapeHtml(schedule.summary)}</q><small>Created ${relativeTime(schedule.createdAt)}</small></span><span><strong>${formatDateTime(schedule.completedAt ?? schedule.deliverAt)}</strong><small>${escapeHtml(schedule.hostTimeZone)}</small></span><span><b class="schedule-status schedule-${schedule.status}">${scheduleStatusIcon(schedule.status)}${capitalize(schedule.status)}</b>${schedule.detail ? `<small>${escapeHtml(schedule.detail)}</small>` : ''}</span><span class="schedule-actions">${schedule.status === 'pending' ? `<button class="danger-quiet" data-action="dashboard-cancel-schedule">Cancel</button>` : ''}</span></div>`;
   }
 
   private renderEmptyState(): string {
@@ -444,7 +498,8 @@ export class DashboardPrototype {
       title: `Kill ${session.name} on ${session.hostId}?`,
       body: `${session.project} · ${session.title} · ${capitalize(session.activity)}. ${pending ? `${pending} pending schedule will be cancelled atomically before the session is killed.` : 'No pending schedules are attached.'}`,
       confirm: 'Kill session',
-      destructive: true
+      destructive: true,
+      action: { kind: 'kill-session', id: session.id }
     };
     this.render();
   }
@@ -455,7 +510,8 @@ export class DashboardPrototype {
       title: 'Cancel scheduled message?',
       body: `${session?.hostId ?? schedule.hostId} · ${session?.project ?? 'unknown'} · ${session?.name ?? 'ended session'} · delivery ${formatDateTime(schedule.deliverAt)}. The message contents are not shown outside the local schedule editor.`,
       confirm: 'Cancel schedule',
-      destructive: true
+      destructive: true,
+      action: { kind: 'cancel-schedule', id: schedule.id }
     };
     this.render();
   }
@@ -470,7 +526,10 @@ export class DashboardPrototype {
   }
 
   private renderModal(modal: NonNullable<ModalState>): string {
-    return `<div class="fleet-modal-backdrop"><section class="fleet-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title"><span class="modal-symbol ${modal.destructive ? 'danger' : ''}">${modal.destructive ? icon('circle-alert') : icon('wrench')}</span><h2 id="fleet-modal-title">${escapeHtml(modal.title)}</h2><p>${escapeHtml(modal.body)}</p><div><button class="quiet-button" data-action="modal-cancel">Keep current state</button><button class="${modal.destructive ? 'danger-button' : 'primary-button'}" data-action="modal-confirm">${escapeHtml(modal.confirm)}</button></div></section></div>`;
+    const scheduleForm = modal.action?.kind === 'create-schedule'
+      ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${this.snapshot.sessions.map((session) => `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(session.name)} · ${escapeHtml(session.hostId)}</option>`).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
+      : '';
+    return `<div class="fleet-modal-backdrop"><section class="fleet-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title"><span class="modal-symbol ${modal.destructive ? 'danger' : ''}">${modal.destructive ? icon('circle-alert') : icon('calendar-clock')}</span><h2 id="fleet-modal-title">${escapeHtml(modal.title)}</h2><p>${escapeHtml(modal.body)}</p>${scheduleForm}<div><button class="quiet-button" data-action="modal-cancel">Keep current state</button><button class="${modal.destructive ? 'danger-button' : 'primary-button'}" data-action="modal-confirm">${escapeHtml(modal.confirm)}</button></div></section></div>`;
   }
 
   private sessionFromControl(control: HTMLElement): FleetSession | undefined {
@@ -552,6 +611,15 @@ function formatDateTime(value: string): string {
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function defaultScheduleTime(suggestedAt?: string): string {
+  const suggested = suggestedAt ? new Date(suggestedAt) : null;
+  const date = suggested && Number.isFinite(suggested.getTime()) && suggested.getTime() > Date.now()
+    ? suggested
+    : new Date(Date.now() + 60 * 60 * 1000);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function capitalize(value: string): string {

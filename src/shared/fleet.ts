@@ -59,6 +59,8 @@ export interface FleetAttention {
   createdAt: string;
   actionLabel: string;
   resolutionScope: 'fleet' | 'local';
+  targetSessionId?: string;
+  suggestedAt?: string;
 }
 
 export interface FleetFavorite {

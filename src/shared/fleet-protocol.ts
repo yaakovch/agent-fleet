@@ -86,6 +86,15 @@ export interface FleetBridgeView {
   errorCode: string;
 }
 
+export type FleetMutationMethod = 'session.kill' | 'schedule.cancel' | 'schedule.create';
+
+export interface FleetMutationResult {
+  operationId: string;
+  status: string;
+  snapshot: FleetSnapshot;
+  scheduleId?: string;
+}
+
 const FORBIDDEN_KEYS = new Set(['message', 'prompt', 'output', 'transcript', 'panetitle', 'command']);
 
 export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
@@ -291,7 +300,9 @@ function toAttention(item: BridgeAttentionSnapshot): FleetAttention {
     hostId: item.hostId,
     createdAt: item.detectedAt ?? item.updatedAt ?? new Date(0).toISOString(),
     actionLabel: 'Open session',
-    resolutionScope: 'fleet'
+    resolutionScope: 'fleet',
+    targetSessionId: item.sessionId,
+    ...(item.resetAt ? { suggestedAt: new Date(new Date(item.resetAt).getTime() + 60_000).toISOString() } : {})
   };
 }
 

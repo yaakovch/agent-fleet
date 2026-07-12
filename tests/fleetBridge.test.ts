@@ -44,6 +44,48 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('sends a revisioned mutation and accepts only the returned aggregate snapshot', async () => {
+    const directory = temporaryDirectory();
+    const script = writeFakeBridge(directory, fixture);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: process.execPath, args: [script], distro: 'Test Linux' },
+      logger
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    const result = await supervisor.mutate('session.kill', {
+      hostId: 'test-host',
+      sessionId: 'test-host:session-1',
+      idempotencyKey: 'operation-1'
+    });
+    expect(result.operationId).toBe('operation-1');
+    expect(result.status).toBe('killed');
+    expect(result.snapshot.revision).toBe('fixture-revision');
+    supervisor.stop();
+  }, 20_000);
+
+  it('resets the stream when a mutation times out so its late response cannot poison correlation', async () => {
+    const directory = temporaryDirectory();
+    const script = writeFakeBridge(directory, fixture, 100);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: process.execPath, args: [script], distro: 'Test Linux' },
+      logger,
+      mutationTimeoutMs: 20
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    await expect(supervisor.mutate('session.kill', {
+      hostId: 'test-host', sessionId: 'test-host:session-1', idempotencyKey: 'operation-timeout'
+    })).rejects.toMatchObject({ code: 'timeout' });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(supervisor.getView().status).not.toBe('error');
+    supervisor.stop();
+  }, 20_000);
+
   it('loads a previously verified snapshot when the bridge is offline', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');
@@ -119,18 +161,24 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-function writeFakeBridge(directory: string, snapshot: unknown): string {
+function writeFakeBridge(directory: string, snapshot: unknown, responseDelayMs = 0): string {
   const script = join(directory, 'fake-bridge.cjs');
   writeFileSync(script, `
 const readline = require('node:readline');
 const snapshot = ${JSON.stringify(snapshot)};
+const responseDelayMs = ${responseDelayMs};
 function emit(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
 emit({ protocolVersion: 1, type: 'event', eventId: 'event-1', event: 'fleet.heartbeat',
   timestamp: new Date().toISOString(), revision: snapshot.revision, data: { hostCount: snapshot.hosts.length } });
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
-  emit({ protocolVersion: 1, type: 'response', requestId: request.requestId,
-    timestamp: new Date().toISOString(), ok: true, result: snapshot });
+  const result = request.method === 'fleet.snapshot' ? snapshot : {
+    operationId: request.params.idempotencyKey,
+    status: request.method === 'session.kill' ? 'killed' : 'cancelled',
+    snapshot
+  };
+  setTimeout(() => emit({ protocolVersion: 1, type: 'response', requestId: request.requestId,
+    timestamp: new Date().toISOString(), ok: true, result }), responseDelayMs);
 });
 `, 'utf8');
   return script;

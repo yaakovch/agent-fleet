@@ -41,7 +41,7 @@ import {
   saveSettings
 } from './settings-store';
 import { LimitStateManager } from './state-manager';
-import { FleetBridgeSupervisor, fleetBridgeLaunchFromSettings } from './fleet-bridge';
+import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
 import { openFleetTerminal } from './fleet-terminal';
 import type { FleetBridgeView } from '../shared/fleet-protocol';
 import { UpdaterManager } from './updater';
@@ -449,6 +449,71 @@ handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   return openFleetSessionById(sessionId);
 });
+handle(IPC_CHANNELS.killFleetSession, async (_event, sessionId) => {
+  if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session) return { ok: false, message: 'Session is no longer available' };
+  try {
+    const result = await fleetBridge.mutate('session.kill', {
+      hostId: session.hostId,
+      sessionId: session.id,
+      idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: result.status === 'already-absent' ? 'Session was already closed' : `${session.name} was killed` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.cancelFleetSchedule, async (_event, scheduleId) => {
+  if (typeof scheduleId !== 'string') return { ok: false, message: 'Schedule is invalid' };
+  const schedule = getFleetView().snapshot.schedules.find((item) => item.id === scheduleId);
+  if (!schedule || schedule.status !== 'pending') return { ok: false, message: 'Pending schedule is no longer available' };
+  try {
+    await fleetBridge.mutate('schedule.cancel', {
+      hostId: schedule.hostId,
+      scheduleId: schedule.id,
+      idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Scheduled message was cancelled' };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliverAt) => {
+  if (typeof sessionId !== 'string' || typeof deliverAt !== 'string') {
+    return { ok: false, message: 'Schedule target or time is invalid' };
+  }
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const instant = Date.parse(deliverAt);
+  if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!Number.isFinite(instant) || instant <= Date.now()) return { ok: false, message: 'Choose a future delivery time' };
+  try {
+    const result = await fleetBridge.mutate('schedule.create', {
+      hostId: session.hostId,
+      sessionId: session.id,
+      deliverAt: new Date(instant).toISOString(),
+      action: 'continue',
+      idempotencyKey: randomUUID()
+    });
+    return {
+      ok: true,
+      message: result.scheduleId ? `Continue scheduled (${result.scheduleId})` : 'Continue scheduled'
+    };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+
+function fleetMutationFailure(error: unknown): { ok: false; message: string } {
+  logger.warn('Fleet mutation failed', error);
+  if (error instanceof FleetMutationError) {
+    if (error.code === 'stale_revision') return { ok: false, message: 'Fleet changed; refresh and try again' };
+    if (error.code === 'host_offline') return { ok: false, message: 'Host is offline; no changes were made' };
+    if (error.code === 'conflict') return { ok: false, message: error.message };
+    if (error.code === 'timeout') return { ok: false, message: error.message };
+  }
+  return { ok: false, message: 'Action failed safely; refresh before retrying' };
+}
 
 async function openFleetSessionById(sessionId: string): Promise<{ ok: boolean; message: string }> {
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
