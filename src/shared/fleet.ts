@@ -8,7 +8,7 @@ export interface FleetHost {
   machine: string;
   platform: 'wsl' | 'linux' | 'termux';
   status: FleetSeverity;
-  lastSeenAt: string;
+  lastSeenAt: string | null;
   timeZone: string;
   wtmuxVersion: string;
   protocolVersion: number;
@@ -30,7 +30,7 @@ export interface FleetSession {
   profileAlias?: string;
   activity: 'active' | 'idle' | 'waiting' | 'exited';
   attached: boolean;
-  updatedAt: string;
+  updatedAt: string | null;
   pendingScheduleCount: number;
   favorite: boolean;
 }
@@ -99,7 +99,7 @@ export interface FleetUsageLimit {
 }
 
 export interface FleetSnapshot {
-  revision: number;
+  revision: string;
   generatedAt: string;
   registrySyncedAt: string;
   controller: { distro: string; status: FleetSeverity; protocolVersion: number };

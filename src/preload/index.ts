@@ -9,12 +9,15 @@ import type {
   WslDiscoveryResult
 } from '../shared/app';
 import type { CombinedLimitState } from '../shared/limits';
+import type { FleetBridgeView } from '../shared/fleet-protocol';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { CodexProfileSettings, InteractionMode, SettingsLoadResult, WidgetSettings } from '../shared/settings';
 
 const api = {
   getState: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.getState),
   refreshNow: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.refreshNow),
+  getFleetState: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.getFleetState),
+  refreshFleet: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.refreshFleet),
   getSettings: (): Promise<SettingsLoadResult> => ipcRenderer.invoke(IPC_CHANNELS.getSettings),
   saveSettings: (settings: WidgetSettings): Promise<SettingsLoadResult> => ipcRenderer.invoke(IPC_CHANNELS.saveSettings, settings),
   testCodexProfile: (profile: CodexProfileSettings): Promise<{ ok: boolean; message: string }> =>
@@ -42,6 +45,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, state: CombinedLimitState): void => callback(state);
     ipcRenderer.on(IPC_CHANNELS.stateUpdated, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.stateUpdated, listener);
+  },
+  onFleetStateUpdated: (callback: (state: FleetBridgeView) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: FleetBridgeView): void => callback(state);
+    ipcRenderer.on(IPC_CHANNELS.fleetStateUpdated, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.fleetStateUpdated, listener);
   },
   onInteractionModeUpdated: (callback: (mode: InteractionMode) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, mode: InteractionMode): void => callback(mode);

@@ -53,6 +53,7 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
+import type { FleetBridgeView } from '../../shared/fleet-protocol';
 import { FLEET_FIXTURE } from './fleet-fixtures';
 
 type DashboardView = 'overview' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
@@ -121,11 +122,14 @@ export class DashboardPrototype {
   private search = '';
   private modal: ModalState = null;
   private toast = '';
+  private snapshot: FleetSnapshot;
+  private cacheSavedAt: string | null = null;
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly snapshot: FleetSnapshot = FLEET_FIXTURE
+    snapshot: FleetSnapshot = FLEET_FIXTURE
   ) {
+    this.snapshot = snapshot;
     root.addEventListener('input', (event) => {
       const input = event.target as HTMLInputElement;
       if (input.dataset.dashboardSearch === undefined) return;
@@ -140,6 +144,19 @@ export class DashboardPrototype {
       this.toast = '';
       this.render();
     });
+  }
+
+  setFleetState(view: FleetBridgeView): void {
+    this.snapshot = view.snapshot;
+    this.cacheSavedAt = view.cacheSavedAt;
+    this.scenario = view.status === 'live'
+      ? (view.snapshot.hosts.length ? 'live' : 'empty')
+      : view.status === 'error'
+        ? 'error'
+        : view.snapshot.hosts.length
+          ? 'offline'
+          : 'empty';
+    this.render();
   }
 
   render(): void {
@@ -212,7 +229,10 @@ export class DashboardPrototype {
     if (action === 'dashboard-pair') return this.showToast('Created a ten-minute pairing invitation preview');
     if (action === 'dashboard-review-pairing') return this.showToast('Pairing proposal review opened');
     if (action === 'dashboard-pause') return this.showToast('Fleet notifications paused on this PC for one hour');
-    if (action === 'dashboard-refresh') return this.showToast('Fleet refresh requested');
+    if (action === 'dashboard-refresh') {
+      void window.limitsWidget.refreshFleet();
+      return this.showToast('Fleet refresh requested');
+    }
     if (action === 'dashboard-attention') return this.showToast('Attention item opened');
     if (action === 'dashboard-favorite') return this.showToast('Favorite launcher selected');
     return false;
@@ -259,7 +279,7 @@ export class DashboardPrototype {
           <button class="quiet-button" data-action="dashboard-new-schedule">${icon('calendar-clock')}Schedule</button>
           <button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button>
         </div>
-        <button class="fleet-icon-button notification-button" data-action="dashboard-attention" title="Notifications">${icon('bell')}<span>3</span></button>
+        <button class="fleet-icon-button notification-button" data-action="dashboard-attention" title="Notifications">${icon('bell')}${this.snapshot.attention.length ? `<span>${this.snapshot.attention.length}</span>` : ''}</button>
         <button class="fleet-icon-button" data-action="dashboard-close" title="Close dashboard">${icon('x')}</button>
       </div>
     </header>`;
@@ -267,7 +287,7 @@ export class DashboardPrototype {
 
   private renderScenarioBanner(): string {
     if (this.scenario === 'live') return '';
-    if (this.scenario === 'offline') return `<div class="scenario-banner scenario-offline">${icon('cloud-off')}<div><strong>Controller disconnected</strong><span>Showing verified cache from 42 minutes ago. Mutations are unavailable until the WSL bridge reconnects.</span></div><button data-action="dashboard-refresh">Retry</button></div>`;
+    if (this.scenario === 'offline') return `<div class="scenario-banner scenario-offline">${icon('cloud-off')}<div><strong>Controller disconnected</strong><span>Showing verified cache from ${relativeTime(this.cacheSavedAt).toLowerCase()}. Mutations are unavailable until the WSL bridge reconnects.</span></div><button data-action="dashboard-refresh">Retry</button></div>`;
     if (this.scenario === 'error') return `<div class="scenario-banner scenario-error">${icon('circle-x')}<div><strong>Bridge protocol mismatch</strong><span>Hosts remain visible read-only. Update the controller runtime before making changes.</span></div><button data-action="dashboard-repair-host">Review repair</button></div>`;
     return `<div class="scenario-banner scenario-empty">${icon('circle-alert')}<div><strong>No fleet configured yet</strong><span>Local limits still work. Pair a controller or add the first host to start managing sessions.</span></div><button data-action="dashboard-pair">Pair device</button></div>`;
   }
@@ -286,14 +306,14 @@ export class DashboardPrototype {
     const healthyHosts = this.snapshot.hosts.filter((host) => host.status === 'healthy').length;
     const pending = this.snapshot.schedules.filter((item) => item.status === 'pending').length;
     return `<div class="dashboard-stack">
-      <section class="attention-center fleet-card">
+      ${this.snapshot.attention.length ? `<section class="attention-center fleet-card">
         <div class="attention-heading"><div><h2>Needs attention</h2><span>${this.snapshot.attention.length}</span></div><button data-action="dashboard-attention">View all</button></div>
         <div class="attention-list">${this.snapshot.attention.slice(0, 2).map((item) => this.renderAttention(item)).join('')}</div>
-      </section>
+      </section>` : ''}
       <section class="fleet-metrics">
-        ${metric('network', 'Hosts online', `${healthyHosts + 1} / ${this.snapshot.hosts.length}`, 'home-m needs an update', 'attention')}
-        ${metric('square-terminal', 'Sessions', String(this.snapshot.sessions.length), '2 active · 2 waiting', 'healthy')}
-        ${metric('calendar-clock', 'Scheduled', String(pending), 'Next at 05:05', 'healthy')}
+        ${metric('network', 'Hosts online', `${healthyHosts} / ${this.snapshot.hosts.length}`, healthyHosts === this.snapshot.hosts.length ? 'All connected' : 'Some hosts are unavailable', healthyHosts === this.snapshot.hosts.length ? 'healthy' : 'offline')}
+        ${metric('square-terminal', 'Sessions', String(this.snapshot.sessions.length), `${this.snapshot.sessions.filter((item) => item.activity === 'active').length} active`, 'healthy')}
+        ${metric('calendar-clock', 'Scheduled', String(pending), pending ? 'Pending delivery' : 'Nothing pending', 'healthy')}
       </section>
       <section class="overview-grid">
         <article class="fleet-card recent-sessions-card">
@@ -351,8 +371,8 @@ export class DashboardPrototype {
   private renderSchedules(): string {
     const schedules = this.snapshot.schedules.filter((schedule) => this.scheduleTab === 'pending' ? schedule.status === 'pending' : schedule.status !== 'pending');
     return `<div class="dashboard-stack">
-      <div class="view-toolbar"><div class="segmented"><button class="${this.scheduleTab === 'pending' ? 'active' : ''}" data-action="schedule-tab" data-tab="pending">Pending <b>2</b></button><button class="${this.scheduleTab === 'history' ? 'active' : ''}" data-action="schedule-tab" data-tab="history">30-day history</button></div><span class="toolbar-spacer"></span><button class="primary-button" data-action="dashboard-new-schedule" ${this.scenario === 'live' ? '' : 'disabled'}>${icon('plus')}Schedule message</button></div>
-      <section class="fleet-card schedule-table"><div class="schedule-header"><span>Destination</span><span>Message</span><span>${this.scheduleTab === 'pending' ? 'Delivery' : 'Outcome'}</span><span>Status</span><span></span></div>${schedules.map((schedule) => this.renderScheduleRow(schedule)).join('')}</section>
+      <div class="view-toolbar"><div class="segmented"><button class="${this.scheduleTab === 'pending' ? 'active' : ''}" data-action="schedule-tab" data-tab="pending">Pending <b>${this.snapshot.schedules.filter((item) => item.status === 'pending').length}</b></button><button class="${this.scheduleTab === 'history' ? 'active' : ''}" data-action="schedule-tab" data-tab="history">30-day history</button></div><span class="toolbar-spacer"></span><button class="primary-button" data-action="dashboard-new-schedule" ${this.scenario === 'live' ? '' : 'disabled'}>${icon('plus')}Schedule message</button></div>
+      <section class="fleet-card schedule-table"><div class="schedule-header"><span>Destination</span><span>Type</span><span>${this.scheduleTab === 'pending' ? 'Delivery' : 'Outcome'}</span><span>Status</span><span></span></div>${schedules.map((schedule) => this.renderScheduleRow(schedule)).join('')}</section>
       <p class="retention-note">${icon('history')}History is retained for 30 days. Times use your local zone; destination host zone is shown alongside.</p>
     </div>`;
   }
@@ -386,7 +406,7 @@ export class DashboardPrototype {
     const host = this.snapshot.hosts.find((item) => item.id === session.hostId);
     return `<div class="session-row ${compact ? 'is-compact' : ''}" data-session-id="${escapeAttr(session.id)}">
       <span class="tool-icon tool-${session.tool}">${toolIcon(session.tool)}</span>
-      <span class="session-primary"><strong>${escapeHtml(session.name)}</strong><small>${escapeHtml(session.title)}</small></span>
+      <span class="session-primary"><strong>${escapeHtml(session.name)}</strong><small>${escapeHtml(session.title || 'Managed tmux session')}</small></span>
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
@@ -511,8 +531,9 @@ function scheduleStatusIcon(status: FleetSchedule['status']): string {
   return icon('circle-alert');
 }
 
-function relativeTime(value: string): string {
-  const reference = new Date(FLEET_FIXTURE.generatedAt).getTime();
+function relativeTime(value: string | null): string {
+  if (!value) return 'Never';
+  const reference = Date.now();
   const difference = Math.max(0, reference - new Date(value).getTime());
   const minutes = Math.floor(difference / 60_000);
   if (minutes < 1) return 'just now';

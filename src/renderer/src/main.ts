@@ -112,6 +112,9 @@ window.limitsWidget.onStateUpdated((state) => {
   latestState = state;
   if (!isConfigView && !isDashboardView) renderWidget(state);
 });
+window.limitsWidget.onFleetStateUpdated((state) => {
+  if (isDashboardView) dashboard?.setFleetState(state);
+});
 window.limitsWidget.onInteractionModeUpdated((mode) => {
   interactionMode = mode;
   if (!isConfigView && !isDashboardView && latestState) renderWidget(latestState);
@@ -121,7 +124,10 @@ window.limitsWidget.onUpdaterStateUpdated((state) => {
   if (isConfigView) renderConfigView();
 });
 
-if (isDashboardView) dashboard?.render();
+if (isDashboardView) {
+  dashboard?.render();
+  void window.limitsWidget.getFleetState().then((state) => dashboard?.setFleetState(state));
+}
 else if (isConfigView) void loadConfigView();
 else {
   void window.limitsWidget.getInteractionMode().then((mode) => {
