@@ -402,20 +402,23 @@ export class FleetBridgeSupervisor extends EventEmitter {
 
 function parsePairingInvitation(input: unknown): FleetMutationResult['invitation'] {
   const value = object(input, 'pairing invitation');
-  exactKeys(value, ['invitationId', 'shortCode', 'bootstrapPeer', 'expiresAt', 'link', 'file'], 'pairing invitation');
+  exactKeys(value, ['invitationId', 'shortCode', 'bootstrapPeer', 'bootstrapUser', 'expiresAt', 'link', 'termuxCommand', 'file'], 'pairing invitation');
   const file = object(value.file, 'pairing invitation file');
-  exactKeys(file, ['pairingVersion', 'bootstrapPeer', 'token', 'expiresAt'], 'pairing invitation file');
+  exactKeys(file, ['pairingVersion', 'bootstrapPeer', 'bootstrapUser', 'token', 'expiresAt'], 'pairing invitation file');
   if (file.pairingVersion !== 1 || !safeToken(value.invitationId, 160)) throw new Error('Pairing invitation identity is invalid');
   if (typeof value.shortCode !== 'string' || !/^[a-z]+(?:-[a-z]+){5}$/u.test(value.shortCode)) throw new Error('Pairing short code is invalid');
-  if (!safeText(value.bootstrapPeer, 253) || !safeText(value.expiresAt, 40) || !safeText(value.link, 2048)) throw new Error('Pairing invitation is invalid');
-  if (file.bootstrapPeer !== value.bootstrapPeer || file.expiresAt !== value.expiresAt
+  if (!safeText(value.bootstrapPeer, 253) || !safeToken(value.bootstrapUser, 64) || !safeText(value.expiresAt, 40)
+    || !safeText(value.link, 2048) || !safeText(value.termuxCommand, 4096)) throw new Error('Pairing invitation is invalid');
+  if (file.bootstrapPeer !== value.bootstrapPeer || file.bootstrapUser !== value.bootstrapUser || file.expiresAt !== value.expiresAt
     || typeof file.token !== 'string' || !/^(?:[A-Za-z0-9_-]{22}|p[A-Za-z0-9_-]{22})$/u.test(file.token)) throw new Error('Pairing invitation envelope is invalid');
   return {
     invitationId: value.invitationId as string,
     shortCode: value.shortCode,
     bootstrapPeer: value.bootstrapPeer as string,
+    bootstrapUser: value.bootstrapUser as string,
     expiresAt: value.expiresAt as string,
-    link: value.link as string
+    link: value.link as string,
+    termuxCommand: value.termuxCommand as string
   };
 }
 

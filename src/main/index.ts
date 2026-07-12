@@ -537,10 +537,10 @@ handle(IPC_CHANNELS.createFleetPairingInvitation, async () => {
   try {
     const result = await fleetBridge.mutate('pairing.invite', { idempotencyKey: randomUUID() });
     if (!result.invitation) return { ok: false, message: 'Controller returned no invitation' };
-    clipboard.writeText(result.invitation.link);
+    clipboard.writeText(result.invitation.termuxCommand);
     return {
       ok: true,
-      message: `Pairing link copied · code ${result.invitation.shortCode} · expires in 10 minutes`
+      message: `Termux pairing command copied · code ${result.invitation.shortCode} · expires in 10 minutes`
     };
   } catch (error) {
     return fleetMutationFailure(error);
@@ -570,7 +570,7 @@ handle(IPC_CHANNELS.reviewFleetPairing, async (_event, requestId) => {
     if (choice.response === 2) return { ok: false, message: 'Pairing review cancelled' };
     const decision = choice.response === 0 ? 'pairing.approve' : 'pairing.reject';
     await fleetBridge.mutate(decision, { pairingRequestId: requestId, idempotencyKey: randomUUID() });
-    return { ok: true, message: choice.response === 0 ? 'Pairing proposal approved and staged' : 'Pairing proposal rejected' };
+    return { ok: true, message: choice.response === 0 ? 'Pairing approved; private registry and install artifacts are ready' : 'Pairing proposal rejected' };
   } catch (error) {
     return fleetMutationFailure(error);
   }
