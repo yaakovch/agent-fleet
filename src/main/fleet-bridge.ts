@@ -409,7 +409,7 @@ function parsePairingInvitation(input: unknown): FleetMutationResult['invitation
   if (typeof value.shortCode !== 'string' || !/^[a-z]+(?:-[a-z]+){5}$/u.test(value.shortCode)) throw new Error('Pairing short code is invalid');
   if (!safeText(value.bootstrapPeer, 253) || !safeText(value.expiresAt, 40) || !safeText(value.link, 2048)) throw new Error('Pairing invitation is invalid');
   if (file.bootstrapPeer !== value.bootstrapPeer || file.expiresAt !== value.expiresAt
-    || typeof file.token !== 'string' || !/^[A-Za-z0-9_-]{22}$/u.test(file.token)) throw new Error('Pairing invitation envelope is invalid');
+    || typeof file.token !== 'string' || !/^(?:[A-Za-z0-9_-]{22}|p[A-Za-z0-9_-]{22})$/u.test(file.token)) throw new Error('Pairing invitation envelope is invalid');
   return {
     invitationId: value.invitationId as string,
     shortCode: value.shortCode,

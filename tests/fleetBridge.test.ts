@@ -97,8 +97,8 @@ describe('fleet bridge supervisor', () => {
     await live;
     const result = await supervisor.mutate('pairing.invite', { idempotencyKey: 'pair-invite-1' });
     expect(result.invitation?.shortCode.split('-')).toHaveLength(6);
-    expect(result.invitation?.link).toContain('secretToken1234567890A');
-    expect(readFileSync(cachePath, 'utf8')).not.toContain('secretToken1234567890A');
+    expect(result.invitation?.link).toContain('psecretToken1234567890A');
+    expect(readFileSync(cachePath, 'utf8')).not.toContain('psecretToken1234567890A');
     supervisor.stop();
   }, 20_000);
 
@@ -216,9 +216,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     ...(request.method === 'pairing.invite' ? { invitation: {
       invitationId: 'invite-1', shortCode: 'baba-bebe-bibi-bobo-dada-dede',
       bootstrapPeer: 'controller.tailnet.ts.net', expiresAt: '2026-07-12T05:10:00Z',
-      link: 'wtmux://pair?token=secretToken1234567890A',
+      link: 'wtmux://pair?token=psecretToken1234567890A',
       file: { pairingVersion: 1, bootstrapPeer: 'controller.tailnet.ts.net',
-        token: 'secretToken1234567890A', expiresAt: '2026-07-12T05:10:00Z' }
+        token: 'psecretToken1234567890A', expiresAt: '2026-07-12T05:10:00Z' }
     }} : {})
   };
   setTimeout(() => emit({ protocolVersion: 1, type: 'response', requestId: request.requestId,
