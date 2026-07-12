@@ -126,7 +126,10 @@ window.limitsWidget.onUpdaterStateUpdated((state) => {
 
 if (isDashboardView) {
   dashboard?.render();
-  void window.limitsWidget.getFleetState().then((state) => dashboard?.setFleetState(state));
+  void Promise.all([window.limitsWidget.getFleetState(), window.limitsWidget.getSettings()]).then(([state, settings]) => {
+    dashboard?.setSettings(settings.settings);
+    dashboard?.setFleetState(state);
+  });
 }
 else if (isConfigView) void loadConfigView();
 else {

@@ -13,7 +13,8 @@ import {
   type FleetBridgeStatus,
   type FleetBridgeView,
   type FleetMutationMethod,
-  type FleetMutationResult
+  type FleetMutationResult,
+  type FleetDoctorResult
 } from '../shared/fleet-protocol';
 
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
@@ -268,8 +269,9 @@ export class FleetBridgeSupervisor extends EventEmitter {
     const sessionKeys = [...baseKeys, 'sessionId'].sort();
     const invitationKeys = [...baseKeys, 'invitation'].sort();
     const pairingKeys = [...baseKeys, 'pairingRequest'].sort();
+    const doctorKeys = [...baseKeys, 'doctor'].sort();
     if (!sameKeys(keys, baseKeys) && !sameKeys(keys, scheduleKeys) && !sameKeys(keys, sessionKeys)
-      && !sameKeys(keys, invitationKeys) && !sameKeys(keys, pairingKeys)) {
+      && !sameKeys(keys, invitationKeys) && !sameKeys(keys, pairingKeys) && !sameKeys(keys, doctorKeys)) {
       throw new Error('Mutation result fields are invalid');
     }
     if (!safeToken(result.operationId, 160) || !safeToken(result.status, 32)) throw new Error('Mutation result identity is invalid');
@@ -278,6 +280,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
     const snapshot = parseBridgeFleetSnapshot(result.snapshot);
     const invitation = 'invitation' in result ? parsePairingInvitation(result.invitation) : undefined;
     const pairingRequest = 'pairingRequest' in result ? parsePairingProposalReview(result.pairingRequest) : undefined;
+    const doctor = 'doctor' in result ? parseDoctorResult(result.doctor) : undefined;
     this.snapshot = snapshot;
     this.cacheSavedAt = new Date().toISOString();
     this.status = 'live';
@@ -292,6 +295,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
       ...(typeof result.sessionId === 'string' ? { sessionId: result.sessionId } : {}),
       ...(invitation ? { invitation } : {}),
       ...(pairingRequest ? { pairingRequest } : {})
+      , ...(doctor ? { doctor } : {})
     };
     pending.resolve(output);
     this.emitChanged();
@@ -463,10 +467,35 @@ function parsePairingProposalReview(input: unknown): FleetMutationResult['pairin
   };
 }
 
+function parseDoctorResult(input: unknown): FleetDoctorResult {
+  const value = object(input, 'doctor result');
+  exactKeys(value, ['hostId', 'checkedAt', 'status', 'checks'], 'doctor result');
+  if (!safeToken(value.hostId, 160) || !safeText(value.checkedAt, 40)) throw new Error('Doctor identity is invalid');
+  if (value.status !== 'healthy' && value.status !== 'attention' && value.status !== 'failure') {
+    throw new Error('Doctor status is invalid');
+  }
+  if (!Array.isArray(value.checks) || value.checks.length > 32) throw new Error('Doctor checks are invalid');
+  const checks = value.checks.map((inputCheck) => {
+    const check = object(inputCheck, 'doctor check');
+    exactKeys(check, ['id', 'status', 'summary', 'detail'], 'doctor check');
+    if (!safeToken(check.id, 64) || !safeText(check.summary, 256) || !safeTextAllowEmpty(check.detail, 512)) {
+      throw new Error('Doctor check text is invalid');
+    }
+    if (check.status !== 'healthy' && check.status !== 'attention' && check.status !== 'failure') {
+      throw new Error('Doctor check status is invalid');
+    }
+    const status: 'healthy' | 'attention' | 'failure' = check.status;
+    return { id: check.id, status, summary: check.summary, detail: check.detail };
+  });
+  return { hostId: value.hostId, checkedAt: value.checkedAt, status: value.status, checks };
+}
+
 export function fleetBridgeLaunchFromSettings(settings: WidgetSettings): FleetBridgeLaunch {
-  const profile = settings.codexProfiles.find((item) => item.enabled && item.distro && item.user && item.home)
+  const explicitDistro = settings.fleetControllerDistro.trim();
+  const profile = settings.codexProfiles.find((item) => item.distro === explicitDistro && item.user && item.home)
+    ?? settings.codexProfiles.find((item) => item.enabled && item.distro && item.user && item.home)
     ?? settings.codexProfiles.find((item) => item.distro && item.user && item.home);
-  const distro = process.env.AGENT_FLEET_WSL_DISTRO || profile?.distro || 'Ubuntu';
+  const distro = process.env.AGENT_FLEET_WSL_DISTRO || explicitDistro || profile?.distro || 'Ubuntu';
   const args = profile
     ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio', '--pairing']
     : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'];

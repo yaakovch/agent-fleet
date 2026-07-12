@@ -1,6 +1,7 @@
 import type {
   FleetAttention,
   FleetBackend,
+  FleetFavorite,
   FleetHost,
   FleetSchedule,
   FleetSession,
@@ -75,6 +76,7 @@ export interface BridgeFleetSnapshot {
   sessions: BridgeSessionSnapshot[];
   schedules: BridgeScheduleSnapshot[];
   attention: BridgeAttentionSnapshot[];
+  presets: FleetFavorite[];
   pairingRequests: BridgePairingRequest[];
 }
 
@@ -97,7 +99,9 @@ export interface FleetBridgeView {
   errorCode: string;
 }
 
-export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create'
+export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create' | 'schedule.update'
+  | 'host.doctor' | 'host.update' | 'session.rename'
+  | 'preset.upsert' | 'preset.delete'
   | 'pairing.invite' | 'pairing.review' | 'pairing.approve' | 'pairing.reject' | 'pairing.revoke';
 
 export interface PairingInvitation {
@@ -123,15 +127,30 @@ export interface FleetMutationResult {
   sessionId?: string;
   invitation?: PairingInvitation;
   pairingRequest?: PairingProposalReview;
+  doctor?: FleetDoctorResult;
+}
+
+export interface FleetDoctorCheck {
+  id: string;
+  status: 'healthy' | 'attention' | 'failure';
+  summary: string;
+  detail: string;
+}
+
+export interface FleetDoctorResult {
+  hostId: string;
+  checkedAt: string;
+  status: 'healthy' | 'attention' | 'failure';
+  checks: FleetDoctorCheck[];
 }
 
 const FORBIDDEN_KEYS = new Set(['message', 'prompt', 'output', 'transcript', 'panetitle', 'command']);
 
 export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   const candidate = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-  const snapshotFields = 'pairingRequests' in candidate
-    ? ['revision', 'generatedAt', 'hosts', 'sessions', 'schedules', 'attention', 'pairingRequests']
-    : ['revision', 'generatedAt', 'hosts', 'sessions', 'schedules', 'attention'];
+  const snapshotFields = ['revision', 'generatedAt', 'hosts', 'sessions', 'schedules', 'attention'];
+  if ('presets' in candidate) snapshotFields.push('presets');
+  if ('pairingRequests' in candidate) snapshotFields.push('pairingRequests');
   const root = exactObject(input, snapshotFields, 'snapshot');
   rejectPrivateFields(root);
   const revision = text(root.revision, 'revision', 64, false);
@@ -142,14 +161,15 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   const sessions = array(root.sessions, 'sessions', 500).map((value) => parseSession(value, hostIds));
   const schedules = array(root.schedules, 'schedules', 500).map((value) => parseSchedule(value, hostIds));
   const attention = array(root.attention, 'attention', 500).map((value) => parseAttention(value, hostIds));
+  const presets = 'presets' in root ? array(root.presets, 'presets', 100).map((value) => parsePreset(value, hostIds)) : [];
   const pairingRequests = 'pairingRequests' in root
     ? array(root.pairingRequests, 'pairingRequests', 256).map(parsePairingRequest)
     : [];
-  return { revision, generatedAt, hosts, sessions, schedules, attention, pairingRequests };
+  return { revision, generatedAt, hosts, sessions, schedules, attention, presets, pairingRequests };
 }
 
 export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): FleetSnapshot {
-  const sessions = raw.sessions.map(toSession);
+  const sessions = raw.sessions.map((session) => toSession(session, raw.presets));
   const hostTimeZones = new Map(raw.hosts.map((host) => [host.id, host.timeZone]));
   return {
     revision: raw.revision,
@@ -160,7 +180,7 @@ export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): Fleet
     sessions,
     schedules: raw.schedules.map((schedule) => toSchedule(schedule, hostTimeZones.get(schedule.hostId) ?? '')),
     attention: raw.attention.filter((item) => !['dismissed', 'scheduled', 'resolved'].includes(item.state)).map(toAttention),
-    favorites: [],
+    favorites: raw.presets,
     events: [],
     pairingRequests: raw.pairingRequests,
     limits: []
@@ -284,6 +304,21 @@ function parsePairingRequest(input: unknown): BridgePairingRequest {
   };
 }
 
+function parsePreset(input: unknown, hostIds: Set<string>): FleetFavorite {
+  const value = exactObject(input, ['id', 'name', 'hostId', 'project', 'backend', 'tool', 'profileAlias'], 'preset');
+  const hostId = text(value.hostId, 'preset.hostId', 160, false);
+  if (!hostIds.has(hostId)) fail('preset references an unknown host');
+  return {
+    id: text(value.id, 'preset.id', 160, false),
+    name: text(value.name, 'preset.name', 128, false),
+    hostId,
+    project: text(value.project, 'preset.project', 128, false),
+    backend: oneOf(value.backend, 'preset.backend', ['linux', 'windows']),
+    tool: oneOf(value.tool, 'preset.tool', ['shell', 'codex', 'claude', 'copilot']),
+    profileAlias: text(value.profileAlias, 'preset.profileAlias', 64)
+  };
+}
+
 function toHost(host: BridgeHostSnapshot, sessions: FleetSession[]): FleetHost {
   const status = host.status === 'healthy' ? 'healthy' : 'offline';
   return {
@@ -301,7 +336,7 @@ function toHost(host: BridgeHostSnapshot, sessions: FleetSession[]): FleetHost {
   };
 }
 
-function toSession(session: BridgeSessionSnapshot): FleetSession {
+function toSession(session: BridgeSessionSnapshot, presets: FleetFavorite[]): FleetSession {
   return {
     id: session.id,
     hostId: session.hostId,
@@ -316,7 +351,8 @@ function toSession(session: BridgeSessionSnapshot): FleetSession {
     attached: session.attached,
     updatedAt: session.updatedAt,
     pendingScheduleCount: session.pendingScheduleCount,
-    favorite: false
+    favorite: presets.some((preset) => preset.hostId === session.hostId && preset.project === session.project
+      && preset.backend === session.backend && preset.tool === session.tool)
   };
 }
 

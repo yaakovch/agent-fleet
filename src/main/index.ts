@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   screen,
   session,
   shell,
@@ -44,8 +45,8 @@ import {
 } from './settings-store';
 import { LimitStateManager } from './state-manager';
 import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
-import { openFleetTerminal } from './fleet-terminal';
-import type { FleetBridgeView } from '../shared/fleet-protocol';
+import { openFleetTerminal, openFleetVscode } from './fleet-terminal';
+import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
 import { loadWindowPosition, saveWindowPosition } from './window-state';
@@ -83,6 +84,11 @@ let updater: UpdaterManager | null = null;
 let isQuitting = false;
 let interactionMode: InteractionMode = 'passive';
 const pendingImports = new Map<string, WidgetSettings>();
+const notifiedAttention = new Set<string>();
+const previousHostStates = new Map<string, string>();
+const previousScheduleStates = new Map<string, string>();
+let notificationBaselineReady = false;
+const lastDoctorResults = new Map<string, FleetDoctorResult>();
 
 function createFleetBridge(): FleetBridgeSupervisor {
   const bridge = new FleetBridgeSupervisor({
@@ -91,7 +97,9 @@ function createFleetBridge(): FleetBridgeSupervisor {
     logger
   });
   bridge.on('changed', () => {
-    broadcast(IPC_CHANNELS.fleetStateUpdated, getFleetView());
+    const view = getFleetView();
+    broadcast(IPC_CHANNELS.fleetStateUpdated, view);
+    processFleetNotifications(view);
     updateTrayMenu();
     updateTrayTooltip();
   });
@@ -109,6 +117,63 @@ function getFleetView(): FleetBridgeView {
     status: provider.status === 'ok' ? 'ok' : provider.status === 'stale' ? 'stale' : 'error'
   }));
   return view;
+}
+
+async function pauseFleetNotifications(): Promise<{ ok: true; message: string; settings: WidgetSettings }> {
+  const until = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const result = await applyAndPersistSettings({ ...cloneSettings(appSettings), notificationPauseUntil: until });
+  return { ok: true, message: `Notifications paused until ${new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, settings: result.settings };
+}
+
+function processFleetNotifications(view: FleetBridgeView): void {
+  if (view.status !== 'live') return;
+  const snapshot = view.snapshot;
+  if (!notificationBaselineReady) {
+    for (const host of snapshot.hosts) previousHostStates.set(host.id, host.status);
+    for (const schedule of snapshot.schedules) previousScheduleStates.set(schedule.id, schedule.status);
+    for (const attention of snapshot.attention) notifiedAttention.add(attention.id);
+    notificationBaselineReady = true;
+    return;
+  }
+  const paused = appSettings.notificationPauseUntil && Date.parse(appSettings.notificationPauseUntil) > Date.now();
+  if (paused || !Notification.isSupported()) return;
+  const preferences = appSettings.fleetNotifications;
+
+  for (const host of snapshot.hosts) {
+    const previous = previousHostStates.get(host.id);
+    previousHostStates.set(host.id, host.status);
+    if (!preferences.hostState || !previous || previous === host.status) continue;
+    if (host.status === 'offline') showFleetNotification(`${host.name} is offline`, host.detail);
+    else if (previous === 'offline' && host.status === 'healthy') showFleetNotification(`${host.name} recovered`, 'The host is connected and live actions are available again.');
+  }
+
+  for (const schedule of snapshot.schedules) {
+    const previous = previousScheduleStates.get(schedule.id);
+    previousScheduleStates.set(schedule.id, schedule.status);
+    if (!previous || previous === schedule.status || schedule.status === 'pending') continue;
+    if (schedule.status === 'delivered' && preferences.deliverySuccess) {
+      showFleetNotification('Scheduled continue delivered', `${schedule.hostId} · ${schedule.summary}`);
+    } else if (preferences.deliveryFailures && ['failed', 'interrupted'].includes(schedule.status)) {
+      showFleetNotification(`Scheduled continue ${schedule.status}`, schedule.detail || `${schedule.hostId} did not deliver the action.`);
+    }
+  }
+
+  for (const attention of snapshot.attention) {
+    if (notifiedAttention.has(attention.id)) continue;
+    notifiedAttention.add(attention.id);
+    const enabled = attention.kind === 'hard-limit' ? preferences.hardLimits
+      : attention.kind === 'delivery' ? preferences.deliveryFailures
+        : attention.kind === 'host' ? preferences.hostState
+          : attention.kind === 'version' ? preferences.versionDrift
+            : preferences.pairing;
+    if (enabled) showFleetNotification(attention.title, attention.detail);
+  }
+}
+
+function showFleetNotification(title: string, body: string): void {
+  const notification = new Notification({ title, body, silent: false });
+  notification.on('click', () => showDashboard());
+  notification.show();
 }
 
 function createWindow(): void {
@@ -274,15 +339,18 @@ function updateTrayMenu(): void {
         click: () => setWidgetInteractionMode(isActive ? 'passive' : 'active')
       },
       {
-        label: mainWindow?.isVisible() ? 'Hide limits overlay' : 'Show limits overlay',
+        label: 'Show limits overlay',
+        type: 'checkbox',
+        checked: appSettings.limitsOverlayEnabled,
         click: () => {
-          if (mainWindow?.isVisible()) mainWindow.hide();
-          else setWidgetInteractionMode('passive');
-          updateTrayMenu();
+          void applyAndPersistSettings({
+            ...cloneSettings(appSettings),
+            limitsOverlayEnabled: !appSettings.limitsOverlayEnabled
+          });
         }
       },
       { label: 'Refresh fleet', click: () => { fleetBridge.refresh(); void stateManager.refreshAll(); } },
-      { label: 'Pause notifications for 1 hour', click: () => showDashboard() },
+      { label: 'Pause notifications for 1 hour', click: () => void pauseFleetNotifications() },
       { label: 'Settings', click: () => createSettingsWindow() },
       ...(!appSettings.onboardingComplete
         ? [{ label: 'Finish setup', click: () => createSettingsWindow('onboarding') }]
@@ -333,6 +401,10 @@ function findWorstLimit(state: CombinedLimitState): { label: string; remaining: 
   return worst;
 }
 
+function shellWord(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function formatTooltipPercent(value: number): string {
   return `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
 }
@@ -363,6 +435,7 @@ function setWidgetInteractionMode(mode: InteractionMode): InteractionMode {
 async function applyAndPersistSettings(settings: WidgetSettings): Promise<SettingsLoadResult> {
   let message: string | undefined;
   const previousLaunch = fleetBridgeLaunchFromSettings(appSettings);
+  const overlayWasEnabled = appSettings.limitsOverlayEnabled;
   appSettings = saveSettings(settings, getSettingsPath(dataDirectory));
   try {
     applyLaunchOnLogin(appSettings.launchOnLogin);
@@ -380,6 +453,8 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
   }
   updater?.setEnabled(appSettings.automaticUpdates);
   if (mainWindow) applyInteractionMode(mainWindow, interactionMode, appSettings);
+  if (mainWindow && !appSettings.limitsOverlayEnabled) mainWindow.hide();
+  else if (mainWindow && !overlayWasEnabled && appSettings.limitsOverlayEnabled) setWidgetInteractionMode('passive');
   updateTrayMenu();
   updateTrayTooltip();
   void stateManager.refreshAll();
@@ -466,6 +541,82 @@ handle(IPC_CHANNELS.killFleetSession, async (_event, sessionId) => {
     return fleetMutationFailure(error);
   }
 });
+handle(IPC_CHANNELS.renameFleetSession, async (_event, sessionId, name) => {
+  if (typeof sessionId !== 'string' || typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/u.test(name)) {
+    return { ok: false, message: 'Choose a short session name using letters, numbers, spaces, dots, dashes, or underscores' };
+  }
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session) return { ok: false, message: 'Session is no longer available' };
+  try {
+    await fleetBridge.mutate('session.rename', {
+      hostId: session.hostId, sessionId: session.id, name, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: `Session renamed to ${name}` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.copyFleetAttachCommand, (_event, sessionId) => {
+  if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session?.internalName) return { ok: false, message: 'Session is no longer available' };
+  const command = [
+    'wtmux', '--host', shellWord(session.hostId), '--project', shellWord(session.project),
+    '--session', shellWord(session.internalName), '--fast'
+  ].join(' ');
+  clipboard.writeText(command);
+  return { ok: true, message: 'Attach command copied' };
+});
+handle(IPC_CHANNELS.toggleFleetFavorite, async (_event, sessionId) => {
+  if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
+  const fleet = getFleetView().snapshot;
+  const session = fleet.sessions.find((item) => item.id === sessionId);
+  if (!session) return { ok: false, message: 'Session is no longer available' };
+  const existing = fleet.favorites.find((item) => item.hostId === session.hostId && item.project === session.project
+    && item.backend === session.backend && item.tool === session.tool);
+  try {
+    if (existing) {
+      await fleetBridge.mutate('preset.delete', { presetId: existing.id, idempotencyKey: randomUUID() });
+      return { ok: true, message: 'Favorite removed' };
+    }
+    await fleetBridge.mutate('preset.upsert', {
+      preset: {
+        id: `favorite-${randomUUID()}`,
+        name: `${session.project} · ${session.tool}`,
+        hostId: session.hostId,
+        project: session.project,
+        backend: session.backend,
+        tool: session.tool,
+        profileAlias: session.profileAlias ?? ''
+      },
+      idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Favorite saved to the fleet preset registry' };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.launchFleetFavorite, async (_event, presetId) => {
+  if (typeof presetId !== 'string') return { ok: false, message: 'Favorite is invalid' };
+  const fleet = getFleetView().snapshot;
+  const preset = fleet.favorites.find((item) => item.id === presetId);
+  const host = preset ? fleet.hosts.find((item) => item.id === preset.hostId && item.status === 'healthy') : undefined;
+  if (!preset || !host) return { ok: false, message: 'Favorite host is offline or no longer available' };
+  try {
+    const result = await fleetBridge.mutate('session.create', {
+      hostId: preset.hostId,
+      project: preset.project,
+      backend: preset.backend === 'windows' ? 'windows' : 'linux',
+      tool: preset.tool,
+      idempotencyKey: randomUUID()
+    });
+    if (!result.sessionId) return { ok: true, message: `Created ${preset.name}` };
+    const opened = await openFleetSessionById(result.sessionId);
+    return { ok: opened.ok, message: opened.ok ? `Created and opened ${preset.name}` : `Created ${preset.name}; ${opened.message}` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
 handle(IPC_CHANNELS.cancelFleetSchedule, async (_event, scheduleId) => {
   if (typeof scheduleId !== 'string') return { ok: false, message: 'Schedule is invalid' };
   const schedule = getFleetView().snapshot.schedules.find((item) => item.id === scheduleId);
@@ -505,6 +656,51 @@ handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliv
     return fleetMutationFailure(error);
   }
 });
+handle(IPC_CHANNELS.updateFleetSchedule, async (_event, scheduleId, deliverAt) => {
+  if (typeof scheduleId !== 'string' || typeof deliverAt !== 'string') {
+    return { ok: false, message: 'Schedule or time is invalid' };
+  }
+  const schedule = getFleetView().snapshot.schedules.find((item) => item.id === scheduleId);
+  const instant = Date.parse(deliverAt);
+  if (!schedule || schedule.status !== 'pending') return { ok: false, message: 'Pending schedule is no longer available' };
+  if (!Number.isFinite(instant) || instant <= Date.now()) return { ok: false, message: 'Choose a future delivery time' };
+  try {
+    await fleetBridge.mutate('schedule.update', {
+      hostId: schedule.hostId,
+      scheduleId: schedule.id,
+      deliverAt: new Date(instant).toISOString(),
+      idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Scheduled delivery time updated' };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.runFleetDoctor, async (_event, hostId) => {
+  if (typeof hostId !== 'string') return { ok: false, message: 'Host is invalid' };
+  const host = getFleetView().snapshot.hosts.find((item) => item.id === hostId);
+  if (!host) return { ok: false, message: 'Host is no longer available' };
+  try {
+    const result = await fleetBridge.mutate('host.doctor', { hostId, idempotencyKey: randomUUID() });
+    if (!result.doctor) return { ok: false, message: 'Host returned no diagnostic result' };
+    lastDoctorResults.set(hostId, result.doctor);
+    return { ok: true, message: `Doctor completed: ${result.doctor.status}`, doctor: result.doctor };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.updateFleetHost, async (_event, hostId) => {
+  if (typeof hostId !== 'string') return { ok: false, message: 'Host is invalid' };
+  const host = getFleetView().snapshot.hosts.find((item) => item.id === hostId);
+  if (!host) return { ok: false, message: 'Host is no longer available' };
+  try {
+    const result = await fleetBridge.mutate('host.update', { hostId, idempotencyKey: randomUUID() });
+    return { ok: true, message: result.status === 'up-to-date' ? `${host.name} is already up to date` : `${host.name} updated and verified` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.pauseFleetNotifications, () => pauseFleetNotifications());
 handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool) => {
   if (![hostId, project, backend, tool].every((value) => typeof value === 'string')) {
     return { ok: false, message: 'Launcher selection is invalid' };
@@ -591,13 +787,25 @@ async function openFleetSessionById(sessionId: string): Promise<{ ok: boolean; m
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
   if (!session || !session.internalName) return { ok: false, message: 'Session is no longer available' };
   try {
-    await openFleetTerminal({
+    const target = {
       id: session.id,
       hostId: session.hostId,
       project: session.project,
       sessionName: session.internalName,
       label: session.name
-    }, fleetBridgeLaunchFromSettings(appSettings).distro);
+    };
+    const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
+    if (appSettings.fleetOpenTarget === 'vscode') {
+      try {
+        await openFleetVscode(target, distro);
+        return { ok: true, message: `Opening ${session.name} in VS Code` };
+      } catch (error) {
+        logger.warn('VS Code wtmux integration unavailable; falling back to Windows Terminal', error);
+        await openFleetTerminal(target, distro);
+        return { ok: true, message: `Opening ${session.name} in Windows Terminal · repair the wtmux VS Code extension to use the current window` };
+      }
+    }
+    await openFleetTerminal(target, distro);
     return { ok: true, message: `Opening ${session.name}` };
   } catch (error) {
     logger.warn('Could not open fleet session terminal', error);
@@ -673,9 +881,11 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
   if (result.canceled || !result.filePath) return { canceled: true, message: 'Diagnostics export canceled' };
   await writeDiagnosticsArchive(result.filePath, {
     app: getAppInfo(),
-    settings: appSettings,
+    settings: { ...cloneSettings(appSettings), notificationPauseUntil: null },
     state: stateManager.getState(),
-    logPath: getLogPath(dataDirectory)
+    logPath: getLogPath(dataDirectory),
+    fleet: getFleetView(),
+    doctors: [...lastDoctorResults.values()]
   });
   return { canceled: false, message: `Diagnostics exported to ${basename(result.filePath)}`, path: result.filePath };
 });

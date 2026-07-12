@@ -1056,6 +1056,10 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .host-card dd,
 .registry-card dd { margin: 3px 0 0; font-size: 8px; }
 .host-card-actions { display: flex; justify-content: space-between; gap: 7px; }
+.doctor-results { display: grid; gap: 8px; margin: 16px 0; text-align: left; }
+.doctor-check { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.doctor-check div { display: grid; gap: 3px; }
+.doctor-check small { color: var(--muted); }
 .pairing-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(250px, 0.65fr); gap: 14px; }
 .pair-methods { display: flex; gap: 5px; padding: 12px 13px 0; }
 .pair-preview { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 14px; padding: 13px; }

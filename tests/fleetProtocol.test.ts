@@ -46,4 +46,18 @@ describe('fleet protocol v1', () => {
     payload.pairingRequests[0].token = 'secret';
     expect(() => parseBridgeFleetSnapshot(payload)).toThrow(/fields are invalid|private field/i);
   });
+
+  it('accepts strict fleet presets and marks matching sessions as favorites', () => {
+    const payload = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    payload.presets = [{
+      id: 'favorite-1', name: 'Demo Codex', hostId: payload.hosts[0].id,
+      project: payload.sessions[0].project, backend: payload.sessions[0].backend,
+      tool: payload.sessions[0].tool, profileAlias: ''
+    }];
+    const snapshot = toFleetSnapshot(parseBridgeFleetSnapshot(payload), 'Ubuntu');
+    expect(snapshot.favorites).toHaveLength(1);
+    expect(snapshot.sessions[0].favorite).toBe(true);
+    payload.presets[0].prompt = 'secret';
+    expect(() => parseBridgeFleetSnapshot(payload)).toThrow(/fields are invalid|private field/i);
+  });
 });

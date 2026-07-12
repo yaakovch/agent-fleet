@@ -53,7 +53,8 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
-import type { FleetBridgeView } from '../../shared/fleet-protocol';
+import type { FleetBridgeView, FleetDoctorResult } from '../../shared/fleet-protocol';
+import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
 import { FLEET_FIXTURE } from './fleet-fixtures';
 
 type DashboardView = 'overview' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
@@ -63,8 +64,10 @@ type ModalState = {
   body: string;
   confirm: string;
   destructive?: boolean;
-  action?: { kind: 'kill-session' | 'cancel-schedule' | 'create-schedule'; id: string };
+  action?: { kind: 'kill-session' | 'cancel-schedule' | 'create-schedule' | 'update-schedule' | 'rename-session' | 'update-host'; id: string };
   deliverAt?: string;
+  textValue?: string;
+  doctor?: FleetDoctorResult;
 } | null;
 
 const dashboardIcons = {
@@ -132,6 +135,8 @@ export class DashboardPrototype {
   private snapshot: FleetSnapshot;
   private cacheSavedAt: string | null = null;
   private launcherHostId = '';
+  private settings: WidgetSettings = createDefaultSettings();
+  private settingsDraft: WidgetSettings = createDefaultSettings();
 
   constructor(
     private readonly root: HTMLElement,
@@ -151,12 +156,22 @@ export class DashboardPrototype {
         this.render();
         return;
       }
+      if (select.dataset.fleetSetting !== undefined) {
+        this.updateSettingsDraft(select);
+        return;
+      }
       if (select.dataset.dashboardScenario === undefined) return;
       this.scenario = isScenario(select.value) ? select.value : 'live';
       this.modal = null;
       this.toast = '';
       this.render();
     });
+  }
+
+  setSettings(settings: WidgetSettings): void {
+    this.settings = cloneSettings(settings);
+    this.settingsDraft = cloneSettings(settings);
+    this.render();
   }
 
   setFleetState(view: FleetBridgeView): void {
@@ -222,6 +237,22 @@ export class DashboardPrototype {
       if (host) this.confirmRepair(host);
       return true;
     }
+    if (action === 'dashboard-doctor-host') {
+      const host = this.hostFromControl(control);
+      if (!host) return this.showToast('Host is no longer available');
+      this.showToast(`Running doctor on ${host.name}…`);
+      void window.limitsWidget.runFleetDoctor(host.id).then((result) => {
+        if (!result.doctor) return this.showToast(result.message);
+        this.modal = {
+          title: `${host.name} diagnostics`,
+          body: `Checked ${formatDateTime(result.doctor.checkedAt)} · ${capitalize(result.doctor.status)}`,
+          confirm: 'Done',
+          doctor: result.doctor
+        };
+        this.render();
+      });
+      return true;
+    }
     if (action === 'modal-cancel') {
       this.modal = null;
       this.render();
@@ -231,9 +262,10 @@ export class DashboardPrototype {
       const pending = this.modal?.action;
       const sessionId = this.root.querySelector<HTMLSelectElement>('[data-modal-session]')?.value;
       const localTime = this.root.querySelector<HTMLInputElement>('[data-modal-deliver-at]')?.value;
+      const textValue = this.root.querySelector<HTMLInputElement>('[data-modal-text]')?.value;
       this.modal = null;
       this.render();
-      if (pending) void this.executeMutation(pending, sessionId, localTime);
+      if (pending) void this.executeMutation(pending, sessionId, localTime, textValue);
       return true;
     }
     if (action === 'dashboard-open-session') {
@@ -242,7 +274,25 @@ export class DashboardPrototype {
       void window.limitsWidget.openFleetSession(session.id).then((result) => this.showToast(result.message));
       return true;
     }
-    if (action === 'dashboard-copy') return this.showToast('Attach command copied');
+    if (action === 'dashboard-copy') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      void window.limitsWidget.copyFleetAttachCommand(session.id).then((result) => this.showToast(result.message));
+      return true;
+    }
+    if (action === 'dashboard-rename-session') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      this.modal = {
+        title: `Rename ${session.name}`,
+        body: 'This changes the managed display name while preserving the internal tmux identity and pending schedules.',
+        confirm: 'Rename session',
+        action: { kind: 'rename-session', id: session.id },
+        textValue: session.name
+      };
+      this.render();
+      return true;
+    }
     if (action === 'dashboard-launch') {
       const hostId = this.root.querySelector<HTMLSelectElement>('[data-launcher-host]')?.value;
       const project = this.root.querySelector<HTMLSelectElement>('[data-launcher-project]')?.value;
@@ -258,7 +308,19 @@ export class DashboardPrototype {
       this.openScheduleModal();
       return true;
     }
-    if (action === 'dashboard-edit-schedule') return this.showToast('Pending schedule is ready to edit');
+    if (action === 'dashboard-edit-schedule') {
+      const schedule = this.scheduleFromControl(control);
+      if (!schedule || schedule.status !== 'pending') return this.showToast('Pending schedule is no longer available');
+      this.modal = {
+        title: 'Edit scheduled delivery',
+        body: 'Only the delivery time changes. The guarded destination session and schedule identity stay the same.',
+        confirm: 'Update delivery time',
+        action: { kind: 'update-schedule', id: schedule.id },
+        deliverAt: schedule.deliverAt
+      };
+      this.render();
+      return true;
+    }
     if (action === 'dashboard-pair') {
       void window.limitsWidget.createFleetPairingInvitation().then((result) => this.showToast(result.message));
       return true;
@@ -269,7 +331,22 @@ export class DashboardPrototype {
       void window.limitsWidget.reviewFleetPairing(requestId).then((result) => this.showToast(result.message));
       return true;
     }
-    if (action === 'dashboard-pause') return this.showToast('Fleet notifications paused on this PC for one hour');
+    if (action === 'dashboard-pause') {
+      void window.limitsWidget.pauseFleetNotifications().then((result) => {
+        this.settings = cloneSettings(result.settings);
+        this.settingsDraft = cloneSettings(result.settings);
+        this.showToast(result.message);
+      });
+      return true;
+    }
+    if (action === 'dashboard-save-settings') {
+      void window.limitsWidget.saveSettings(this.settingsDraft).then((result) => {
+        this.settings = cloneSettings(result.settings);
+        this.settingsDraft = cloneSettings(result.settings);
+        this.showToast(result.message ?? 'Settings saved');
+      });
+      return true;
+    }
     if (action === 'dashboard-refresh') {
       void window.limitsWidget.refreshFleet();
       return this.showToast('Fleet refresh requested');
@@ -283,7 +360,17 @@ export class DashboardPrototype {
       }
       return this.showToast(this.snapshot.attention.length ? 'Choose an attention item' : 'Nothing needs attention');
     }
-    if (action === 'dashboard-favorite') return this.showToast('Favorite launcher selected');
+    if (action === 'dashboard-favorite') {
+      const presetId = control.dataset.presetId;
+      if (presetId) {
+        void window.limitsWidget.launchFleetFavorite(presetId).then((result) => this.showToast(result.message));
+        return true;
+      }
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      void window.limitsWidget.toggleFleetFavorite(session.id).then((result) => this.showToast(result.message));
+      return true;
+    }
     return false;
   }
 
@@ -296,12 +383,23 @@ export class DashboardPrototype {
   private async executeMutation(
     action: NonNullable<ModalState>['action'],
     selectedSessionId?: string,
-    localTime?: string
+    localTime?: string,
+    textValue?: string
   ): Promise<void> {
     if (!action) return;
     let result: { ok: boolean; message: string };
     if (action.kind === 'kill-session') result = await window.limitsWidget.killFleetSession(action.id);
     else if (action.kind === 'cancel-schedule') result = await window.limitsWidget.cancelFleetSchedule(action.id);
+    else if (action.kind === 'update-host') result = await window.limitsWidget.updateFleetHost(action.id);
+    else if (action.kind === 'update-schedule' && localTime) {
+      const instant = new Date(localTime);
+      result = Number.isFinite(instant.getTime())
+        ? await window.limitsWidget.updateFleetSchedule(action.id, instant.toISOString())
+        : { ok: false, message: 'Choose a valid future time' };
+    }
+    else if (action.kind === 'rename-session' && textValue) {
+      result = await window.limitsWidget.renameFleetSession(action.id, textValue.trim());
+    }
     else if (!selectedSessionId || !localTime) result = { ok: false, message: 'Choose a session and future time' };
     else {
       const instant = new Date(localTime);
@@ -405,7 +503,7 @@ export class DashboardPrototype {
         </article>
         <article class="fleet-card favorites-card">
           <div class="card-heading"><div><h2>Quick launch</h2><p>Your favorite presets</p></div>${icon('star')}</div>
-          <div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('play')}</button>`).join('')}</div>
+          <div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite" data-preset-id="${escapeAttr(favorite.id)}"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('play')}</button>`).join('')}</div>
           <button class="favorite-new" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button>
         </article>
         <article class="fleet-card limit-card">
@@ -450,7 +548,7 @@ export class DashboardPrototype {
         <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host revalidates the project and fixed tool enum before launch.</p></div><button class="primary-button" data-action="dashboard-launch" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Launch and open</button></div>
       </section>
       <aside class="dashboard-stack">
-        <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>
+        <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite" data-preset-id="${escapeAttr(favorite.id)}"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>
         <section class="fleet-card launch-safety"><h2>${icon('shield-check')}Launch safety</h2><p>Projects, tools, backends, and profile aliases come from validated registry data. Raw shell text is never evaluated.</p><a>${icon('external-link')}Run host doctor</a></section>
       </aside>
     </div>`;
@@ -476,12 +574,45 @@ export class DashboardPrototype {
   }
 
   private renderSettings(): string {
+    const draft = this.settingsDraft;
+    const distros = [...new Set([
+      draft.fleetControllerDistro,
+      ...draft.codexProfiles.map((profile) => profile.distro).filter(Boolean)
+    ])];
+    const dirty = JSON.stringify(draft) !== JSON.stringify(this.settings);
     return `<div class="settings-dashboard-grid">
-      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>This PC</h2><p>Local controller and terminal behavior</p></div>${icon('laptop')}</div><div class="dashboard-form-grid">${selectField('Controller WSL distribution', 'Ubuntu-24.04', ['Ubuntu-24.04', 'Ubuntu', 'Debian'])}${selectField('Open sessions in', 'Windows Terminal', ['Windows Terminal', 'Current VS Code window'])}<label class="toggle-row"><span><strong>Launch Agent Fleet on login</strong><small>Recommended for fleet notifications</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Show limits overlay</strong><small>Transparent, click-through companion window</small></span><input type="checkbox" checked></label></div></section>
-      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Notifications</h2><p>All enabled Agent Fleet PCs may notify for the fleet</p></div>${icon('bell')}</div><div class="dashboard-form-grid"><label class="toggle-row"><span><strong>Hard limits and delivery failures</strong><small>Critical attention</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Host offline and recovery</strong><small>After three missed heartbeats</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Schedule delivery success</strong><small>Deduplicated across restarts</small></span><input type="checkbox" checked></label><label class="toggle-row"><span><strong>Version drift and pairing</strong><small>Actionable fleet changes</small></span><input type="checkbox" checked></label></div><button class="quiet-button" data-action="dashboard-pause">${icon('pause')}Pause on this PC for one hour</button></section>
+      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>This PC</h2><p>Local controller and terminal behavior</p></div>${icon('laptop')}</div><div class="dashboard-form-grid">
+        <label>Controller WSL distribution<select data-fleet-setting="fleetControllerDistro">${distros.map((distro) => `<option value="${escapeAttr(distro)}" ${distro === draft.fleetControllerDistro ? 'selected' : ''}>${escapeHtml(distro)}</option>`).join('')}</select></label>
+        <label>Open sessions in<select data-fleet-setting="fleetOpenTarget"><option value="windowsTerminal" ${draft.fleetOpenTarget === 'windowsTerminal' ? 'selected' : ''}>Windows Terminal</option><option value="vscode" ${draft.fleetOpenTarget === 'vscode' ? 'selected' : ''}>Current VS Code window</option></select></label>
+        ${settingsToggle('launchOnLogin', 'Launch Agent Fleet on login', 'Recommended for fleet notifications', draft.launchOnLogin)}
+        ${settingsToggle('limitsOverlayEnabled', 'Show limits overlay', 'Transparent, click-through companion window', draft.limitsOverlayEnabled)}
+      </div></section>
+      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Notifications</h2><p>All enabled Agent Fleet PCs may notify for the fleet</p></div>${icon('bell')}</div><div class="dashboard-form-grid">
+        ${notificationToggle('hardLimits', 'Hard limits', 'Critical usage-limit attention', draft)}
+        ${notificationToggle('deliveryFailures', 'Delivery failures', 'Interrupted or failed schedules', draft)}
+        ${notificationToggle('deliverySuccess', 'Schedule delivery success', 'Deduplicated across restarts', draft)}
+        ${notificationToggle('hostState', 'Host offline and recovery', 'After three missed heartbeats', draft)}
+        ${notificationToggle('versionDrift', 'Version drift', 'Actionable runtime changes', draft)}
+        ${notificationToggle('pairing', 'Pairing requests', 'New verified device proposals', draft)}
+      </div><div class="inline-dashboard-actions"><button class="quiet-button" data-action="dashboard-pause">${icon('pause')}Pause for one hour</button><button class="primary-button" data-action="dashboard-save-settings" ${dirty ? '' : 'disabled'}>${icon('check')}Save changes</button></div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Tray appearance</h2><p>Worst unresolved fleet state controls severity</p></div>${icon('gauge')}</div><div class="tray-variants"><span><i class="status-healthy"></i>Healthy</span><span><i class="status-attention"></i>Attention</span><span><i class="status-failure"></i>Failure</span><span><i class="status-offline"></i>Disconnected</span></div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Privacy and diagnostics</h2><p>Metadata only, local and bounded</p></div>${icon('shield-check')}</div><p class="privacy-copy">Prompts, responses, transcripts, terminal screens, and credentials are never collected. Diagnostics are generated only when requested and can be previewed before sharing.</p><div class="inline-dashboard-actions"><button class="quiet-button">${icon('folder-open')}Preview diagnostics</button><button class="quiet-button">${icon('wrench')}Run doctor</button></div></section>
     </div>`;
+  }
+
+  private updateSettingsDraft(control: HTMLInputElement | HTMLSelectElement): void {
+    const key = control.dataset.fleetSetting;
+    const checked = control instanceof HTMLInputElement ? control.checked : false;
+    if (key === 'fleetControllerDistro') this.settingsDraft.fleetControllerDistro = control.value;
+    else if (key === 'fleetOpenTarget' && (control.value === 'windowsTerminal' || control.value === 'vscode')) {
+      this.settingsDraft.fleetOpenTarget = control.value;
+    } else if (key === 'launchOnLogin') this.settingsDraft.launchOnLogin = checked;
+    else if (key === 'limitsOverlayEnabled') this.settingsDraft.limitsOverlayEnabled = checked;
+    else if (key?.startsWith('notification.')) {
+      const category = key.slice('notification.'.length) as keyof WidgetSettings['fleetNotifications'];
+      if (category in this.settingsDraft.fleetNotifications) this.settingsDraft.fleetNotifications[category] = checked;
+    }
+    this.render();
   }
 
   private renderAttention(item: FleetAttention): string {
@@ -496,7 +627,7 @@ export class DashboardPrototype {
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
-      <span class="session-actions"><button data-action="dashboard-open-session" title="Open in Windows Terminal">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
+      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-copy" title="Copy attach command">${icon('copy')}</button><button class="quiet-button" data-action="dashboard-rename-session" title="Rename session">${icon('sliders-horizontal')}</button><button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
     </div>`;
   }
 
@@ -512,12 +643,12 @@ export class DashboardPrototype {
       : offline
         ? `<button class="primary-button" data-action="dashboard-refresh" title="Retry this host connection">${icon('refresh-cw')}Retry connection</button>`
         : `<button class="quiet-button">${icon('more-horizontal')}More</button>`;
-    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${host.sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(host.wtmuxVersion)}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>v${host.protocolVersion}</dd></div></dl><div class="host-card-actions"><button class="quiet-button">${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
+    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${host.sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(host.wtmuxVersion)}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>v${host.protocolVersion}</dd></div></dl><div class="host-card-actions"><button class="quiet-button" data-action="dashboard-doctor-host" ${offline ? 'disabled' : ''}>${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
   }
 
   private renderScheduleRow(schedule: FleetSchedule): string {
     const session = this.snapshot.sessions.find((item) => item.id === schedule.sessionId);
-    return `<div class="schedule-row" data-schedule-id="${escapeAttr(schedule.id)}"><span><strong>${escapeHtml(session?.name ?? 'Ended session')}</strong><small>${escapeHtml(schedule.hostId)} · ${escapeHtml(session?.project ?? 'unknown')}</small></span><span><q>${escapeHtml(schedule.summary)}</q><small>Created ${relativeTime(schedule.createdAt)}</small></span><span><strong>${formatDateTime(schedule.completedAt ?? schedule.deliverAt)}</strong><small>${escapeHtml(schedule.hostTimeZone)}</small></span><span><b class="schedule-status schedule-${schedule.status}">${scheduleStatusIcon(schedule.status)}${capitalize(schedule.status)}</b>${schedule.detail ? `<small>${escapeHtml(schedule.detail)}</small>` : ''}</span><span class="schedule-actions">${schedule.status === 'pending' ? `<button class="danger-quiet" data-action="dashboard-cancel-schedule">Cancel</button>` : ''}</span></div>`;
+    return `<div class="schedule-row" data-schedule-id="${escapeAttr(schedule.id)}"><span><strong>${escapeHtml(session?.name ?? 'Ended session')}</strong><small>${escapeHtml(schedule.hostId)} · ${escapeHtml(session?.project ?? 'unknown')}</small></span><span><q>${escapeHtml(schedule.summary)}</q><small>Created ${relativeTime(schedule.createdAt)}</small></span><span><strong>${formatDateTime(schedule.completedAt ?? schedule.deliverAt)}</strong><small>${escapeHtml(schedule.hostTimeZone)}</small></span><span><b class="schedule-status schedule-${schedule.status}">${scheduleStatusIcon(schedule.status)}${capitalize(schedule.status)}</b>${schedule.detail ? `<small>${escapeHtml(schedule.detail)}</small>` : ''}</span><span class="schedule-actions">${schedule.status === 'pending' ? `<button class="quiet-button" data-action="dashboard-edit-schedule">Edit</button><button class="danger-quiet" data-action="dashboard-cancel-schedule">Cancel</button>` : ''}</span></div>`;
   }
 
   private renderEmptyState(): string {
@@ -556,7 +687,8 @@ export class DashboardPrototype {
     this.modal = {
       title: `Update runtime on ${host.name}?`,
       body: `${host.machine}. Installed ${host.wtmuxVersion}; controller offers 1.4.0-dev. The checksummed runtime activates atomically and rolls back if its self-check fails.`,
-      confirm: 'Update and verify'
+      confirm: 'Update and verify',
+      action: { kind: 'update-host', id: host.id }
     };
     this.render();
   }
@@ -564,8 +696,17 @@ export class DashboardPrototype {
   private renderModal(modal: NonNullable<ModalState>): string {
     const scheduleForm = modal.action?.kind === 'create-schedule'
       ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${this.snapshot.sessions.map((session) => `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(session.name)} · ${escapeHtml(session.hostId)}</option>`).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
+      : modal.action?.kind === 'update-schedule'
+        ? `<div class="dashboard-form-grid"><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
+        : '';
+    const doctorResults = modal.doctor
+      ? `<div class="doctor-results">${modal.doctor.checks.map((check) => `<article class="doctor-check status-text-${check.status}"><i class="status-dot status-${check.status}"></i><div><strong>${escapeHtml(check.summary)}</strong><small>${escapeHtml(check.detail)}</small></div></article>`).join('')}</div>`
       : '';
-    return `<div class="fleet-modal-backdrop"><section class="fleet-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title"><span class="modal-symbol ${modal.destructive ? 'danger' : ''}">${modal.destructive ? icon('circle-alert') : icon('calendar-clock')}</span><h2 id="fleet-modal-title">${escapeHtml(modal.title)}</h2><p>${escapeHtml(modal.body)}</p>${scheduleForm}<div><button class="quiet-button" data-action="modal-cancel">Keep current state</button><button class="${modal.destructive ? 'danger-button' : 'primary-button'}" data-action="modal-confirm">${escapeHtml(modal.confirm)}</button></div></section></div>`;
+    const textForm = modal.action?.kind === 'rename-session'
+      ? `<label>Session name<input data-modal-text maxlength="64" value="${escapeAttr(modal.textValue ?? '')}"></label>`
+      : '';
+    const cancel = modal.doctor ? '' : '<button class="quiet-button" data-action="modal-cancel">Keep current state</button>';
+    return `<div class="fleet-modal-backdrop"><section class="fleet-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title"><span class="modal-symbol ${modal.destructive ? 'danger' : ''}">${modal.destructive ? icon('circle-alert') : icon(modal.doctor ? 'heart-pulse' : 'calendar-clock')}</span><h2 id="fleet-modal-title">${escapeHtml(modal.title)}</h2><p>${escapeHtml(modal.body)}</p>${scheduleForm}${textForm}${doctorResults}<div>${cancel}<button class="${modal.destructive ? 'danger-button' : 'primary-button'}" data-action="${modal.doctor ? 'modal-cancel' : 'modal-confirm'}">${escapeHtml(modal.confirm)}</button></div></section></div>`;
   }
 
   private sessionFromControl(control: HTMLElement): FleetSession | undefined {
@@ -599,6 +740,19 @@ function limitBar(label: string, remaining: number | null): string {
 
 function selectField(label: string, selected: string, options: readonly string[]): string {
   return `<label>${escapeHtml(label)}<select>${options.map((option) => `<option ${option === selected ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select></label>`;
+}
+
+function settingsToggle(key: string, label: string, detail: string, checked: boolean): string {
+  return `<label class="toggle-row"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><input data-fleet-setting="${escapeAttr(key)}" type="checkbox" ${checked ? 'checked' : ''}></label>`;
+}
+
+function notificationToggle(
+  key: keyof WidgetSettings['fleetNotifications'],
+  label: string,
+  detail: string,
+  settings: WidgetSettings
+): string {
+  return settingsToggle(`notification.${key}`, label, detail, settings.fleetNotifications[key]);
 }
 
 function toolIcon(tool: FleetTool): string {

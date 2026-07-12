@@ -1,6 +1,16 @@
 import type { CodexProfileId, CodexSortMode } from './limits';
 
 export type InteractionMode = 'passive' | 'active';
+export type FleetOpenTarget = 'windowsTerminal' | 'vscode';
+
+export interface FleetNotificationSettings {
+  hardLimits: boolean;
+  deliveryFailures: boolean;
+  deliverySuccess: boolean;
+  hostState: boolean;
+  versionDrift: boolean;
+  pairing: boolean;
+}
 
 export interface CodexProfileSettings {
   id: CodexProfileId;
@@ -15,7 +25,7 @@ export interface CodexProfileSettings {
 }
 
 export interface WidgetSettings {
-  version: 2;
+  version: 3;
   codexProfiles: CodexProfileSettings[];
   codexSortMode: CodexSortMode;
   claudeEnabled: boolean;
@@ -24,6 +34,11 @@ export interface WidgetSettings {
   launchOnLogin: boolean;
   automaticUpdates: boolean;
   onboardingComplete: boolean;
+  fleetControllerDistro: string;
+  fleetOpenTarget: FleetOpenTarget;
+  limitsOverlayEnabled: boolean;
+  fleetNotifications: FleetNotificationSettings;
+  notificationPauseUntil: string | null;
 }
 
 export interface SettingsLoadResult {
@@ -48,12 +63,23 @@ export interface SettingsImportPreview {
   warnings: string[];
 }
 
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 export const SETTINGS_EXPORT_FORMAT = 'ai-limits-widget-settings';
 export const SETTINGS_EXPORT_VERSION = 1;
 export const MIN_OPACITY = 0;
 export const DEFAULT_PASSIVE_OPACITY = 0.8;
 export const DEFAULT_ACTIVE_OPACITY = 1;
+
+export function createDefaultFleetNotifications(): FleetNotificationSettings {
+  return {
+    hardLimits: true,
+    deliveryFailures: true,
+    deliverySuccess: true,
+    hostState: true,
+    versionDrift: true,
+    pairing: true
+  };
+}
 
 export function createDefaultSettings(): WidgetSettings {
   return {
@@ -65,7 +91,12 @@ export function createDefaultSettings(): WidgetSettings {
     activeOpacity: DEFAULT_ACTIVE_OPACITY,
     launchOnLogin: false,
     automaticUpdates: true,
-    onboardingComplete: false
+    onboardingComplete: false,
+    fleetControllerDistro: 'Ubuntu',
+    fleetOpenTarget: 'windowsTerminal',
+    limitsOverlayEnabled: true,
+    fleetNotifications: createDefaultFleetNotifications(),
+    notificationPauseUntil: null
   };
 }
 
@@ -76,12 +107,12 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
   }
 
   const raw = input as Record<string, unknown>;
-  if (raw.version !== 1 && raw.version !== SETTINGS_VERSION) {
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== SETTINGS_VERSION) {
     return { settings: defaults, recovered: true, message: 'Settings version was unsupported; defaults loaded' };
   }
 
   const profiles = Array.isArray(raw.codexProfiles) ? normalizeProfiles(raw.codexProfiles) : [];
-  const migrated = raw.version === 1;
+  const migrated = raw.version !== SETTINGS_VERSION;
   const claudeEnabled = typeof raw.claudeEnabled === 'boolean' ? raw.claudeEnabled : defaults.claudeEnabled;
   return {
     settings: {
@@ -99,19 +130,48 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
           ? raw.onboardingComplete
           : migrated
             ? profiles.length > 0 || claudeEnabled
-            : defaults.onboardingComplete
+            : defaults.onboardingComplete,
+      fleetControllerDistro: normalizeRequiredText(raw.fleetControllerDistro, defaults.fleetControllerDistro),
+      fleetOpenTarget: raw.fleetOpenTarget === 'vscode' ? 'vscode' : 'windowsTerminal',
+      limitsOverlayEnabled:
+        typeof raw.limitsOverlayEnabled === 'boolean' ? raw.limitsOverlayEnabled : defaults.limitsOverlayEnabled,
+      fleetNotifications: normalizeFleetNotifications(raw.fleetNotifications, defaults.fleetNotifications),
+      notificationPauseUntil: normalizeInstantOrNull(raw.notificationPauseUntil)
     },
     recovered: false,
     migrated,
-    message: migrated ? 'Settings were migrated to version 2' : undefined
+    message: migrated ? 'Settings were migrated to version 3' : undefined
   };
 }
 
 export function cloneSettings(settings: WidgetSettings): WidgetSettings {
   return {
     ...settings,
-    codexProfiles: settings.codexProfiles.map((profile) => ({ ...profile }))
+    codexProfiles: settings.codexProfiles.map((profile) => ({ ...profile })),
+    fleetNotifications: { ...settings.fleetNotifications }
   };
+}
+
+function normalizeFleetNotifications(
+  value: unknown,
+  defaults: FleetNotificationSettings
+): FleetNotificationSettings {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    hardLimits: typeof raw.hardLimits === 'boolean' ? raw.hardLimits : defaults.hardLimits,
+    deliveryFailures: typeof raw.deliveryFailures === 'boolean' ? raw.deliveryFailures : defaults.deliveryFailures,
+    deliverySuccess: typeof raw.deliverySuccess === 'boolean' ? raw.deliverySuccess : defaults.deliverySuccess,
+    hostState: typeof raw.hostState === 'boolean' ? raw.hostState : defaults.hostState,
+    versionDrift: typeof raw.versionDrift === 'boolean' ? raw.versionDrift : defaults.versionDrift,
+    pairing: typeof raw.pairing === 'boolean' ? raw.pairing : defaults.pairing
+  };
+}
+
+function normalizeInstantOrNull(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string') return null;
+  const instant = Date.parse(value);
+  return Number.isFinite(instant) ? new Date(instant).toISOString() : null;
 }
 
 export function createProfileId(existingIds: readonly string[]): string {

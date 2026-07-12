@@ -5,12 +5,15 @@ import { createRequire } from 'node:module';
 import type { AppInfo } from '../shared/app';
 import type { CombinedLimitState } from '../shared/limits';
 import type { WidgetSettings } from '../shared/settings';
+import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 
 interface DiagnosticsInput {
   app: AppInfo;
   settings: WidgetSettings;
   state: CombinedLimitState;
   logPath: string;
+  fleet: FleetBridgeView;
+  doctors: FleetDoctorResult[];
 }
 
 interface ArchiveWriter {
@@ -41,7 +44,9 @@ export async function writeDiagnosticsArchive(destination: string, input: Diagno
         app: input.app,
         os: { platform: process.platform, arch: process.arch },
         runtime: process.versions,
-        state: input.state
+        state: input.state,
+        fleet: input.fleet,
+        doctors: input.doctors
       },
       null,
       2

@@ -49,7 +49,7 @@ export function createSettingsExport(settings: WidgetSettings, appVersion: strin
     exportVersion: SETTINGS_EXPORT_VERSION,
     exportedAt: now.toISOString(),
     appVersion,
-    settings: cloneSettings(normalizeSettings(settings).settings)
+    settings: { ...cloneSettings(normalizeSettings(settings).settings), notificationPauseUntil: null }
   };
 }
 

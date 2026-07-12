@@ -9,7 +9,7 @@ import type {
   WslDiscoveryResult
 } from '../shared/app';
 import type { CombinedLimitState } from '../shared/limits';
-import type { FleetBridgeView } from '../shared/fleet-protocol';
+import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { CodexProfileSettings, InteractionMode, SettingsLoadResult, WidgetSettings } from '../shared/settings';
 
@@ -22,10 +22,26 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.openFleetSession, sessionId),
   killFleetSession: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.killFleetSession, sessionId),
+  renameFleetSession: (sessionId: string, name: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.renameFleetSession, sessionId, name),
+  copyFleetAttachCommand: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.copyFleetAttachCommand, sessionId),
+  toggleFleetFavorite: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.toggleFleetFavorite, sessionId),
+  launchFleetFavorite: (presetId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.launchFleetFavorite, presetId),
   cancelFleetSchedule: (scheduleId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.cancelFleetSchedule, scheduleId),
   createFleetContinueSchedule: (sessionId: string, deliverAt: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.createFleetContinueSchedule, sessionId, deliverAt),
+  updateFleetSchedule: (scheduleId: string, deliverAt: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateFleetSchedule, scheduleId, deliverAt),
+  runFleetDoctor: (hostId: string): Promise<{ ok: boolean; message: string; doctor?: FleetDoctorResult }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.runFleetDoctor, hostId),
+  updateFleetHost: (hostId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateFleetHost, hostId),
+  pauseFleetNotifications: (): Promise<{ ok: boolean; message: string; settings: WidgetSettings }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.pauseFleetNotifications),
   createFleetSession: (
     hostId: string,
     project: string,

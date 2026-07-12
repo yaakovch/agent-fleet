@@ -27,6 +27,9 @@ describe('settings store', () => {
     expect(result.settings.claudeEnabled).toBe(false);
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
     expect(result.settings.onboardingComplete).toBe(false);
+    expect(result.settings.fleetControllerDistro).toBe('Ubuntu');
+    expect(result.settings.fleetOpenTarget).toBe('windowsTerminal');
+    expect(result.settings.fleetNotifications.hostState).toBe(true);
   });
 
   it('recovers machine-neutral defaults when settings are unreadable', () => {
@@ -70,7 +73,7 @@ describe('settings store', () => {
     );
     const result = loadSettings(settingsPath);
     expect(result.migrated).toBe(true);
-    expect(result.settings.version).toBe(2);
+    expect(result.settings.version).toBe(3);
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
     expect(result.settings.onboardingComplete).toBe(true);
@@ -80,7 +83,9 @@ describe('settings store', () => {
     const settings = createDefaultSettings();
     settings.codexProfiles = [testProfile()];
     settings.launchOnLogin = true;
+    settings.notificationPauseUntil = '2026-07-11T01:00:00.000Z';
     const envelope = createSettingsExport(settings, '1.0.0', new Date('2026-07-11T00:00:00Z'));
+    expect(envelope.settings.notificationPauseUntil).toBeNull();
     const preview = parseSettingsImport(JSON.stringify(envelope), 'other-machine.ai-limits-settings.json');
     expect(preview.fileName).toBe('other-machine.ai-limits-settings.json');
     expect(preview.settings.codexProfiles).toHaveLength(1);
