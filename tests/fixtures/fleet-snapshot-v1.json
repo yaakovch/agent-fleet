@@ -1,0 +1,53 @@
+{
+  "revision": "fixture-revision",
+  "generatedAt": "2026-07-12T04:00:00Z",
+  "hosts": [
+    {
+      "id": "test-host",
+      "name": "Test Host",
+      "platform": "wsl",
+      "transport": "local",
+      "status": "healthy",
+      "lastSeenAt": "2026-07-12T04:00:00Z",
+      "errorCode": "",
+      "capabilities": ["fleet.snapshot", "sessions.read"],
+      "wtmuxVersion": "fixture",
+      "agentVersion": "0.1.0",
+      "protocolVersion": 1,
+      "timeZone": "Asia/Jerusalem"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "test-host:session-1",
+      "hostId": "test-host",
+      "internalName": "session-1",
+      "name": "project:1",
+      "title": "",
+      "project": "project",
+      "tool": "codex",
+      "backend": "linux",
+      "activity": "active",
+      "attached": true,
+      "updatedAt": "2026-07-12T04:00:00Z",
+      "pendingScheduleCount": 1
+    }
+  ],
+  "schedules": [
+    {
+      "id": "schedule-1",
+      "hostId": "test-host",
+      "sessionId": "test-host:session-1",
+      "kind": "scheduled-message",
+      "backend": "linux",
+      "agent": "codex",
+      "deliverAt": "2026-07-12T05:00:00Z",
+      "status": "pending",
+      "createdAt": "2026-07-12T04:00:00Z",
+      "updatedAt": "2026-07-12T04:00:00Z",
+      "completedAt": null,
+      "outcomeCode": ""
+    }
+  ],
+  "attention": []
+}

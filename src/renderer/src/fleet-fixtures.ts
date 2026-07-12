@@ -1,7 +1,7 @@
 import type { FleetSnapshot } from '../../shared/fleet';
 
 export const FLEET_FIXTURE: FleetSnapshot = {
-  revision: 1842,
+  revision: '1842',
   generatedAt: '2026-07-12T00:26:00.000Z',
   registrySyncedAt: '2026-07-12T00:25:43.000Z',
   controller: { distro: 'Ubuntu-24.04', status: 'healthy', protocolVersion: 1 },

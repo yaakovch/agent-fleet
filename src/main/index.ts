@@ -41,6 +41,8 @@ import {
   saveSettings
 } from './settings-store';
 import { LimitStateManager } from './state-manager';
+import { FleetBridgeSupervisor, fleetBridgeLaunchFromSettings } from './fleet-bridge';
+import type { FleetBridgeView } from '../shared/fleet-protocol';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
 import { loadWindowPosition, saveWindowPosition } from './window-state';
@@ -67,6 +69,7 @@ const stateManager = new LimitStateManager({
   settings: appSettings,
   settingsDiagnostic: settingsLoadResult.recovered ? settingsLoadResult.message : undefined
 });
+let fleetBridge = createFleetBridge();
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
@@ -77,6 +80,29 @@ let updater: UpdaterManager | null = null;
 let isQuitting = false;
 let interactionMode: InteractionMode = 'passive';
 const pendingImports = new Map<string, WidgetSettings>();
+
+function createFleetBridge(): FleetBridgeSupervisor {
+  const bridge = new FleetBridgeSupervisor({
+    cachePath: join(dataDirectory, 'fleet-cache-v1.json'),
+    launch: fleetBridgeLaunchFromSettings(appSettings),
+    logger
+  });
+  bridge.on('changed', () => broadcast(IPC_CHANNELS.fleetStateUpdated, getFleetView()));
+  return bridge;
+}
+
+function getFleetView(): FleetBridgeView {
+  const view = fleetBridge.getView();
+  view.snapshot.limits = stateManager.getState().providers.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    fiveHourRemaining: provider.windows.fiveHour?.remainingPercent ?? null,
+    weeklyRemaining: provider.windows.weekly?.remainingPercent ?? null,
+    resetsAt: provider.windows.fiveHour?.resetsAt ? new Date(provider.windows.fiveHour.resetsAt * 1000).toISOString() : null,
+    status: provider.status === 'ok' ? 'ok' : provider.status === 'stale' ? 'stale' : 'error'
+  }));
+  return view;
+}
 
 function createWindow(): void {
   const width = 540;
@@ -319,6 +345,7 @@ function setWidgetInteractionMode(mode: InteractionMode): InteractionMode {
 
 async function applyAndPersistSettings(settings: WidgetSettings): Promise<SettingsLoadResult> {
   let message: string | undefined;
+  const previousLaunch = fleetBridgeLaunchFromSettings(appSettings);
   appSettings = saveSettings(settings, getSettingsPath(dataDirectory));
   try {
     applyLaunchOnLogin(appSettings.launchOnLogin);
@@ -328,6 +355,12 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
   }
   settingsLoadResult = { settings: appSettings, recovered: Boolean(message), message };
   stateManager.applySettings(appSettings, message);
+  const nextLaunch = fleetBridgeLaunchFromSettings(appSettings);
+  if (JSON.stringify(previousLaunch) !== JSON.stringify(nextLaunch)) {
+    fleetBridge.stop();
+    fleetBridge = createFleetBridge();
+    fleetBridge.start();
+  }
   updater?.setEnabled(appSettings.automaticUpdates);
   if (mainWindow) applyInteractionMode(mainWindow, interactionMode, appSettings);
   updateTrayMenu();
@@ -392,6 +425,11 @@ function broadcast(channel: string, value: unknown): void {
 
 handle(IPC_CHANNELS.getState, () => stateManager.getState());
 handle(IPC_CHANNELS.refreshNow, () => stateManager.refreshAll());
+handle(IPC_CHANNELS.getFleetState, () => getFleetView());
+handle(IPC_CHANNELS.refreshFleet, () => {
+  fleetBridge.refresh();
+  return getFleetView();
+});
 handle(IPC_CHANNELS.getSettings, () => getSettingsResult());
 handle(IPC_CHANNELS.saveSettings, (_event, input) => applyAndPersistSettings(normalizeSettings(input).settings));
 handle(IPC_CHANNELS.testCodexProfile, async (_event, profile) => {
@@ -485,6 +523,7 @@ handle(IPC_CHANNELS.windowQuit, () => {
 
 stateManager.on('changed', (state) => {
   broadcast(IPC_CHANNELS.stateUpdated, state);
+  broadcast(IPC_CHANNELS.fleetStateUpdated, getFleetView());
   updateTrayTooltip(state);
 });
 
@@ -532,6 +571,7 @@ if (isUninstallCleanup) {
     });
     updater.setEnabled(appSettings.automaticUpdates);
     stateManager.start();
+    fleetBridge.start();
     if (!appSettings.onboardingComplete) createSettingsWindow('onboarding');
     if (!app.isPackaged) showDashboard();
     logger.info(PRODUCT_NAME, app.getVersion(), app.isPackaged ? 'packaged' : 'development', migrationResult);
@@ -546,6 +586,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   updater?.stop();
   stateManager.stop();
+  fleetBridge.stop();
 });
 
 app.on('window-all-closed', () => {
