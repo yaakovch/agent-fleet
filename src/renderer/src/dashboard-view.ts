@@ -56,8 +56,10 @@ import type {
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult } from '../../shared/fleet-protocol';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
 import { FLEET_FIXTURE } from './fleet-fixtures';
+import { SessionWorkspace } from './session-workspace';
+import type { TerminalTabDescriptor } from '../../shared/terminal';
 
-type DashboardView = 'overview' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
+type DashboardView = 'overview' | 'workspace' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
 type DashboardScenario = 'live' | 'offline' | 'empty' | 'error';
 type ModalState = {
   title: string;
@@ -118,6 +120,7 @@ const dashboardIcons = {
 
 const NAV_ITEMS: ReadonlyArray<{ view: DashboardView; label: string; icon: string }> = [
   { view: 'overview', label: 'Overview', icon: 'layout-dashboard' },
+  { view: 'workspace', label: 'Workspace', icon: 'terminal' },
   { view: 'sessions', label: 'Sessions', icon: 'square-terminal' },
   { view: 'launcher', label: 'Launcher', icon: 'rocket' },
   { view: 'schedules', label: 'Schedules', icon: 'calendar-clock' },
@@ -145,6 +148,7 @@ export class DashboardPrototype {
   private launcherTool: FleetTool = 'codex';
   private settings: WidgetSettings = createDefaultSettings();
   private settingsDraft: WidgetSettings = createDefaultSettings();
+  private readonly workspace = new SessionWorkspace(this.settings);
 
   constructor(
     private readonly root: HTMLElement,
@@ -201,6 +205,7 @@ export class DashboardPrototype {
   setSettings(settings: WidgetSettings): void {
     this.settings = cloneSettings(settings);
     this.settingsDraft = cloneSettings(settings);
+    this.workspace.setSettings(settings);
     this.render();
   }
 
@@ -218,13 +223,14 @@ export class DashboardPrototype {
   }
 
   render(): void {
+    this.workspace.detach();
     this.root.innerHTML = `
       <main class="fleet-shell">
         ${this.renderSidebar()}
         <section class="fleet-workspace">
           ${this.renderHeader()}
-          <div class="fleet-content">
-            ${this.renderScenarioBanner()}
+          <div class="fleet-content ${this.view === 'workspace' ? 'is-workspace' : ''}">
+            ${this.view === 'workspace' ? '' : this.renderScenarioBanner()}
             ${this.renderCurrentView()}
           </div>
         </section>
@@ -232,9 +238,17 @@ export class DashboardPrototype {
         ${this.toast ? `<div class="fleet-toast">${icon('circle-check')}<span>${escapeHtml(this.toast)}</span></div>` : ''}
       </main>`;
     createIcons({ icons: dashboardIcons });
+    if (this.view === 'workspace') this.workspace.mount(this.root.querySelector('[data-workspace-mount]'));
+  }
+
+  openWorkspaceTab(tab: TerminalTabDescriptor): void {
+    this.workspace.open(tab);
+    this.view = 'workspace';
+    this.render();
   }
 
   handleAction(action: string, target: HTMLElement): boolean {
+    if (this.workspace.handleAction(action, target)) return true;
     const control = target.closest<HTMLElement>('[data-action]') ?? target;
     if (action === 'dashboard-nav') {
       const view = control.dataset.view;
@@ -301,7 +315,10 @@ export class DashboardPrototype {
     if (action === 'dashboard-open-session') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
-      void window.limitsWidget.openFleetSession(session.id).then((result) => this.showToast(result.message));
+      void window.limitsWidget.openFleetSession(session.id).then((result) => {
+        if (result.tab) this.openWorkspaceTab(result.tab);
+        else this.showToast(result.message);
+      });
       return true;
     }
     if (action === 'dashboard-copy') {
@@ -520,6 +537,7 @@ export class DashboardPrototype {
   private renderHeader(): string {
     const titles: Record<DashboardView, [string, string]> = {
       overview: ['Overview', 'Your coding fleet at a glance'],
+      workspace: ['Workspace', 'Terminal power with an app-like conversation view'],
       sessions: ['Sessions', 'Open and manage tmux sessions on every host'],
       launcher: ['Launcher', 'Start a safe, explicit tool session'],
       schedules: ['Schedules', 'Pending messages and 30-day delivery history'],
@@ -547,6 +565,7 @@ export class DashboardPrototype {
   }
 
   private renderCurrentView(): string {
+    if (this.view === 'workspace') return '<div class="workspace-mount" data-workspace-mount></div>';
     if (this.scenario === 'empty' && this.view !== 'settings') return this.renderEmptyState();
     if (this.view === 'sessions') return this.renderSessions();
     if (this.view === 'launcher') return this.renderLauncher();
@@ -736,9 +755,18 @@ export class DashboardPrototype {
     return `<div class="settings-dashboard-grid">
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>This PC</h2><p>Local controller and terminal behavior</p></div>${icon('laptop')}</div><div class="dashboard-form-grid">
         <label>Controller WSL distribution<select data-fleet-setting="fleetControllerDistro">${distros.map((distro) => `<option value="${escapeAttr(distro)}" ${distro === draft.fleetControllerDistro ? 'selected' : ''}>${escapeHtml(distro)}</option>`).join('')}</select></label>
-        <label>Open sessions in<select data-fleet-setting="fleetOpenTarget"><option value="windowsTerminal" ${draft.fleetOpenTarget === 'windowsTerminal' ? 'selected' : ''}>Windows Terminal</option><option value="vscode" ${draft.fleetOpenTarget === 'vscode' ? 'selected' : ''}>Current VS Code window</option></select></label>
+        <label>Open sessions in<select data-fleet-setting="fleetOpenTarget"><option value="agentFleet" ${draft.fleetOpenTarget === 'agentFleet' ? 'selected' : ''}>Agent Fleet workspace</option><option value="windowsTerminal" ${draft.fleetOpenTarget === 'windowsTerminal' ? 'selected' : ''}>Windows Terminal</option><option value="vscode" ${draft.fleetOpenTarget === 'vscode' ? 'selected' : ''}>Current VS Code window</option></select></label>
         ${settingsToggle('launchOnLogin', 'Launch Agent Fleet on login', 'Recommended for fleet notifications', draft.launchOnLogin)}
         ${settingsToggle('limitsOverlayEnabled', 'Show limits overlay', 'Transparent, click-through companion window', draft.limitsOverlayEnabled)}
+      </div></section>
+      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Embedded terminal</h2><p>Appearance for every in-app terminal tab</p></div>${icon('terminal')}</div><div class="dashboard-form-grid">
+        <label>Theme<select data-fleet-setting="terminal.theme"><option value="fleetDark" ${draft.terminalAppearance.theme === 'fleetDark' ? 'selected' : ''}>Fleet dark</option><option value="midnight" ${draft.terminalAppearance.theme === 'midnight' ? 'selected' : ''}>Midnight</option><option value="light" ${draft.terminalAppearance.theme === 'light' ? 'selected' : ''}>Light</option></select></label>
+        <label>Font family<input data-fleet-setting="terminal.fontFamily" value="${escapeAttr(draft.terminalAppearance.fontFamily)}" maxlength="160"></label>
+        <label>Font size<input data-fleet-setting="terminal.fontSize" type="number" min="11" max="28" step="1" value="${draft.terminalAppearance.fontSize}"></label>
+        <label>Line height<input data-fleet-setting="terminal.lineHeight" type="number" min="1" max="2" step="0.05" value="${draft.terminalAppearance.lineHeight}"></label>
+        <label>Cursor<select data-fleet-setting="terminal.cursorStyle"><option value="block" ${draft.terminalAppearance.cursorStyle === 'block' ? 'selected' : ''}>Block</option><option value="bar" ${draft.terminalAppearance.cursorStyle === 'bar' ? 'selected' : ''}>Bar</option><option value="underline" ${draft.terminalAppearance.cursorStyle === 'underline' ? 'selected' : ''}>Underline</option></select></label>
+        <label>Scrollback lines<input data-fleet-setting="terminal.scrollback" type="number" min="1000" max="100000" step="1000" value="${draft.terminalAppearance.scrollback}"></label>
+        ${settingsToggle('terminal.cursorBlink', 'Blinking cursor', 'Use the terminal cursor animation', draft.terminalAppearance.cursorBlink)}
       </div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Notifications</h2><p>All enabled Agent Fleet PCs may notify for the fleet</p></div>${icon('bell')}</div><div class="dashboard-form-grid">
         ${notificationToggle('hardLimits', 'Hard limits', 'Critical usage-limit attention', draft)}
@@ -757,10 +785,17 @@ export class DashboardPrototype {
     const key = control.dataset.fleetSetting;
     const checked = control instanceof HTMLInputElement ? control.checked : false;
     if (key === 'fleetControllerDistro') this.settingsDraft.fleetControllerDistro = control.value;
-    else if (key === 'fleetOpenTarget' && (control.value === 'windowsTerminal' || control.value === 'vscode')) {
+    else if (key === 'fleetOpenTarget' && (control.value === 'agentFleet' || control.value === 'windowsTerminal' || control.value === 'vscode')) {
       this.settingsDraft.fleetOpenTarget = control.value;
     } else if (key === 'launchOnLogin') this.settingsDraft.launchOnLogin = checked;
     else if (key === 'limitsOverlayEnabled') this.settingsDraft.limitsOverlayEnabled = checked;
+    else if (key === 'terminal.theme' && (control.value === 'fleetDark' || control.value === 'midnight' || control.value === 'light')) this.settingsDraft.terminalAppearance.theme = control.value;
+    else if (key === 'terminal.fontFamily') this.settingsDraft.terminalAppearance.fontFamily = control.value.slice(0, 160);
+    else if (key === 'terminal.fontSize') this.settingsDraft.terminalAppearance.fontSize = Number(control.value);
+    else if (key === 'terminal.lineHeight') this.settingsDraft.terminalAppearance.lineHeight = Number(control.value);
+    else if (key === 'terminal.cursorStyle' && (control.value === 'block' || control.value === 'bar' || control.value === 'underline')) this.settingsDraft.terminalAppearance.cursorStyle = control.value;
+    else if (key === 'terminal.scrollback') this.settingsDraft.terminalAppearance.scrollback = Number(control.value);
+    else if (key === 'terminal.cursorBlink') this.settingsDraft.terminalAppearance.cursorBlink = checked;
     else if (key?.startsWith('notification.')) {
       const category = key.slice('notification.'.length) as keyof WidgetSettings['fleetNotifications'];
       if (category in this.settingsDraft.fleetNotifications) this.settingsDraft.fleetNotifications[category] = checked;
@@ -992,7 +1027,7 @@ function escapeAttr(value: string): string {
 }
 
 function isDashboardView(value: string | undefined): value is DashboardView {
-  return value === 'overview' || value === 'sessions' || value === 'launcher' || value === 'schedules' || value === 'fleet' || value === 'settings';
+  return value === 'overview' || value === 'workspace' || value === 'sessions' || value === 'launcher' || value === 'schedules' || value === 'fleet' || value === 'settings';
 }
 
 function isScenario(value: string): value is DashboardScenario {

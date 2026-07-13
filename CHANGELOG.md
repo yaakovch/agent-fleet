@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.10.0-beta.3 - In development
+## 0.11.0-beta.1 - 2026-07-13
+
+- Added persistent in-app session tabs backed by Windows ConPTY and xterm.js,
+  with reconnect, search, resizing, appearance settings, and external-terminal
+  fallbacks.
+- Added the Native conversation view for Codex and Claude: safe Markdown,
+  planning-mode indication, grouped semantic tool calls, approvals, multi-part
+  questions, and newest-first history paging.
+- Added memory-only clipboard, drag/drop, and file-picker image staging; images
+  upload to the selected wtmux session only when Send is pressed.
+- Made Agent Fleet the default session-open target while preserving Windows
+  Terminal and current-window VS Code choices.
+- Repaired Android/native structured question errors and verified real
+  three-question Codex and Claude delivery through explicit provider submit.
+
+## 0.10.0-beta.3 - 2026-07-13
 
 - Added session creation in arbitrary accessible folders on Linux/WSL and Windows hosts.
 - Added a streamlined folder browser with host/backend recents and new-folder creation.

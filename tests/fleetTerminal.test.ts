@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFleetTerminalCommand, buildFleetVscodeUri } from '../src/main/fleet-terminal';
+import { buildFleetTerminalCommand, buildFleetVscodeUri, buildFleetWslAttachCommand } from '../src/main/fleet-terminal';
 
 describe('fleet terminal launcher', () => {
   it('builds a direct argv launch for the exact validated session', () => {
@@ -25,6 +25,17 @@ describe('fleet terminal launcher', () => {
       id: 'host:session', hostId: 'host', project: 'project',
       sessionName: 'session;calc.exe', label: 'session'
     }, 'Ubuntu')).toThrow(/session name/i);
+  });
+
+  it('builds the direct WSL attach used by the embedded PTY', () => {
+    expect(buildFleetWslAttachCommand({
+      id: 'gaming:wtmux-main-1', hostId: 'gaming', project: 'main',
+      sessionName: 'wtmux-main-1', label: 'main'
+    }, 'Ubuntu')).toEqual({
+      command: 'wsl.exe',
+      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux', '--host', 'gaming',
+        '--project', 'main', '--session', 'wtmux-main-1', '--fast']
+    });
   });
 
   it('builds a validated VS Code URI without shell text', () => {

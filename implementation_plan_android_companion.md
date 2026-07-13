@@ -78,3 +78,14 @@ terminal tests pass on the emulator.
   Tailscale loss, multi-image share, quota failure, and incompatible hosts on
   Android 16 before the phone cutover.
 
+## 7. Native Question Reliability Patch
+
+- Reproduce the installed `.16` failure against disposable Codex and Claude
+  prompts and retain only sanitized terminal-shape fixtures.
+- Update the Native controller to preserve answers until the host returns a
+  transcript-confirmed response, display stable wtmux errors, and keep Retry and
+  Terminal available without recreating the draft.
+- Run unit, signed-release, checksum, certificate, in-place update, app-data
+  preservation, and real S23FE acceptance checks.
+- Publish `.17`/`1019` after validation. Retain `.16` source and prepare a
+  higher-version-code forward rollback artifact if a critical regression occurs.

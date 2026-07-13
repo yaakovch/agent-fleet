@@ -13,22 +13,34 @@ export interface FleetTerminalCommand {
   args: string[];
 }
 
+export interface FleetWslAttachCommand {
+  command: 'wsl.exe';
+  args: string[];
+}
+
 const VSCODE_EXTENSION_ID = 'wtmux.wtmux-image-paste';
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,320}$/u;
 const SAFE_SESSION = /^[A-Za-z0-9._-]{1,128}$/u;
 
 export function buildFleetTerminalCommand(target: FleetSessionOpenTarget, distro: string): FleetTerminalCommand {
+  const attach = buildFleetWslAttachCommand(target, distro);
+  return {
+    command: 'wt.exe',
+    args: ['new-tab', '--title', target.label, attach.command, ...attach.args]
+  };
+}
+
+export function buildFleetWslAttachCommand(target: FleetSessionOpenTarget, distro: string): FleetWslAttachCommand {
   if (!SAFE_ID.test(target.id) || !SAFE_ID.test(target.hostId)) throw new Error('Session identity is invalid');
   if (!SAFE_SESSION.test(target.sessionName)) throw new Error('Session name is invalid');
   if (!safeText(target.project, 256) || !safeText(target.label, 128) || !safeText(distro, 64)) {
     throw new Error('Session terminal metadata is invalid');
   }
   return {
-    command: 'wt.exe',
+    command: 'wsl.exe',
     args: [
-      'new-tab', '--title', target.label,
-      'wsl.exe', '-d', distro, '--cd', '~', '--',
+      '-d', distro, '--cd', '~', '--',
       '.local/bin/wtmux', '--host', target.hostId, '--project', target.project,
       '--session', target.sessionName, '--fast'
     ]

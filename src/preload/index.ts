@@ -13,14 +13,50 @@ import type { CombinedLimitState } from '../shared/limits';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { CodexProfileSettings, InteractionMode, SettingsLoadResult, WidgetSettings } from '../shared/settings';
+import type {
+  SessionViewMode, TerminalClosedEvent, TerminalDataEvent, TerminalOpenResult,
+  TerminalStatusEvent, TerminalTabDescriptor, TerminalWorkspaceState
+} from '../shared/terminal';
+import type {
+  ConversationAnswer, ConversationEvent, NativeActionResult, StagedAttachment
+} from '../shared/conversation';
 
 const api = {
   getState: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.getState),
   refreshNow: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.refreshNow),
   getFleetState: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.getFleetState),
   refreshFleet: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.refreshFleet),
-  openFleetSession: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
+  openFleetSession: (sessionId: string): Promise<TerminalOpenResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.openFleetSession, sessionId),
+  listTerminalTabs: (): Promise<TerminalWorkspaceState> => ipcRenderer.invoke(IPC_CHANNELS.terminalList),
+  terminalInput: (tabId: string, data: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalInput, tabId, data),
+  terminalResize: (tabId: string, columns: number, rows: number): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalResize, tabId, columns, rows),
+  closeTerminalTab: (tabId: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.terminalClose, tabId),
+  retryTerminalTab: (tabId: string): Promise<TerminalTabDescriptor | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalRetry, tabId),
+  selectTerminalTab: (tabId: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.terminalSelect, tabId),
+  setTerminalView: (tabId: string, viewMode: SessionViewMode): Promise<TerminalTabDescriptor | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalSetView, tabId, viewMode),
+  startConversation: (tabId: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, tabId),
+  stopConversation: (tabId: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.conversationStop, tabId),
+  pageConversation: (tabId: string, cursor: string): Promise<NativeActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationPage, tabId, cursor),
+  approveConversation: (tabId: string, approval: string, choice: string, revision: string): Promise<NativeActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationApprove, tabId, approval, choice, revision),
+  answerConversation: (tabId: string, question: string, revision: string, answers: ConversationAnswer[]): Promise<NativeActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationAnswer, tabId, question, revision, answers),
+  stageAttachmentBytes: (tabId: string, name: string, mime: string, data: Uint8Array): Promise<StagedAttachment[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationStageBytes, tabId, name, mime, data),
+  stageClipboardImage: (tabId: string): Promise<StagedAttachment[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationStageClipboard, tabId),
+  chooseConversationAttachments: (tabId: string): Promise<StagedAttachment[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationChooseAttachments, tabId),
+  removeConversationAttachment: (tabId: string, attachmentId: string): Promise<StagedAttachment[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationRemoveAttachment, tabId, attachmentId),
+  sendConversationMessage: (tabId: string, text: string): Promise<NativeActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationSend, tabId, text),
   killFleetSession: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.killFleetSession, sessionId),
   renameFleetSession: (sessionId: string, name: string): Promise<{ ok: boolean; message: string }> =>
@@ -102,6 +138,31 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, state: UpdaterState): void => callback(state);
     ipcRenderer.on(IPC_CHANNELS.updaterStateUpdated, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.updaterStateUpdated, listener);
+  },
+  onTerminalData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: TerminalDataEvent): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.terminalData, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.terminalData, listener);
+  },
+  onTerminalStatus: (callback: (event: TerminalStatusEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: TerminalStatusEvent): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.terminalStatus, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.terminalStatus, listener);
+  },
+  onTerminalClosed: (callback: (event: TerminalClosedEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: TerminalClosedEvent): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.terminalClosed, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.terminalClosed, listener);
+  },
+  onTerminalOpened: (callback: (tab: TerminalTabDescriptor) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: TerminalTabDescriptor): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.terminalOpened, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.terminalOpened, listener);
+  },
+  onConversationEvent: (callback: (event: ConversationEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: ConversationEvent): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.conversationEvent, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.conversationEvent, listener);
   }
 };
 

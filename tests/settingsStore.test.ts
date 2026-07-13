@@ -28,7 +28,8 @@ describe('settings store', () => {
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
     expect(result.settings.onboardingComplete).toBe(false);
     expect(result.settings.fleetControllerDistro).toBe('Ubuntu');
-    expect(result.settings.fleetOpenTarget).toBe('windowsTerminal');
+    expect(result.settings.fleetOpenTarget).toBe('agentFleet');
+    expect(result.settings.terminalAppearance.fontSize).toBe(16);
     expect(result.settings.fleetNotifications.hostState).toBe(true);
   });
 
@@ -73,7 +74,8 @@ describe('settings store', () => {
     );
     const result = loadSettings(settingsPath);
     expect(result.migrated).toBe(true);
-    expect(result.settings.version).toBe(3);
+    expect(result.settings.version).toBe(4);
+    expect(result.settings.fleetOpenTarget).toBe('agentFleet');
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
     expect(result.settings.onboardingComplete).toBe(true);

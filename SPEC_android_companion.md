@@ -125,3 +125,14 @@ verified archive.
   clock; rollback is used for corruption, security exposure, unusable terminal
   behavior, or inability to hotfix promptly.
 
+## Native Question Reliability Update
+
+- Release `0.118.4-agentfleet.17` with version code `1019` only after real Codex
+  and Claude multi-question prompts submit successfully from Native view on the
+  S23FE and the provider transcript confirms each response.
+- Tapping a valid non-final answer advances immediately; the final screen has
+  one Submit action. Sending, stale, ambiguous, and failed states preserve every
+  draft answer and expose Retry and Terminal.
+- Unit and fixture tests are necessary but not sufficient: the signed installed
+  build and deployed host runtime must pass the live workflow without terminal
+  intervention.

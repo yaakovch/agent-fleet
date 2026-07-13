@@ -25,7 +25,7 @@ key or service credential.
 - Supported UI: Windows 10/11 x64.
 - Supported hosts: Linux or WSL with tmux and wtmux.
 - Supported client: Termux as a full outbound client; it is not an inbound host.
-- Product/version: `Agent Fleet 0.10.0-beta.1`.
+- Product/version for the embedded-workspace release: `Agent Fleet 0.11.0-beta.1`.
 - The public source repository is `yaakovch/agent-fleet`.
 - The wtmux runtime, host bridge, and personal fleet registry remain private.
 - Private beta artifacts use an authenticated private GitHub release feed.
@@ -62,7 +62,7 @@ areas.
 - Fleet shows connectivity, versions, pairing requests, registry sync age,
   diagnostics, and confirmed repair/update actions.
 - Settings choose the controller WSL distro and whether session clicks open in
-  Windows Terminal or a terminal in the current VS Code window.
+  Agent Fleet, Windows Terminal, or a terminal in the current VS Code window.
 
 ### Notifications And Attention
 
@@ -76,10 +76,14 @@ areas.
 
 ## Privacy And Security
 
-- Agent Fleet displays and stores metadata only: host, project, session/title,
-  tool, backend, activity, attached state, limit event, and schedule state.
-- Prompts, responses, transcript excerpts, authentication files, and terminal
-  screen contents never cross the desktop bridge or enter caches/diagnostics.
+- The fleet dashboard bridge displays and stores metadata only: host, project,
+  session/title, tool, backend, activity, attached state, limit event, and
+  schedule state.
+- Explicitly opening an embedded session creates a separate ephemeral content
+  channel over the existing WSL/Tailscale/SSH path. Prompts, responses,
+  transcript excerpts, terminal screens, drafts, and attachment previews may
+  exist in process memory only and never enter settings, caches, logs,
+  diagnostics, notifications, analytics, or crash reports.
 - Agent Fleet never reads, copies, exports, logs, or transfers Codex, Claude,
   GitHub, Tailscale, or SSH credentials.
 - There is no listening HTTP, WebSocket, or custom network service. Electron
@@ -151,6 +155,9 @@ areas.
 
 ## Open And Launch Behavior
 
+- Agent Fleet is the default session target after migration. It opens sessions
+  as reconnecting tabs in a dashboard workspace while retaining quick external
+  actions for Windows Terminal and the current VS Code window.
 - Windows Terminal starts WSL/wtmux with direct argv, never evaluated shell
   text.
 - The existing wtmux VS Code extension gains a validated URI handler that
@@ -193,7 +200,6 @@ areas.
 
 ## Deferred
 
-- Embedded terminal or terminal-output previews.
 - Team accounts, shared roles, or multi-owner permissions.
 - Automatic Tailscale policy edits or Tailscale API credentials.
 - Automated plain-OpenSSH key lifecycle.
@@ -216,3 +222,48 @@ areas.
   collision-free internal session identifiers.
 - Directory listings are transient and never written to fleet snapshots, logs,
   diagnostics, or persistent caches.
+
+## Embedded Windows Session Workspace
+
+- The Windows app embeds a full ConPTY-backed terminal for every managed local
+  or remote Linux/WSL or Windows-backend session. Each tab owns one validated
+  direct-argv WSL/wtmux attach process; renderer code never receives Node.js
+  access or process handles.
+- Tabs remain attached while the app is hidden to the tray. Closing a tab only
+  detaches. Unexpected exits retry with bounded backoff, while confirmed session
+  removal, app quit, and explicit tab close stop retries.
+- Tab descriptors and view preferences survive restart, but terminal output,
+  conversations, drafts, and thumbnails do not. Restored tabs reconnect to
+  surviving tmux sessions and show a recoverable ended state otherwise.
+- Codex, Claude, and Copilot open Native-first. Native view provides newest-page
+  loading, upward history pagination, safe Markdown, semantic grouped tools,
+  approvals, multi-question forms, plan-mode indication, a multiline composer,
+  and Terminal fallback. Basic shell sessions expose directory navigation,
+  command entry, and command/result cards; unsupported or alternate-screen
+  programs use the full terminal.
+- Native questions advance by tapping each non-final answer and submit once at
+  the end. Answers remain editable through failures. Success is shown only
+  after the provider transcript confirms delivery; stale or ambiguous terminal
+  state fails safely with Retry and Terminal actions.
+- Native view accepts PNG, JPEG, and WebP images from clipboard, drag/drop, and
+  picker, with at most eight 20 MiB items. Images are staged through
+  `wtmux image send --json`, shown as thumbnail chips, and their host paths are
+  submitted only when Send is pressed. Raw Terminal view has no attachment UI.
+- Native messages use safe Markdown with raw HTML, scripts, unsafe links, and
+  remote image loads disabled. Enter sends and Shift+Enter inserts a newline.
+- Inactive tabs show ordinary unread activity and stronger attention for
+  questions, approvals, limits, and disconnects. Terminal settings cover theme,
+  font family/size, line height, cursor, padding, scrollback, and copy/paste.
+
+## Embedded Workspace Success Criteria
+
+- An installed build opens local and remote Linux and Windows-backend sessions
+  in-app, preserves full terminal behavior, restores tab descriptors, reconnects
+  safely, and leaves tmux sessions alive after tab close or app restart.
+- Real disposable Codex, Claude, and Copilot sessions pass Native messages,
+  tools, approvals, planning state, and questions. Android Native questions pass
+  real Codex and Claude flows on the S23FE before the Windows build is promoted.
+- Image paste, drop, picker, retry, removal, multiple-image submission, target
+  selection, and cleanup work without automatic submission.
+- Settings, app data, logs, diagnostics, and notifications contain no terminal,
+  transcript, draft, or image-preview content after normal use and restart.

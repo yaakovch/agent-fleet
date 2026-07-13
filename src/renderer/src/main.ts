@@ -123,6 +123,9 @@ window.limitsWidget.onUpdaterStateUpdated((state) => {
   updaterState = state;
   if (isConfigView) renderConfigView();
 });
+window.limitsWidget.onTerminalOpened((tab) => {
+  if (isDashboardView) dashboard?.openWorkspaceTab(tab);
+});
 
 if (isDashboardView) {
   dashboard?.render();

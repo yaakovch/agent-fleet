@@ -46,6 +46,10 @@ import {
 import { LimitStateManager } from './state-manager';
 import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
 import { openFleetTerminal, openFleetVscode } from './fleet-terminal';
+import { TerminalManager } from './terminal-manager';
+import { ConversationManager } from './conversation-manager';
+import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
+import type { StagedAttachment } from '../shared/conversation';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
@@ -74,6 +78,24 @@ const stateManager = new LimitStateManager({
   settingsDiagnostic: settingsLoadResult.recovered ? settingsLoadResult.message : undefined
 });
 let fleetBridge = createFleetBridge();
+let terminalRestored = false;
+const terminalManager = new TerminalManager({
+  statePath: join(dataDirectory, 'terminal-workspace-v1.json'),
+  logger,
+  getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  resolveSession: (sessionId) => getFleetView().snapshot.sessions.find((session) => session.id === sessionId),
+  onData: (event) => broadcast(IPC_CHANNELS.terminalData, event),
+  onStatus: (event) => broadcast(IPC_CHANNELS.terminalStatus, event),
+  onClosed: (event) => broadcast(IPC_CHANNELS.terminalClosed, event)
+});
+const conversationManager = new ConversationManager({
+  tempPath: join(app.getPath('temp'), 'agent-fleet-attachments'),
+  logger,
+  getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  resolveTab: (tabId) => terminalManager.list().find((tab) => tab.id === tabId),
+  sendTerminalInput: (tabId, data) => terminalManager.input(tabId, data),
+  onEvent: (event) => broadcast(IPC_CHANNELS.conversationEvent, event)
+});
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
@@ -98,6 +120,10 @@ function createFleetBridge(): FleetBridgeSupervisor {
   });
   bridge.on('changed', () => {
     const view = getFleetView();
+    if (!terminalRestored && view.status === 'live') {
+      terminalRestored = true;
+      terminalManager.restore();
+    }
     broadcast(IPC_CHANNELS.fleetStateUpdated, view);
     processFleetNotifications(view);
     updateTrayMenu();
@@ -526,6 +552,75 @@ handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   return openFleetSessionById(sessionId);
 });
+handle(IPC_CHANNELS.terminalList, () => ({
+  version: 1 as const,
+  selectedTabId: terminalManager.getSelectedTabId(),
+  tabs: terminalManager.list()
+}));
+handle(IPC_CHANNELS.terminalInput, (_event, tabId, data) =>
+  typeof tabId === 'string' && typeof data === 'string' && terminalManager.input(tabId, data));
+handle(IPC_CHANNELS.terminalResize, (_event, tabId, columns, rows) =>
+  typeof tabId === 'string' && typeof columns === 'number' && typeof rows === 'number'
+    && terminalManager.resize(tabId, columns, rows));
+handle(IPC_CHANNELS.terminalClose, (_event, tabId) =>
+  typeof tabId === 'string' && (conversationManager.close(tabId), terminalManager.close(tabId)));
+handle(IPC_CHANNELS.terminalRetry, (_event, tabId) =>
+  typeof tabId === 'string' ? terminalManager.retry(tabId) : null);
+handle(IPC_CHANNELS.terminalSelect, (_event, tabId) =>
+  typeof tabId === 'string' && terminalManager.select(tabId));
+handle(IPC_CHANNELS.terminalSetView, (_event, tabId, viewMode) =>
+  typeof tabId === 'string' && (viewMode === 'native' || viewMode === 'terminal')
+    ? terminalManager.setViewMode(tabId, viewMode as SessionViewMode) : null);
+handle(IPC_CHANNELS.conversationStart, (_event, tabId) =>
+  typeof tabId === 'string' && conversationManager.start(tabId));
+handle(IPC_CHANNELS.conversationStop, (_event, tabId) => {
+  if (typeof tabId === 'string') conversationManager.stop(tabId);
+});
+handle(IPC_CHANNELS.conversationPage, (_event, tabId, cursor) =>
+  typeof tabId === 'string' && typeof cursor === 'string'
+    ? conversationManager.page(tabId, cursor) : { ok: false, message: 'History request is invalid' });
+handle(IPC_CHANNELS.conversationApprove, (_event, tabId, approval, choice, revision) =>
+  [tabId, approval, choice, revision].every((value) => typeof value === 'string')
+    ? conversationManager.approve(tabId, approval, choice, revision)
+    : { ok: false, message: 'Approval is invalid' });
+handle(IPC_CHANNELS.conversationAnswer, (_event, tabId, question, revision, answers) =>
+  typeof tabId === 'string' && typeof question === 'string' && typeof revision === 'string' && Array.isArray(answers)
+    ? conversationManager.answer(tabId, question, revision, answers)
+    : { ok: false, message: 'Answer is invalid' });
+handle(IPC_CHANNELS.conversationStageBytes, (_event, tabId, name, mime, data) => {
+  const bytes = data as unknown;
+  if (typeof tabId !== 'string' || typeof name !== 'string' || typeof mime !== 'string' || !(bytes instanceof Uint8Array)) {
+    throw new Error('Image data is invalid');
+  }
+  return conversationManager.stage(tabId, name, mime, bytes);
+});
+handle(IPC_CHANNELS.conversationStageClipboard, (_event, tabId) => {
+  if (typeof tabId !== 'string') throw new Error('Session is invalid');
+  const image = clipboard.readImage();
+  if (image.isEmpty()) throw new Error('The clipboard does not contain an image');
+  return conversationManager.stage(tabId, `clipboard-${Date.now()}.png`, 'image/png', image.toPNG());
+});
+handle(IPC_CHANNELS.conversationChooseAttachments, async (_event, tabId) => {
+  if (typeof tabId !== 'string') throw new Error('Session is invalid');
+  const result = await dialog.showOpenDialog(getDialogOwner(), {
+    title: 'Attach images', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+  });
+  let staged: StagedAttachment[] = [];
+  for (const path of result.filePaths.slice(0, 8)) {
+    const extension = path.split('.').at(-1)?.toLowerCase();
+    const mime = extension === 'png' ? 'image/png' : extension === 'gif' ? 'image/gif'
+      : extension === 'webp' ? 'image/webp' : 'image/jpeg';
+    staged = conversationManager.stage(tabId, basename(path), mime, readFileSync(path));
+  }
+  return staged;
+});
+handle(IPC_CHANNELS.conversationRemoveAttachment, (_event, tabId, attachmentId) =>
+  typeof tabId === 'string' && typeof attachmentId === 'string'
+    ? conversationManager.removeAttachment(tabId, attachmentId) : []);
+handle(IPC_CHANNELS.conversationSend, (_event, tabId, text) =>
+  typeof tabId === 'string' && typeof text === 'string'
+    ? conversationManager.send(tabId, text) : { ok: false, message: 'Message is invalid' });
 handle(IPC_CHANNELS.killFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
@@ -830,7 +925,7 @@ function fleetMutationFailure(error: unknown): { ok: false; message: string } {
   return { ok: false, message: 'Action failed safely; refresh before retrying' };
 }
 
-async function openFleetSessionById(sessionId: string): Promise<{ ok: boolean; message: string }> {
+async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResult> {
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
   if (!session || !session.internalName) return { ok: false, message: 'Session is no longer available' };
   try {
@@ -842,6 +937,12 @@ async function openFleetSessionById(sessionId: string): Promise<{ ok: boolean; m
       label: session.name
     };
     const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
+    if (appSettings.fleetOpenTarget === 'agentFleet') {
+      const tab = terminalManager.open(session);
+      showDashboard();
+      broadcast(IPC_CHANNELS.terminalOpened, tab);
+      return { ok: true, message: `Opened ${session.name}`, tab };
+    }
     if (appSettings.fleetOpenTarget === 'vscode') {
       try {
         await openFleetVscode(target, distro);
@@ -1018,6 +1119,8 @@ app.on('before-quit', () => {
   updater?.stop();
   stateManager.stop();
   fleetBridge.stop();
+  terminalManager.dispose();
+  conversationManager.dispose();
 });
 
 app.on('window-all-closed', () => {

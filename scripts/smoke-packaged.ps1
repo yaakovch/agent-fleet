@@ -1,4 +1,4 @@
-param([string]$Executable = (Join-Path $PSScriptRoot '..\dist\win-unpacked\AI Limits Widget.exe'))
+param([string]$Executable = (Join-Path $PSScriptRoot '..\dist\win-unpacked\Agent Fleet.exe'))
 
 if (-not (Test-Path -LiteralPath $Executable)) { throw "Packaged executable not found: $Executable" }
 $root = Join-Path ([System.IO.Path]::GetTempPath()) "ai-limits-smoke-$PID"

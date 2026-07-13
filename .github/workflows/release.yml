@@ -72,7 +72,7 @@ jobs:
       - name: Prepare final executables for signing
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/AI-Limits-Widget-*-Setup-x64.exe,dist/AI-Limits-Widget-*-Portable-x64.exe -DestinationPath dist/unsigned-release.zip -CompressionLevel Optimal
+          Compress-Archive -Path dist/Agent-Fleet-*-Setup-x64.exe,dist/Agent-Fleet-*-Portable-x64.exe -DestinationPath dist/unsigned-release.zip -CompressionLevel Optimal
       - id: upload-release
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -106,8 +106,8 @@ jobs:
       - uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
         with:
           subject-path: |
-            dist/AI-Limits-Widget-*-Setup-x64.exe
-            dist/AI-Limits-Widget-*-Portable-x64.exe
+            dist/Agent-Fleet-*-Setup-x64.exe
+            dist/Agent-Fleet-*-Portable-x64.exe
             dist/SHA256SUMS.txt
             dist/bom.json
       - name: Create draft GitHub Release
@@ -116,9 +116,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = @(
-            (Get-ChildItem dist/AI-Limits-Widget-*-Setup-x64.exe).FullName,
-            (Get-ChildItem dist/AI-Limits-Widget-*-Portable-x64.exe).FullName,
-            (Get-ChildItem dist/AI-Limits-Widget-*-Setup-x64.exe.blockmap).FullName,
+            (Get-ChildItem dist/Agent-Fleet-*-Setup-x64.exe).FullName,
+            (Get-ChildItem dist/Agent-Fleet-*-Portable-x64.exe).FullName,
+            (Get-ChildItem dist/Agent-Fleet-*-Setup-x64.exe.blockmap).FullName,
             (Resolve-Path dist/latest.yml).Path,
             (Resolve-Path dist/SHA256SUMS.txt).Path,
             (Resolve-Path dist/bom.json).Path

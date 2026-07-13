@@ -114,3 +114,32 @@ The private bridge/runtime companion plan is maintained in
 - Package Windows beta.3, deploy clients before host capabilities, run contract,
   renderer, IPC, security, package, and two-machine acceptance checks, then keep
   beta.2 available for rollback.
+
+## 10. Embedded Terminal And Native Workspace
+
+- First reproduce and repair Native question delivery with disposable Codex,
+  Claude, and Copilot sessions. Extend the wtmux terminal state machines for
+  sequential questions, multi-select, Other/text input, final review/Submit,
+  stale revisions, idempotency, and transcript-confirmed delivery. Ship the
+  compatible runtime to both hosts and the phone, then release and validate
+  Android `0.118.4-agentfleet.17` (`1019`).
+- Add stable xterm.js rendering and a main-process node-pty/ConPTY manager. Spawn
+  only validated direct-argv `wsl.exe` attach processes, expose bounded
+  sender-validated lifecycle/input/output IPC, and prove the native dependency
+  in an installed package before building the larger workspace.
+- Add reconnecting dashboard tabs, descriptor-only restoration, unread and
+  attention badges, Native/Terminal switching, external-open actions, terminal
+  preferences, settings migration to the `agentFleet` default target, and
+  rollback-safe settings backup.
+- Add strict conversation-v2 types and fixtures, newest-page history loading,
+  safe Markdown, grouped semantic tools, approvals, plan indication, reliable
+  questions, Codex/Claude/Copilot adapters, and basic shell navigation and
+  command cards. Keep an underlying PTY authoritative and fail to Terminal for
+  unsupported or alternate-screen states.
+- Add Native-only clipboard, drag/drop, and picker image staging with bounded
+  PNG/JPEG/WebP validation, thumbnail chips, retry/remove, `wtmux image send
+  --json`, submission-time path insertion, and temporary-file cleanup.
+- Run unit, protocol, Python/Bats, security, packaged-ConPTY, installer, and live
+  acceptance checks. Install `0.11.0-beta.1` on gaming-desktop first, require the
+  full same-day matrix, then promote the identical artifact to work-m. Retain
+  beta.3, the prior runtime, and a forward-code Android rollback build.

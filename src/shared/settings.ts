@@ -1,7 +1,18 @@
 import type { CodexProfileId, CodexSortMode } from './limits';
 
 export type InteractionMode = 'passive' | 'active';
-export type FleetOpenTarget = 'windowsTerminal' | 'vscode';
+export type FleetOpenTarget = 'agentFleet' | 'windowsTerminal' | 'vscode';
+
+export interface TerminalAppearanceSettings {
+  theme: 'fleetDark' | 'midnight' | 'light';
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  cursorStyle: 'block' | 'underline' | 'bar';
+  cursorBlink: boolean;
+  padding: number;
+  scrollback: number;
+}
 
 export interface FleetNotificationSettings {
   hardLimits: boolean;
@@ -25,7 +36,7 @@ export interface CodexProfileSettings {
 }
 
 export interface WidgetSettings {
-  version: 3;
+  version: 4;
   codexProfiles: CodexProfileSettings[];
   codexSortMode: CodexSortMode;
   claudeEnabled: boolean;
@@ -36,6 +47,7 @@ export interface WidgetSettings {
   onboardingComplete: boolean;
   fleetControllerDistro: string;
   fleetOpenTarget: FleetOpenTarget;
+  terminalAppearance: TerminalAppearanceSettings;
   limitsOverlayEnabled: boolean;
   fleetNotifications: FleetNotificationSettings;
   notificationPauseUntil: string | null;
@@ -63,7 +75,7 @@ export interface SettingsImportPreview {
   warnings: string[];
 }
 
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 export const SETTINGS_EXPORT_FORMAT = 'ai-limits-widget-settings';
 export const SETTINGS_EXPORT_VERSION = 1;
 export const MIN_OPACITY = 0;
@@ -93,7 +105,17 @@ export function createDefaultSettings(): WidgetSettings {
     automaticUpdates: true,
     onboardingComplete: false,
     fleetControllerDistro: 'Ubuntu',
-    fleetOpenTarget: 'windowsTerminal',
+    fleetOpenTarget: 'agentFleet',
+    terminalAppearance: {
+      theme: 'fleetDark',
+      fontFamily: 'Cascadia Mono, Consolas, monospace',
+      fontSize: 16,
+      lineHeight: 1.25,
+      cursorStyle: 'block',
+      cursorBlink: true,
+      padding: 14,
+      scrollback: 10_000
+    },
     limitsOverlayEnabled: true,
     fleetNotifications: createDefaultFleetNotifications(),
     notificationPauseUntil: null
@@ -107,7 +129,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
   }
 
   const raw = input as Record<string, unknown>;
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== SETTINGS_VERSION) {
+  if (![1, 2, 3, SETTINGS_VERSION].includes(Number(raw.version))) {
     return { settings: defaults, recovered: true, message: 'Settings version was unsupported; defaults loaded' };
   }
 
@@ -132,7 +154,8 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
             ? profiles.length > 0 || claudeEnabled
             : defaults.onboardingComplete,
       fleetControllerDistro: normalizeRequiredText(raw.fleetControllerDistro, defaults.fleetControllerDistro),
-      fleetOpenTarget: raw.fleetOpenTarget === 'vscode' ? 'vscode' : 'windowsTerminal',
+      fleetOpenTarget: normalizeFleetOpenTarget(raw.fleetOpenTarget, raw.version),
+      terminalAppearance: normalizeTerminalAppearance(raw.terminalAppearance, defaults.terminalAppearance),
       limitsOverlayEnabled:
         typeof raw.limitsOverlayEnabled === 'boolean' ? raw.limitsOverlayEnabled : defaults.limitsOverlayEnabled,
       fleetNotifications: normalizeFleetNotifications(raw.fleetNotifications, defaults.fleetNotifications),
@@ -140,7 +163,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
     },
     recovered: false,
     migrated,
-    message: migrated ? 'Settings were migrated to version 3' : undefined
+    message: migrated ? `Settings were migrated to version ${SETTINGS_VERSION}` : undefined
   };
 }
 
@@ -148,7 +171,33 @@ export function cloneSettings(settings: WidgetSettings): WidgetSettings {
   return {
     ...settings,
     codexProfiles: settings.codexProfiles.map((profile) => ({ ...profile })),
-    fleetNotifications: { ...settings.fleetNotifications }
+    fleetNotifications: { ...settings.fleetNotifications },
+    terminalAppearance: { ...settings.terminalAppearance }
+  };
+}
+
+function normalizeFleetOpenTarget(value: unknown, version: unknown): FleetOpenTarget {
+  if (version !== SETTINGS_VERSION) return 'agentFleet';
+  return value === 'vscode' || value === 'windowsTerminal' ? value : 'agentFleet';
+}
+
+function normalizeTerminalAppearance(
+  value: unknown,
+  defaults: TerminalAppearanceSettings
+): TerminalAppearanceSettings {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const number = (candidate: unknown, fallback: number, minimum: number, maximum: number): number =>
+    typeof candidate === 'number' && Number.isFinite(candidate)
+      ? Math.max(minimum, Math.min(maximum, candidate)) : fallback;
+  return {
+    theme: raw.theme === 'midnight' || raw.theme === 'light' ? raw.theme : 'fleetDark',
+    fontFamily: normalizeRequiredText(raw.fontFamily, defaults.fontFamily).slice(0, 160),
+    fontSize: number(raw.fontSize, defaults.fontSize, 11, 28),
+    lineHeight: number(raw.lineHeight, defaults.lineHeight, 1, 2),
+    cursorStyle: raw.cursorStyle === 'underline' || raw.cursorStyle === 'bar' ? raw.cursorStyle : 'block',
+    cursorBlink: typeof raw.cursorBlink === 'boolean' ? raw.cursorBlink : defaults.cursorBlink,
+    padding: number(raw.padding, defaults.padding, 0, 40),
+    scrollback: Math.round(number(raw.scrollback, defaults.scrollback, 1_000, 100_000))
   };
 }
 

@@ -1,8 +1,11 @@
 appId: com.yaakovch.ailimitswidget
-productName: AI Limits Widget
-executableName: AI Limits Widget
+productName: Agent Fleet
+executableName: Agent Fleet
 copyright: Copyright © 2026 Yaakov Chen Zion
 asar: true
+npmRebuild: false
+asarUnpack:
+  - "node_modules/node-pty/**"
 compression: maximum
 directories:
   output: dist
@@ -38,12 +41,12 @@ nsis:
   allowElevation: false
   createDesktopShortcut: false
   createStartMenuShortcut: true
-  shortcutName: AI Limits Widget
+  shortcutName: Agent Fleet
   deleteAppDataOnUninstall: false
   include: build/installer.nsh
-  artifactName: AI-Limits-Widget-${version}-Setup-${arch}.${ext}
+  artifactName: Agent-Fleet-${version}-Setup-${arch}.${ext}
 portable:
-  artifactName: AI-Limits-Widget-${version}-Portable-${arch}.${ext}
+  artifactName: Agent-Fleet-${version}-Portable-${arch}.${ext}
 publish:
   provider: github
   owner: yaakovch

@@ -8,7 +8,7 @@ const { buildBlockMap } = require('app-builder-lib/out/targets/blockmap/blockmap
 const distDir = resolve(process.argv[2] ?? 'dist');
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const files = readdirSync(distDir);
-const setupName = files.find((name) => /^AI-Limits-Widget-.*-Setup-x64\.exe$/.test(name));
+const setupName = files.find((name) => /^Agent-Fleet-.*-Setup-x64\.exe$/.test(name));
 if (!setupName) throw new Error(`No Setup x64 executable found in ${distDir}`);
 const setupPath = join(distDir, setupName);
 const blockmapName = `${setupName}.blockmap`;
