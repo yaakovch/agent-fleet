@@ -103,7 +103,7 @@ jobs:
         run: |
           ./scripts/verify-signatures.ps1
           Get-Item dist/latest.yml,dist/SHA256SUMS.txt,dist/bom.json | Out-Null
-      - uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
           subject-path: |
             dist/Agent-Fleet-*-Setup-x64.exe
