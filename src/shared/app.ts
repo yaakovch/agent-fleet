@@ -1,4 +1,5 @@
 import type { CodexProfileSettings, SettingsImportPreview, WidgetSettings } from './settings';
+import type { FleetDirectoryListing } from './fleet-protocol';
 
 export interface AppInfo {
   name: string;
@@ -62,4 +63,11 @@ export interface WslDiscoveryResult {
 export interface ClaudeIntegrationState {
   status: 'ready' | 'installed' | 'updated' | 'removed' | 'missing' | 'conflict';
   message: string;
+}
+
+export interface FleetDirectoryResult {
+  ok: boolean;
+  message: string;
+  listing?: FleetDirectoryListing;
+  path?: string;
 }

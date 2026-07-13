@@ -998,6 +998,23 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .launcher-summary > div { min-width: 0; }
 .launcher-summary strong { font-size: 10px; }
 .launcher-summary p { margin: 3px 0 0; overflow: hidden; color: #7e9b91; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.location-browser { margin: 0 15px 14px; overflow: hidden; border: 1px solid #2d3b49; border-radius: 9px; background: #10171f; }
+.location-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border-bottom: 1px solid #273542; }
+.location-toolbar strong { min-width: 0; overflow: hidden; color: #cbd8e5; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.location-shortcuts, .location-recents { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 8px 10px 0; }
+.location-shortcuts button, .location-recents button { flex: 0 0 auto; border: 1px solid #334453; border-radius: 999px; padding: 5px 8px; color: #9eb0c1; background: #17212b; font-size: 8px; }
+.location-recents span { color: #64778a; font-size: 8px; text-transform: uppercase; }
+.location-list { max-height: 250px; overflow-y: auto; padding: 8px 10px; }
+.location-entry { display: grid; grid-template-columns: 18px minmax(0, 1fr) 16px; align-items: center; width: 100%; border: 0; border-radius: 6px; padding: 8px; color: #c9d6e2; background: transparent; text-align: left; }
+.location-entry:hover { background: #1a2732; }
+.location-entry svg { width: 14px; color: #75c9ac; }
+.location-entry.parent svg { color: #7fa6cf; }
+.new-folder-row, .launcher-final { display: flex; align-items: end; gap: 8px; padding: 0 10px 10px; }
+.new-folder-row input, .launcher-final input { height: 34px; min-width: 0; flex: 1; border: 1px solid #334453; border-radius: 6px; padding: 0 9px; color: #dce6ef; background: #111a23; }
+.launcher-final { align-items: center; margin: 0 15px 14px; padding: 0; }
+.launcher-final label { min-width: 0; flex: 1; }
+.launcher-final span { color: #75ad9a; font-size: 8px; }
+.location-loading, .location-error { margin: 0 15px 14px; border: 1px solid #334453; border-radius: 8px; padding: 18px; color: #8295a7; text-align: center; }
 .launch-safety { padding: 13px; }
 .launch-safety h2 { display: flex; align-items: center; gap: 6px; margin: 0; color: #a5e4d1; font-size: 10px; }
 .launch-safety p { color: #8090a2; font-size: 9px; line-height: 15px; }

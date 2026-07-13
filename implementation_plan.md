@@ -98,3 +98,19 @@ The private bridge/runtime companion plan is maintained in
 - The beta feed identifies exact source commits and publishes checksums.
 - The soak completes with no critical security, delivery, registry, migration,
   or recovery defect.
+
+## 9. Arbitrary Location Session Launcher
+
+- Extend protocol parsing and capability negotiation for transient directory
+  listing/creation and optional path-based session creation before enabling host
+  emission of additive fields.
+- Build the staged Host, Backend, location, folder, label, and tool launcher with
+  Projects, Other location, shortcuts, recents, New Folder, and explicit Use
+  this folder actions.
+- Store at most ten recents per host/backend in local app settings, purge missing
+  entries on use, and keep directory responses out of snapshots and diagnostics.
+- Show full paths only in Session Details, preserve clean labels throughout the
+  dashboard, and test Linux/WSL plus Windows drive-backed sessions.
+- Package Windows beta.3, deploy clients before host capabilities, run contract,
+  renderer, IPC, security, package, and two-machine acceptance checks, then keep
+  beta.2 available for rollback.

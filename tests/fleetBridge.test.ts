@@ -84,6 +84,25 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('returns transient directory data without putting it in the snapshot cache', async () => {
+    const directory = temporaryDirectory();
+    const cachePath = join(directory, 'fleet-cache-v1.json');
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath,
+      launch: { command: process.execPath, args: [writeFakeBridge(directory, fixture)], distro: 'Test Linux' },
+      logger
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    const listing = await supervisor.mutate('directory.list', {
+      hostId: 'test-host', backend: 'linux', path: '', idempotencyKey: 'directory-1'
+    });
+    expect(listing.entries[0]).toEqual({ name: 'private-work', path: '/home/test/private-work' });
+    expect(readFileSync(cachePath, 'utf8')).not.toContain('private-work');
+    supervisor.stop();
+  }, 20_000);
+
   it('returns an invitation secret only to the caller and never writes it to the fleet cache', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');
@@ -208,7 +227,11 @@ emit({ protocolVersion: 1, type: 'event', eventId: 'event-1', event: 'fleet.hear
   timestamp: new Date().toISOString(), revision: snapshot.revision, data: { hostCount: snapshot.hosts.length } });
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
-  const result = request.method === 'fleet.snapshot' ? snapshot : {
+  const result = request.method === 'fleet.snapshot' ? snapshot : request.method === 'directory.list' ? {
+    backend: 'linux', path: '/home/test', parentPath: '/home', truncated: false,
+    entries: [{ name: 'private-work', path: '/home/test/private-work' }],
+    shortcuts: [{ id: 'home', label: 'Home', path: '/home/test' }]
+  } : {
     operationId: request.params.idempotencyKey,
     status: request.method === 'session.create' ? 'created' : request.method === 'session.kill' ? 'killed' : 'cancelled',
     snapshot,

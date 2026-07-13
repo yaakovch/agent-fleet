@@ -199,3 +199,20 @@ areas.
 - Automated plain-OpenSSH key lifecycle.
 - Remote quota polling and usage-aware profile recommendations.
 - Inbound Termux hosting.
+
+## Arbitrary Session Locations
+
+- New Session follows Host, Backend, Projects/Other location, Folder, editable
+  label, and Tool. Projects come from a real host directory listing and include
+  folders with no active session.
+- Other location browses only accessible directories from home/profile with
+  project, filesystem, mount, and Windows drive shortcuts. Hidden entries and
+  manual path entry are excluded; UNC browsing is deferred.
+- Users may safely create one child folder, enter it, and explicitly select Use
+  this folder. Ten recent locations are stored locally per host/backend and are
+  clearable; missing entries disappear when used.
+- Full paths are retained locally and shown in Session Details only. Session
+  titles and routine lists show the editable label, and duplicate labels use
+  collision-free internal session identifiers.
+- Directory listings are transient and never written to fleet snapshots, logs,
+  diagnostics, or persistent caches.

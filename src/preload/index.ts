@@ -3,6 +3,7 @@ import type {
   AppInfo,
   ClaudeIntegrationState,
   FileOperationResult,
+  FleetDirectoryResult,
   SettingsImportSelection,
   SettingsOperationResult,
   UpdaterState,
@@ -44,11 +45,17 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.pauseFleetNotifications),
   createFleetSession: (
     hostId: string,
-    project: string,
+    label: string,
     backend: 'linux' | 'windows',
-    tool: 'shell' | 'codex' | 'claude' | 'copilot'
+    tool: 'shell' | 'codex' | 'claude' | 'copilot',
+    path: string,
+    locationKind: 'project' | 'custom'
   ): Promise<{ ok: boolean; message: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.createFleetSession, hostId, project, backend, tool),
+    ipcRenderer.invoke(IPC_CHANNELS.createFleetSession, hostId, label, backend, tool, path, locationKind),
+  listFleetDirectory: (hostId: string, backend: 'linux' | 'windows', path: string): Promise<FleetDirectoryResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.listFleetDirectory, hostId, backend, path),
+  createFleetDirectory: (hostId: string, backend: 'linux' | 'windows', parentPath: string, name: string): Promise<FleetDirectoryResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.createFleetDirectory, hostId, backend, parentPath, name),
   createFleetPairingInvitation: (): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.createFleetPairingInvitation),
   reviewFleetPairing: (requestId: string): Promise<{ ok: boolean; message: string }> =>

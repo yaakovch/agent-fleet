@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.10.0-beta.2 - In development
+## 0.10.0-beta.3 - In development
+
+- Added session creation in arbitrary accessible folders on Linux/WSL and Windows hosts.
+- Added a streamlined folder browser with host/backend recents and new-folder creation.
+- Added full session paths to the on-demand Session Details view.
+
+## 0.10.0-beta.2 - 2026-07-12
 
 - Accepted the current bounded host quota metadata in fleet bridge snapshots.
 

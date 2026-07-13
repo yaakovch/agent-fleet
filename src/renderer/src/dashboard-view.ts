@@ -53,7 +53,7 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
-import type { FleetBridgeView, FleetDoctorResult } from '../../shared/fleet-protocol';
+import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult } from '../../shared/fleet-protocol';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
 import { FLEET_FIXTURE } from './fleet-fixtures';
 
@@ -135,6 +135,14 @@ export class DashboardPrototype {
   private snapshot: FleetSnapshot;
   private cacheSavedAt: string | null = null;
   private launcherHostId = '';
+  private launcherBackend: 'linux' | 'windows' = 'linux';
+  private launcherLocation: 'project' | 'custom' = 'project';
+  private launcherDirectory: FleetDirectoryListing | null = null;
+  private launcherDirectoryLoading = false;
+  private launcherDirectoryError = '';
+  private launcherSelectedPath = '';
+  private launcherLabel = '';
+  private launcherTool: FleetTool = 'codex';
   private settings: WidgetSettings = createDefaultSettings();
   private settingsDraft: WidgetSettings = createDefaultSettings();
 
@@ -145,15 +153,37 @@ export class DashboardPrototype {
     this.snapshot = snapshot;
     root.addEventListener('input', (event) => {
       const input = event.target as HTMLInputElement;
-      if (input.dataset.dashboardSearch === undefined) return;
-      this.search = input.value;
-      this.render();
+      if (input.dataset.dashboardSearch !== undefined) {
+        this.search = input.value;
+        this.render();
+      } else if (input.dataset.launcherLabel !== undefined) {
+        this.launcherLabel = input.value;
+        const launch = this.root.querySelector<HTMLButtonElement>('[data-action="dashboard-launch"]');
+        if (launch) launch.disabled = !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(input.value.trim());
+      }
     });
     root.addEventListener('change', (event) => {
       const select = event.target as HTMLSelectElement;
       if (select.dataset.launcherHost !== undefined) {
         this.launcherHostId = select.value;
+        this.resetLauncherDirectory();
         this.render();
+        return;
+      }
+      if (select.dataset.launcherBackend !== undefined) {
+        this.launcherBackend = select.value === 'windows' ? 'windows' : 'linux';
+        this.resetLauncherDirectory();
+        this.render();
+        return;
+      }
+      if (select.dataset.launcherLocation !== undefined) {
+        this.launcherLocation = select.value === 'custom' ? 'custom' : 'project';
+        this.resetLauncherDirectory();
+        this.render();
+        return;
+      }
+      if (select.dataset.launcherTool !== undefined) {
+        this.launcherTool = isFleetTool(select.value) ? select.value : 'codex';
         return;
       }
       if (select.dataset.fleetSetting !== undefined) {
@@ -293,15 +323,58 @@ export class DashboardPrototype {
       this.render();
       return true;
     }
+    if (action === 'dashboard-session-details') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      this.modal = {
+        title: `Session details · ${session.name}`,
+        body: `${session.hostId} · ${session.backend} · ${session.tool}${session.projectPath ? ` · ${session.projectPath}` : ' · Path unavailable for this older session'}`,
+        confirm: 'Done'
+      };
+      this.render();
+      return true;
+    }
+    if (action === 'launcher-folder') {
+      const path = control.dataset.path;
+      if (path !== undefined) void this.loadLauncherDirectory(path, false, control.dataset.recent === 'true');
+      return true;
+    }
+    if (action === 'launcher-use-folder') {
+      const path = this.launcherDirectory?.path;
+      if (!path) return this.showToast('Choose an accessible folder');
+      this.launcherSelectedPath = path;
+      const normalized = path.replace(/\\/g, '/').replace(/\/$/, '');
+      this.launcherLabel = normalized.split('/').pop() || 'Session';
+      this.render();
+      return true;
+    }
+    if (action === 'launcher-create-folder') {
+      const name = this.root.querySelector<HTMLInputElement>('[data-launcher-new-folder]')?.value.trim() ?? '';
+      const parent = this.launcherDirectory?.path;
+      if (!parent || !name) return this.showToast('Enter a folder name');
+      void window.limitsWidget.createFleetDirectory(this.launcherHostId, this.launcherBackend, parent, name).then((result) => {
+        if (!result.ok || !result.path) return this.showToast(result.message);
+        void this.loadLauncherDirectory(result.path, false);
+      });
+      return true;
+    }
+    if (action === 'launcher-clear-recents') {
+      this.clearLauncherRecents();
+      this.render();
+      return true;
+    }
     if (action === 'dashboard-launch') {
-      const hostId = this.root.querySelector<HTMLSelectElement>('[data-launcher-host]')?.value;
-      const project = this.root.querySelector<HTMLSelectElement>('[data-launcher-project]')?.value;
-      const backend = this.root.querySelector<HTMLSelectElement>('[data-launcher-backend]')?.value;
-      const tool = this.root.querySelector<HTMLSelectElement>('[data-launcher-tool]')?.value;
-      if (!hostId || !project || (backend !== 'linux' && backend !== 'windows') || !isFleetTool(tool)) {
-        return this.showToast('Choose a valid host, project, backend, and tool');
+      const label = this.root.querySelector<HTMLInputElement>('[data-launcher-label]')?.value.trim() ?? this.launcherLabel;
+      if (!this.launcherHostId || !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(label)) {
+        return this.showToast('Use a folder and enter a valid session label');
       }
-      void window.limitsWidget.createFleetSession(hostId, project, backend, tool).then((result) => this.showToast(result.message));
+      void window.limitsWidget.createFleetSession(
+        this.launcherHostId, label, this.launcherBackend, this.launcherTool,
+        this.launcherSelectedPath, this.launcherLocation
+      ).then((result) => {
+        if (result.ok) this.rememberLauncherPath(this.launcherSelectedPath);
+        this.showToast(result.message);
+      });
       return true;
     }
     if (action === 'dashboard-new-schedule') {
@@ -531,27 +604,107 @@ export class DashboardPrototype {
   private renderLauncher(): string {
     const hosts = this.snapshot.hosts.filter((host) => host.status === 'healthy');
     const selectedHostId = hosts.some((host) => host.id === this.launcherHostId) ? this.launcherHostId : hosts[0]?.id ?? '';
-    const projects = [...new Set(this.snapshot.sessions
-      .filter((session) => session.hostId === selectedHostId)
-      .map((session) => session.project)
-      .filter(Boolean))].sort();
-    const canLaunch = this.scenario === 'live' && hosts.length > 0 && projects.length > 0;
+    if (selectedHostId !== this.launcherHostId) {
+      this.launcherHostId = selectedHostId;
+      this.resetLauncherDirectory();
+    }
+    if (selectedHostId && !this.launcherDirectory && !this.launcherDirectoryLoading && !this.launcherDirectoryError) {
+      queueMicrotask(() => void this.loadLauncherDirectory('', this.launcherLocation === 'project'));
+    }
+    const directory = this.launcherDirectory;
+    const recents = this.launcherLocation === 'custom' ? this.launcherRecents() : [];
+    const canLaunch = this.scenario === 'live' && Boolean(selectedHostId && this.launcherSelectedPath && this.launcherLabel.trim());
+    const browser = this.launcherDirectoryLoading
+      ? `<div class="location-loading">${icon('refresh-cw')}Loading folders…</div>`
+      : this.launcherDirectoryError
+        ? `<div class="location-error">${escapeHtml(this.launcherDirectoryError)}<button class="quiet-button" data-action="launcher-folder" data-path="">Retry</button></div>`
+        : directory
+          ? `<div class="location-browser">
+              <div class="location-toolbar"><strong>${escapeHtml(directory.path)}</strong><button class="primary-button" data-action="launcher-use-folder">${icon('check')}Use this folder</button></div>
+              <div class="location-shortcuts">${directory.shortcuts.map((shortcut) => `<button data-action="launcher-folder" data-path="${escapeAttr(shortcut.path)}">${escapeHtml(shortcut.label)}</button>`).join('')}</div>
+              ${recents.length ? `<div class="location-recents"><span>Recent</span>${recents.map((path) => `<button data-action="launcher-folder" data-recent="true" data-path="${escapeAttr(path)}">${escapeHtml(shortPath(path))}</button>`).join('')}<button data-action="launcher-clear-recents">Clear</button></div>` : ''}
+              <div class="location-list">${directory.parentPath ? `<button class="location-entry parent" data-action="launcher-folder" data-path="${escapeAttr(directory.parentPath)}">${icon('folder-open')}<span>Parent folder</span></button>` : ''}${directory.entries.map((entry) => `<button class="location-entry" data-action="launcher-folder" data-path="${escapeAttr(entry.path)}">${icon('folder-open')}<span>${escapeHtml(entry.name)}</span>${icon('chevron-right')}</button>`).join('') || '<p>No accessible subfolders</p>'}</div>
+              <div class="new-folder-row"><input data-launcher-new-folder maxlength="127" placeholder="New folder name"><button class="quiet-button" data-action="launcher-create-folder">${icon('plus')}Create</button></div>
+              ${directory.truncated ? '<small class="retention-note">Only the first 1,000 folders are shown.</small>' : ''}
+            </div>`
+          : '';
     return `<div class="launcher-layout">
       <section class="fleet-card launcher-form">
-        <div class="card-heading"><div><h2>Start a session</h2><p>Every target is explicit and validated before launch</p></div><span class="safe-badge">${icon('shield-check')}Safe argv</span></div>
+        <div class="card-heading"><div><h2>Start a session</h2><p>Choose the host and folder, then launch</p></div><span class="safe-badge">${icon('shield-check')}Safe argv</span></div>
         <div class="launcher-grid">
           <label>Host<select data-launcher-host>${hosts.map((host) => `<option value="${escapeAttr(host.id)}" ${host.id === selectedHostId ? 'selected' : ''}>${escapeHtml(host.name)}</option>`).join('')}</select></label>
-          <label>Project<select data-launcher-project>${projects.map((project) => `<option value="${escapeAttr(project)}">${escapeHtml(project)}</option>`).join('')}</select></label>
-          <label>Backend<select data-launcher-backend><option value="linux">Linux / WSL</option><option value="windows">Windows</option></select></label>
-          <label>Tool<select data-launcher-tool><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="copilot">GitHub Copilot</option><option value="shell">Shell</option></select></label>
+          <label>Backend<select data-launcher-backend><option value="linux" ${this.launcherBackend === 'linux' ? 'selected' : ''}>Linux / WSL</option><option value="windows" ${this.launcherBackend === 'windows' ? 'selected' : ''}>Windows</option></select></label>
+          <label>Location<select data-launcher-location><option value="project" ${this.launcherLocation === 'project' ? 'selected' : ''}>Projects</option><option value="custom" ${this.launcherLocation === 'custom' ? 'selected' : ''}>Other location</option></select></label>
+          <label>Tool<select data-launcher-tool><option value="codex" ${this.launcherTool === 'codex' ? 'selected' : ''}>Codex</option><option value="claude" ${this.launcherTool === 'claude' ? 'selected' : ''}>Claude Code</option><option value="copilot" ${this.launcherTool === 'copilot' ? 'selected' : ''}>GitHub Copilot</option><option value="shell" ${this.launcherTool === 'shell' ? 'selected' : ''}>Shell</option></select></label>
         </div>
-        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host revalidates the project and fixed tool enum before launch.</p></div><button class="primary-button" data-action="dashboard-launch" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Launch and open</button></div>
+        ${browser}
+        <div class="launcher-final"><label>Session label<input data-launcher-label maxlength="64" value="${escapeAttr(this.launcherLabel)}" placeholder="Choose a folder first"></label><span>${this.launcherSelectedPath ? `${icon('check')}Folder selected` : 'Use a folder to continue'}</span></div>
+        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host validates the folder, label, and fixed tool before launch.</p></div><button class="primary-button" data-action="dashboard-launch" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Launch and open</button></div>
       </section>
       <aside class="dashboard-stack">
         <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite" data-preset-id="${escapeAttr(favorite.id)}"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>
         <section class="fleet-card launch-safety"><h2>${icon('shield-check')}Launch safety</h2><p>Projects, tools, backends, and profile aliases come from validated registry data. Raw shell text is never evaluated.</p><a>${icon('external-link')}Run host doctor</a></section>
       </aside>
     </div>`;
+  }
+
+  private resetLauncherDirectory(): void {
+    this.launcherDirectory = null;
+    this.launcherDirectoryLoading = false;
+    this.launcherDirectoryError = '';
+    this.launcherSelectedPath = '';
+    this.launcherLabel = '';
+  }
+
+  private async loadLauncherDirectory(path: string, projectsRoot: boolean, recent = false): Promise<void> {
+    if (!this.launcherHostId || this.launcherDirectoryLoading) return;
+    this.launcherDirectoryLoading = true;
+    this.launcherDirectoryError = '';
+    this.render();
+    const first = await window.limitsWidget.listFleetDirectory(this.launcherHostId, this.launcherBackend, path);
+    let result = first;
+    if (first.ok && first.listing && projectsRoot) {
+      const projects = first.listing.shortcuts.find((shortcut) => shortcut.id === 'projects');
+      if (projects && projects.path !== first.listing.path) {
+        result = await window.limitsWidget.listFleetDirectory(this.launcherHostId, this.launcherBackend, projects.path);
+      }
+    }
+    this.launcherDirectoryLoading = false;
+    if (!result.ok || !result.listing) {
+      this.launcherDirectoryError = result.message;
+      if (recent && path) this.removeLauncherRecent(path);
+      this.render();
+      return;
+    }
+    this.launcherDirectory = result.listing;
+    this.launcherDirectoryError = '';
+    this.render();
+  }
+
+  private launcherRecentKey(): string {
+    return `agent-fleet.locations.${this.launcherHostId}.${this.launcherBackend}`;
+  }
+
+  private launcherRecents(): string[] {
+    try {
+      const values = JSON.parse(localStorage.getItem(this.launcherRecentKey()) ?? '[]') as unknown;
+      return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string').slice(0, 10) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private rememberLauncherPath(path: string): void {
+    const values = [path, ...this.launcherRecents().filter((value) => value !== path)].slice(0, 10);
+    localStorage.setItem(this.launcherRecentKey(), JSON.stringify(values));
+  }
+
+  private removeLauncherRecent(path: string): void {
+    localStorage.setItem(this.launcherRecentKey(), JSON.stringify(this.launcherRecents().filter((value) => value !== path)));
+  }
+
+  private clearLauncherRecents(): void {
+    localStorage.removeItem(this.launcherRecentKey());
   }
 
   private renderSchedules(): string {
@@ -627,7 +780,7 @@ export class DashboardPrototype {
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
-      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-copy" title="Copy attach command">${icon('copy')}</button><button class="quiet-button" data-action="dashboard-rename-session" title="Rename session">${icon('sliders-horizontal')}</button><button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
+      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-copy" title="Copy attach command">${icon('copy')}</button><button class="quiet-button" data-action="dashboard-session-details" title="Session details">${icon('more-horizontal')}</button><button class="quiet-button" data-action="dashboard-rename-session" title="Rename session">${icon('sliders-horizontal')}</button><button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
     </div>`;
   }
 
@@ -740,6 +893,12 @@ function limitBar(label: string, remaining: number | null): string {
 
 function selectField(label: string, selected: string, options: readonly string[]): string {
   return `<label>${escapeHtml(label)}<select>${options.map((option) => `<option ${option === selected ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select></label>`;
+}
+
+function shortPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/$/, '');
+  const pieces = normalized.split('/').filter(Boolean);
+  return pieces.slice(-2).join('/') || path;
 }
 
 function settingsToggle(key: string, label: string, detail: string, checked: boolean): string {

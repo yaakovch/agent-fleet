@@ -7,11 +7,13 @@ import {
   FLEET_MAX_FRAME_BYTES,
   FLEET_PROTOCOL_VERSION,
   emptyFleetSnapshot,
+  parseFleetDirectoryListing,
   parseBridgeFleetSnapshot,
   toFleetSnapshot,
   type BridgeFleetSnapshot,
   type FleetBridgeStatus,
   type FleetBridgeView,
+  type FleetDirectoryListing,
   type FleetMutationMethod,
   type FleetMutationResult,
   type FleetDoctorResult
@@ -49,7 +51,7 @@ interface CacheEnvelope {
 
 interface PendingMutation {
   requestId: string;
-  resolve: (result: FleetMutationResult) => void;
+  resolve: (result: FleetMutationResult | FleetDirectoryListing) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
@@ -122,7 +124,9 @@ export class FleetBridgeSupervisor extends EventEmitter {
     return { status: this.status, snapshot, cacheSavedAt: this.cacheSavedAt, errorCode: this.errorCode };
   }
 
-  mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult> {
+  mutate(method: 'directory.list', params: Record<string, unknown>): Promise<FleetDirectoryListing>;
+  mutate(method: Exclude<FleetMutationMethod, 'directory.list'>, params: Record<string, unknown>): Promise<FleetMutationResult>;
+  mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing> {
     if (this.status !== 'live' || !this.snapshot || !this.child || this.child.killed || !this.child.stdin.writable) {
       return Promise.reject(new FleetMutationError('host_offline', 'Fleet controller is not live'));
     }
@@ -264,19 +268,29 @@ export class FleetBridgeSupervisor extends EventEmitter {
     if (value.type !== 'response' || value.ok !== true) throw new Error('Mutation response is invalid');
     const result = object(value.result, 'mutation result');
     const keys = Object.keys(result).sort();
+    const directoryKeys = ['backend', 'entries', 'parentPath', 'path', 'shortcuts', 'truncated'].sort();
+    if (sameKeys(keys, directoryKeys)) {
+      const listing = parseFleetDirectoryListing(result);
+      this.finishPendingMutation();
+      pending.resolve(listing);
+      return;
+    }
     const baseKeys = ['operationId', 'snapshot', 'status'].sort();
     const scheduleKeys = [...baseKeys, 'scheduleId'].sort();
     const sessionKeys = [...baseKeys, 'sessionId'].sort();
     const invitationKeys = [...baseKeys, 'invitation'].sort();
     const pairingKeys = [...baseKeys, 'pairingRequest'].sort();
     const doctorKeys = [...baseKeys, 'doctor'].sort();
+    const pathKeys = [...baseKeys, 'path'].sort();
     if (!sameKeys(keys, baseKeys) && !sameKeys(keys, scheduleKeys) && !sameKeys(keys, sessionKeys)
-      && !sameKeys(keys, invitationKeys) && !sameKeys(keys, pairingKeys) && !sameKeys(keys, doctorKeys)) {
+      && !sameKeys(keys, invitationKeys) && !sameKeys(keys, pairingKeys) && !sameKeys(keys, doctorKeys)
+      && !sameKeys(keys, pathKeys)) {
       throw new Error('Mutation result fields are invalid');
     }
     if (!safeToken(result.operationId, 160) || !safeToken(result.status, 32)) throw new Error('Mutation result identity is invalid');
     if ('scheduleId' in result && !safeToken(result.scheduleId, 160)) throw new Error('Mutation scheduleId is invalid');
     if ('sessionId' in result && !safeToken(result.sessionId, 320)) throw new Error('Mutation sessionId is invalid');
+    if ('path' in result && !safeText(result.path, 2048)) throw new Error('Mutation path is invalid');
     const snapshot = parseBridgeFleetSnapshot(result.snapshot);
     const invitation = 'invitation' in result ? parsePairingInvitation(result.invitation) : undefined;
     const pairingRequest = 'pairingRequest' in result ? parsePairingProposalReview(result.pairingRequest) : undefined;
@@ -293,6 +307,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
       snapshot: toFleetSnapshot(snapshot, this.options.launch.distro),
       ...(typeof result.scheduleId === 'string' ? { scheduleId: result.scheduleId } : {}),
       ...(typeof result.sessionId === 'string' ? { sessionId: result.sessionId } : {}),
+      ...(typeof result.path === 'string' ? { path: result.path } : {}),
       ...(invitation ? { invitation } : {}),
       ...(pairingRequest ? { pairingRequest } : {})
       , ...(doctor ? { doctor } : {})

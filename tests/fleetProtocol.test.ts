@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseBridgeFleetSnapshot, toFleetSnapshot } from '../src/shared/fleet-protocol';
+import { parseBridgeFleetSnapshot, parseFleetDirectoryListing, toFleetSnapshot } from '../src/shared/fleet-protocol';
 
 const fixturePath = join(process.cwd(), 'tests', 'fixtures', 'fleet-snapshot-v1.json');
 
@@ -73,5 +73,24 @@ describe('fleet protocol v1', () => {
     expect(snapshot.limits).toEqual([expect.objectContaining({ fiveHourRemaining: 75, weeklyRemaining: 60 })]);
     payload.limits[0].primary.remainingPercent = 101;
     expect(() => parseBridgeFleetSnapshot(payload)).toThrow(/remainingPercent/i);
+  });
+
+  it('accepts additive session paths while keeping them out of titles', () => {
+    const payload = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    payload.sessions[0].projectPath = '/srv/private/work';
+    payload.sessions[0].locationKind = 'custom';
+    const snapshot = toFleetSnapshot(parseBridgeFleetSnapshot(payload), 'Ubuntu');
+    expect(snapshot.sessions[0]).toMatchObject({ projectPath: '/srv/private/work', title: '' });
+    expect(snapshot.sessions[0].name).not.toContain('/srv/private/work');
+  });
+
+  it('parses bounded transient directory listings', () => {
+    const listing = parseFleetDirectoryListing({
+      backend: 'linux', path: '/home/user', parentPath: '/home', truncated: false,
+      entries: [{ name: 'work', path: '/home/user/work' }],
+      shortcuts: [{ id: 'home', label: 'Home', path: '/home/user' }]
+    });
+    expect(listing.entries[0]).toEqual({ name: 'work', path: '/home/user/work' });
+    expect(() => parseFleetDirectoryListing({ ...listing, entries: [{ name: 'bad', path: '/ok', extra: true }] })).toThrow(/fields/i);
   });
 });

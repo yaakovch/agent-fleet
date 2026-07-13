@@ -12,7 +12,7 @@ See [PRIVACY.md](PRIVACY.md) and [SPEC.md](SPEC.md).
 
 ## Status
 
-`0.10.0-beta.2` is under active development for a private multi-machine beta.
+`0.10.0-beta.3` is under active development for a private multi-machine beta.
 The existing unsigned `0.9.0-beta.1` release is retained as a legacy
 prerelease. Unsigned public builds are manual downloads only; automatic public
 updates require trusted signed artifacts.

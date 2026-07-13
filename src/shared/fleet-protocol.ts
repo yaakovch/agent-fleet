@@ -35,6 +35,8 @@ export interface BridgeSessionSnapshot {
   name: string;
   title: '';
   project: string;
+  projectPath: string;
+  locationKind: 'project' | 'custom';
   tool: FleetTool;
   backend: 'linux' | 'windows';
   activity: 'active' | 'idle';
@@ -121,6 +123,7 @@ export interface FleetBridgeView {
 
 export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create' | 'schedule.update'
   | 'host.doctor' | 'host.update' | 'session.rename'
+  | 'directory.list' | 'directory.create'
   | 'preset.upsert' | 'preset.delete'
   | 'pairing.invite' | 'pairing.review' | 'pairing.approve' | 'pairing.reject' | 'pairing.revoke';
 
@@ -148,6 +151,18 @@ export interface FleetMutationResult {
   invitation?: PairingInvitation;
   pairingRequest?: PairingProposalReview;
   doctor?: FleetDoctorResult;
+  path?: string;
+}
+
+export interface FleetDirectoryEntry { name: string; path: string }
+export interface FleetDirectoryShortcut { id: string; label: string; path: string }
+export interface FleetDirectoryListing {
+  backend: 'linux' | 'windows';
+  path: string;
+  parentPath: string | null;
+  entries: FleetDirectoryEntry[];
+  shortcuts: FleetDirectoryShortcut[];
+  truncated: boolean;
 }
 
 export interface FleetDoctorCheck {
@@ -226,6 +241,26 @@ export function emptyFleetSnapshot(distro: string, generatedAt = new Date().toIS
   };
 }
 
+export function parseFleetDirectoryListing(input: unknown): FleetDirectoryListing {
+  const value = exactObject(input, ['backend', 'path', 'parentPath', 'entries', 'shortcuts', 'truncated'], 'directory listing');
+  const backend = oneOf(value.backend, 'directory.backend', ['linux', 'windows']);
+  const path = text(value.path, 'directory.path', 2048, false);
+  const parentPath = value.parentPath === null ? null : text(value.parentPath, 'directory.parentPath', 2048, false);
+  const entries = array(value.entries, 'directory.entries', 1000).map((entry) => {
+    const item = exactObject(entry, ['name', 'path'], 'directory entry');
+    return { name: text(item.name, 'directory entry name', 255, false), path: text(item.path, 'directory entry path', 2048, false) };
+  });
+  const shortcuts = array(value.shortcuts, 'directory.shortcuts', 64).map((shortcut) => {
+    const item = exactObject(shortcut, ['id', 'label', 'path'], 'directory shortcut');
+    return {
+      id: text(item.id, 'directory shortcut id', 80, false),
+      label: text(item.label, 'directory shortcut label', 80, false),
+      path: text(item.path, 'directory shortcut path', 2048, false)
+    };
+  });
+  return { backend, path, parentPath, entries, shortcuts, truncated: boolean(value.truncated, 'directory.truncated') };
+}
+
 function parseHost(input: unknown): BridgeHostSnapshot {
   const value = exactObject(input, [
     'id', 'name', 'platform', 'transport', 'status', 'lastSeenAt', 'errorCode', 'capabilities',
@@ -248,10 +283,13 @@ function parseHost(input: unknown): BridgeHostSnapshot {
 }
 
 function parseSession(input: unknown, hostIds: ReadonlySet<string>): BridgeSessionSnapshot {
-  const value = exactObject(input, [
+  const candidate = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  const fields = [
     'id', 'hostId', 'internalName', 'name', 'title', 'project', 'tool', 'backend', 'activity',
     'attached', 'updatedAt', 'pendingScheduleCount'
-  ], 'session');
+  ];
+  if ('projectPath' in candidate || 'locationKind' in candidate) fields.push('projectPath', 'locationKind');
+  const value = exactObject(input, fields, 'session');
   const hostId = text(value.hostId, 'session.hostId', 160, false);
   if (!hostIds.has(hostId)) fail('session references an unknown host');
   if (value.title !== '') fail('pane-derived session titles are forbidden');
@@ -262,6 +300,8 @@ function parseSession(input: unknown, hostIds: ReadonlySet<string>): BridgeSessi
     name: text(value.name, 'session.name', 256, false),
     title: '',
     project: text(value.project, 'session.project', 256),
+    projectPath: 'projectPath' in value ? text(value.projectPath, 'session.projectPath', 2048) : '',
+    locationKind: 'locationKind' in value ? oneOf(value.locationKind, 'session.locationKind', ['project', 'custom']) : 'project',
     tool: oneOf(value.tool, 'session.tool', ['codex', 'claude', 'copilot', 'shell']),
     backend: oneOf(value.backend, 'session.backend', ['linux', 'windows']),
     activity: oneOf(value.activity, 'session.activity', ['active', 'idle']),
@@ -395,7 +435,7 @@ function toSession(session: BridgeSessionSnapshot, presets: FleetFavorite[]): Fl
     name: session.name,
     title: '',
     project: session.project,
-    projectPath: '',
+    projectPath: session.projectPath,
     tool: session.tool,
     backend: session.backend as FleetBackend,
     activity: session.activity,

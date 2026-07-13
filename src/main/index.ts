@@ -701,16 +701,53 @@ handle(IPC_CHANNELS.updateFleetHost, async (_event, hostId) => {
   }
 });
 handle(IPC_CHANNELS.pauseFleetNotifications, () => pauseFleetNotifications());
-handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool) => {
-  if (![hostId, project, backend, tool].every((value) => typeof value === 'string')) {
+handle(IPC_CHANNELS.listFleetDirectory, async (_event, hostId, backend, path) => {
+  if (typeof hostId !== 'string' || (backend !== 'linux' && backend !== 'windows') || typeof path !== 'string') {
+    return { ok: false, message: 'Directory request is invalid' };
+  }
+  const host = getFleetView().snapshot.hosts.find((item) => item.id === hostId && item.status === 'healthy');
+  if (!host) return { ok: false, message: 'Host is offline or no longer available' };
+  if (!validFleetPath(path, backend, true)) return { ok: false, message: 'Directory path is invalid' };
+  try {
+    const listing = await fleetBridge.mutate('directory.list', { hostId, backend, path, idempotencyKey: randomUUID() });
+    return { ok: true, message: 'Directory loaded', listing };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.createFleetDirectory, async (_event, hostId, backend, parentPath, name) => {
+  if (typeof hostId !== 'string' || (backend !== 'linux' && backend !== 'windows')
+    || typeof parentPath !== 'string' || typeof name !== 'string') {
+    return { ok: false, message: 'New folder request is invalid' };
+  }
+  const host = getFleetView().snapshot.hosts.find((item) => item.id === hostId && item.status === 'healthy');
+  if (!host || !validFleetPath(parentPath, backend, false)
+    || !/^[^./\\][^/\\]{0,126}$/.test(name) || /[ .]$/.test(name) || /[\u0000-\u001f\u007f]/.test(name)) {
+    return { ok: false, message: 'Host, parent folder, or folder name is invalid' };
+  }
+  try {
+    const result = await fleetBridge.mutate('directory.create', {
+      hostId, backend, parentPath, name, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: `Created ${name}`, path: result.path };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool, path, locationKind) => {
+  if (![hostId, project, backend, tool, path, locationKind].every((value) => typeof value === 'string')) {
     return { ok: false, message: 'Launcher selection is invalid' };
   }
   const fleet = getFleetView().snapshot;
   const host = fleet.hosts.find((item) => item.id === hostId && item.status === 'healthy');
-  const knownProject = fleet.sessions.some((item) => item.hostId === hostId && item.project === project);
-  if (!host || !knownProject) return { ok: false, message: 'Host or project is no longer available' };
+  if (!host || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(project)) {
+    return { ok: false, message: 'Host or session label is invalid' };
+  }
   if (backend !== 'linux' && backend !== 'windows') return { ok: false, message: 'Backend is invalid' };
   if (!['shell', 'codex', 'claude', 'copilot'].includes(tool)) return { ok: false, message: 'Tool is invalid' };
+  if ((locationKind !== 'project' && locationKind !== 'custom') || !validFleetPath(path, backend, false)) {
+    return { ok: false, message: 'Selected folder is invalid' };
+  }
   if (backend === 'windows' && host.platform !== 'wsl') return { ok: false, message: 'Windows backend requires a WSL host' };
   try {
     const result = await fleetBridge.mutate('session.create', {
@@ -718,6 +755,8 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
       project,
       backend,
       tool,
+      path,
+      locationKind,
       idempotencyKey: randomUUID()
     });
     if (result.sessionId) {
@@ -729,6 +768,14 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
     return fleetMutationFailure(error);
   }
 });
+
+function validFleetPath(value: string, backend: string, empty: boolean): boolean {
+  if (value.length > 2048 || (!empty && !value) || /[\u0000-\u001f\u007f]/.test(value)) return false;
+  if (!value) return empty;
+  return backend === 'linux'
+    ? value.startsWith('/')
+    : !value.startsWith('\\\\') && !value.startsWith('//') && /^[A-Za-z]:[\\/]/.test(value);
+}
 handle(IPC_CHANNELS.createFleetPairingInvitation, async () => {
   try {
     const result = await fleetBridge.mutate('pairing.invite', { idempotencyKey: randomUUID() });

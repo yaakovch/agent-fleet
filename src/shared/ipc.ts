@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   updateFleetHost: 'fleet:updateHost',
   pauseFleetNotifications: 'fleet:pauseNotifications',
   createFleetSession: 'fleet:createSession',
+  listFleetDirectory: 'fleet:listDirectory',
+  createFleetDirectory: 'fleet:createDirectory',
   createFleetPairingInvitation: 'fleet:createPairingInvitation',
   reviewFleetPairing: 'fleet:reviewPairing',
   getSettings: 'limits:getSettings',
