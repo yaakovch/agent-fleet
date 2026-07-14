@@ -1,6 +1,6 @@
 {
   "name": "agent-fleet",
-  "version": "0.11.0-beta.1",
+  "version": "0.11.0-beta.2",
   "description": "Windows tray dashboard for local AI coding sessions, schedules, hosts, and usage limits.",
   "main": "out/main/index.js",
   "type": "module",
@@ -17,7 +17,7 @@
     "preview": "electron-vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run --dir tests",
-    "smoke:packaged": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-packaged.ps1",
+    "smoke:packaged": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-packaged.ps1",
     "finalize:release": "node scripts/finalize-release.mjs"
   },
   "devDependencies": {

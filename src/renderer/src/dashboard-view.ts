@@ -66,7 +66,7 @@ type ModalState = {
   body: string;
   confirm: string;
   destructive?: boolean;
-  action?: { kind: 'kill-session' | 'cancel-schedule' | 'create-schedule' | 'update-schedule' | 'rename-session' | 'update-host'; id: string };
+  action?: { kind: 'kill-session' | 'cancel-schedule' | 'create-schedule' | 'update-schedule' | 'rename-session' | 'update-host'; id: string; attentionId?: string };
   deliverAt?: string;
   textValue?: string;
   doctor?: FleetDoctorResult;
@@ -155,6 +155,7 @@ export class DashboardPrototype {
     snapshot: FleetSnapshot = FLEET_FIXTURE
   ) {
     this.snapshot = snapshot;
+    this.workspace.setFleetSnapshot(snapshot);
     root.addEventListener('input', (event) => {
       const input = event.target as HTMLInputElement;
       if (input.dataset.dashboardSearch !== undefined) {
@@ -211,6 +212,7 @@ export class DashboardPrototype {
 
   setFleetState(view: FleetBridgeView): void {
     this.snapshot = view.snapshot;
+    this.workspace.setFleetSnapshot(view.snapshot);
     this.cacheSavedAt = view.cacheSavedAt;
     this.scenario = view.status === 'live'
       ? (view.snapshot.hosts.length ? 'live' : 'empty')
@@ -310,6 +312,13 @@ export class DashboardPrototype {
       this.modal = null;
       this.render();
       if (pending) void this.executeMutation(pending, sessionId, localTime, textValue);
+      return true;
+    }
+    if (action === 'modal-dismiss-attention') {
+      const attentionId = this.modal?.action?.attentionId;
+      this.modal = null;
+      this.render();
+      if (attentionId) void window.limitsWidget.dismissFleetAttention(attentionId).then((result) => this.showToast(result.message));
       return true;
     }
     if (action === 'dashboard-open-session') {
@@ -445,7 +454,7 @@ export class DashboardPrototype {
       const attentionId = control.closest<HTMLElement>('[data-attention-id]')?.dataset.attentionId;
       const item = this.snapshot.attention.find((candidate) => candidate.id === attentionId);
       if (item?.targetSessionId) {
-        this.openScheduleModal(item.targetSessionId, item.suggestedAt);
+        this.openScheduleModal(item.targetSessionId, item.suggestedAt, item.id);
         return true;
       }
       return this.showToast(this.snapshot.attention.length ? 'Choose an attention item' : 'Nothing needs attention');
@@ -494,13 +503,13 @@ export class DashboardPrototype {
     else {
       const instant = new Date(localTime);
       result = Number.isFinite(instant.getTime())
-        ? await window.limitsWidget.createFleetContinueSchedule(selectedSessionId, instant.toISOString())
+        ? await window.limitsWidget.createFleetContinueSchedule(selectedSessionId, instant.toISOString(), action.attentionId)
         : { ok: false, message: 'Choose a valid future time' };
     }
     this.showToast(result.message);
   }
 
-  private openScheduleModal(defaultSessionId = '', suggestedAt?: string): void {
+  private openScheduleModal(defaultSessionId = '', suggestedAt?: string, attentionId?: string): void {
     if (!this.snapshot.sessions.length) {
       this.showToast('No live session is available');
       return;
@@ -509,7 +518,7 @@ export class DashboardPrototype {
       title: 'Schedule continue',
       body: 'Agent Fleet will send the standard continue action once at the selected time. Custom prompt text never crosses the desktop bridge.',
       confirm: 'Schedule continue',
-      action: { kind: 'create-schedule', id: defaultSessionId },
+      action: { kind: 'create-schedule', id: defaultSessionId, ...(attentionId ? { attentionId } : {}) },
       deliverAt: suggestedAt
     };
     this.render();
@@ -893,7 +902,9 @@ export class DashboardPrototype {
     const textForm = modal.action?.kind === 'rename-session'
       ? `<label>Session name<input data-modal-text maxlength="64" value="${escapeAttr(modal.textValue ?? '')}"></label>`
       : '';
-    const cancel = modal.doctor ? '' : '<button class="quiet-button" data-action="modal-cancel">Keep current state</button>';
+    const cancel = modal.doctor ? '' : modal.action?.attentionId
+      ? '<button class="danger-quiet" data-action="modal-dismiss-attention">Dismiss this limit</button><button class="quiet-button" data-action="modal-cancel">Not now</button>'
+      : '<button class="quiet-button" data-action="modal-cancel">Keep current state</button>';
     return `<div class="fleet-modal-backdrop"><section class="fleet-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title"><span class="modal-symbol ${modal.destructive ? 'danger' : ''}">${modal.destructive ? icon('circle-alert') : icon(modal.doctor ? 'heart-pulse' : 'calendar-clock')}</span><h2 id="fleet-modal-title">${escapeHtml(modal.title)}</h2><p>${escapeHtml(modal.body)}</p>${scheduleForm}${textForm}${doctorResults}<div>${cancel}<button class="${modal.destructive ? 'danger-button' : 'primary-button'}" data-action="${modal.doctor ? 'modal-cancel' : 'modal-confirm'}">${escapeHtml(modal.confirm)}</button></div></section></div>`;
   }
 

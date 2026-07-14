@@ -621,6 +621,13 @@ handle(IPC_CHANNELS.conversationRemoveAttachment, (_event, tabId, attachmentId) 
 handle(IPC_CHANNELS.conversationSend, (_event, tabId, text) =>
   typeof tabId === 'string' && typeof text === 'string'
     ? conversationManager.send(tabId, text) : { ok: false, message: 'Message is invalid' });
+handle(IPC_CHANNELS.conversationCopyText, (_event, text) => {
+  if (typeof text !== 'string' || !text || Buffer.byteLength(text, 'utf8') > 128 * 1024) {
+    return { ok: false, message: 'Copy content is invalid or too large' };
+  }
+  clipboard.writeText(text);
+  return { ok: true, message: 'Copied' };
+});
 handle(IPC_CHANNELS.killFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
@@ -727,13 +734,18 @@ handle(IPC_CHANNELS.cancelFleetSchedule, async (_event, scheduleId) => {
     return fleetMutationFailure(error);
   }
 });
-handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliverAt) => {
+handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliverAt, attentionId) => {
   if (typeof sessionId !== 'string' || typeof deliverAt !== 'string') {
     return { ok: false, message: 'Schedule target or time is invalid' };
   }
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
   const instant = Date.parse(deliverAt);
   if (!session) return { ok: false, message: 'Session is no longer available' };
+  const attention = typeof attentionId === 'string'
+    ? getFleetView().snapshot.attention.find((item) => item.id === attentionId) : undefined;
+  if (attentionId !== undefined && (!attention || attention.targetSessionId !== session.id || attention.hostId !== session.hostId)) {
+    return { ok: false, message: 'Hard-limit attention is no longer available for this session' };
+  }
   if (!Number.isFinite(instant) || instant <= Date.now()) return { ok: false, message: 'Choose a future delivery time' };
   try {
     const result = await fleetBridge.mutate('schedule.create', {
@@ -741,12 +753,26 @@ handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliv
       sessionId: session.id,
       deliverAt: new Date(instant).toISOString(),
       action: 'continue',
+      ...(attention ? { attentionId: attention.id } : {}),
       idempotencyKey: randomUUID()
     });
     return {
       ok: true,
       message: result.scheduleId ? `Continue scheduled (${result.scheduleId})` : 'Continue scheduled'
     };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.dismissFleetAttention, async (_event, attentionId) => {
+  if (typeof attentionId !== 'string') return { ok: false, message: 'Attention item is invalid' };
+  const attention = getFleetView().snapshot.attention.find((item) => item.id === attentionId);
+  if (!attention?.hostId) return { ok: false, message: 'Attention item is no longer available' };
+  try {
+    const result = await fleetBridge.mutate('attention.dismiss', {
+      hostId: attention.hostId, attentionId: attention.id, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: result.status === 'already-dismissed' ? 'Limit offer was already dismissed' : 'Limit offer dismissed' };
   } catch (error) {
     return fleetMutationFailure(error);
   }

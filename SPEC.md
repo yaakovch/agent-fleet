@@ -267,3 +267,26 @@ areas.
   selection, and cleanup work without automatic submission.
 - Settings, app data, logs, diagnostics, and notifications contain no terminal,
   transcript, draft, or image-preview content after normal use and restart.
+
+## Native Workspace Reliability And Actions
+
+- Each Native tab opens on the newest conversation content and owns independent
+  scroll state. Prepending history preserves the visible anchor; new content
+  follows only near the bottom and otherwise exposes a New messages action.
+- Incremental feed updates preserve focus, drafts, expanded tools, questions,
+  and approvals. Consecutive tools are grouped, but every collapsed row names
+  its action, target, state, duration, and useful counts; expansion shows
+  ordered semantic input/output before optional raw data.
+- Pending questions and approvals replace the composer in a pinned action
+  panel. The first valid input advances, previous answers remain editable, and
+  one final Submit remains pending until transcript confirmation.
+- A matching host-detected hard limit appears both in Native view and global
+  attention surfaces within five seconds. Schedule Continue defaults to reset
+  plus one minute, supports time editing, and resolves the originating event;
+  Dismiss resolves it fleet-wide.
+- The workspace action menu offers Close and Kill. Close only detaches the app
+  tab and prompts only for a draft or staged attachments. Kill confirms the
+  named session, destroys its tmux session, cancels schedules, and closes the
+  local tab after host confirmation.
+- Commands, output, diffs, paths, tool blocks, and fenced Markdown expose an
+  explicit Copy action and local confirmation without logging clipboard text.

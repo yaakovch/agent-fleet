@@ -122,6 +122,7 @@ export interface FleetBridgeView {
 }
 
 export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create' | 'schedule.update'
+  | 'attention.dismiss'
   | 'host.doctor' | 'host.update' | 'session.rename'
   | 'directory.list' | 'directory.create'
   | 'preset.upsert' | 'preset.delete'

@@ -26,3 +26,43 @@ export interface ConversationFrame {
 export interface ConversationEvent { tabId: string; frame: ConversationFrame }
 export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame }
 export interface StagedAttachment { id: string; name: string; mime: string; bytes: number; thumbnail: string }
+
+export function mergeConversationItems(current: ConversationItem[], incoming: ConversationItem[]): ConversationItem[] {
+  const values = new Map(current.map((item) => [item.id, item]));
+  for (const item of incoming) {
+    const old = values.get(item.id);
+    values.set(item.id, old && ['tool', 'question'].includes(item.kind) ? {
+      ...old, ...item,
+      state: old.state === 'complete' || item.state === 'complete' ? 'complete' : item.state || old.state,
+      text: item.text || old.text, detail: item.detail || old.detail,
+      questions: item.questions?.length ? item.questions : old.questions,
+      answers: item.answers?.length ? item.answers : old.answers,
+      input: item.input || old.input, result: item.result || old.result,
+      startedAt: item.startedAt || old.startedAt, completedAt: item.completedAt || old.completedAt,
+      presentation: mergeToolPresentation(old.presentation, item.presentation)
+    } : item);
+  }
+  return [...values.values()].slice(-2_000);
+}
+
+export function resolveConversationScroll(
+  mode: 'append' | 'prepend' | 'preserve', previousTop: number, previousHeight: number,
+  nextHeight: number, wasNearBottom: boolean
+): number {
+  if (mode === 'prepend') return Math.max(0, previousTop + nextHeight - previousHeight);
+  if (mode === 'append' && wasNearBottom) return nextHeight;
+  return Math.max(0, previousTop);
+}
+
+function mergeToolPresentation(old: ToolPresentation | undefined, incoming: ToolPresentation | undefined): ToolPresentation | undefined {
+  if (!old) return incoming;
+  if (!incoming) return old;
+  return {
+    version: 1,
+    title: old.title || incoming.title,
+    subtitle: old.subtitle || incoming.subtitle,
+    previewLines: incoming.previewLines || old.previewLines,
+    inputBlocks: old.inputBlocks.length ? old.inputBlocks : incoming.inputBlocks,
+    resultBlocks: incoming.resultBlocks.length ? incoming.resultBlocks : old.resultBlocks
+  };
+}

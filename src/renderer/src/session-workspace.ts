@@ -7,10 +7,12 @@ import { marked } from 'marked';
 import hljs from 'highlight.js';
 import type { WidgetSettings } from '../../shared/settings';
 import type { TerminalTabDescriptor } from '../../shared/terminal';
+import type { FleetAttention, FleetSnapshot } from '../../shared/fleet';
 import type {
   ConversationAnswer, ConversationFrame, ConversationItem, ConversationQuestion, StagedAttachment,
   ToolPresentationBlock
 } from '../../shared/conversation';
+import { mergeConversationItems, resolveConversationScroll } from '../../shared/conversation';
 
 interface TerminalRuntime {
   terminal: Terminal;
@@ -30,6 +32,26 @@ interface NativeState {
   attachments: StagedAttachment[];
   notice: string;
   draft: string;
+  scrollTop: number;
+  scrollHeight: number;
+  scrollInitialized: boolean;
+  followOutput: boolean;
+  newMessages: boolean;
+  renderMode: 'initial' | 'append' | 'prepend' | 'preserve';
+  questionDrafts: Map<string, ConversationAnswer[]>;
+  questionSteps: Map<string, number>;
+  submittingQuestions: Set<string>;
+  expandedDetails: Set<string>;
+}
+
+interface RenderSnapshot {
+  tabId: string;
+  scrollTop: number;
+  scrollHeight: number;
+  nearBottom: boolean;
+  focusKey: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
 }
 
 export class SessionWorkspace {
@@ -39,6 +61,8 @@ export class SessionWorkspace {
   private nativeStates = new Map<string, NativeState>();
   private conversationStarted = new Set<string>();
   private selectedId = '';
+  private renderedTabId = '';
+  private fleetSnapshot: FleetSnapshot | null = null;
   private settings: WidgetSettings;
   private resizeObserver: ResizeObserver;
 
@@ -66,8 +90,38 @@ export class SessionWorkspace {
       const input = event.target;
       if (input instanceof HTMLTextAreaElement && input.matches('[data-native-message]') && this.selectedId) {
         this.nativeState(this.selectedId).draft = input.value;
+      } else if (input instanceof HTMLTextAreaElement && input.matches('[data-question-text]')) {
+        this.captureQuestionDraft(input);
+        this.advanceQuestionIfValid(input);
       }
     });
+    this.element.addEventListener('change', (event) => {
+      const input = event.target;
+      if (input instanceof HTMLInputElement && input.matches('[data-question-choice]')) {
+        this.captureQuestionDraft(input);
+        this.advanceQuestionIfValid(input);
+      }
+    });
+    this.element.addEventListener('scroll', (event) => {
+      const messages = event.target;
+      if (!(messages instanceof HTMLElement) || !messages.matches('.native-messages')) return;
+      const tabId = messages.dataset.nativeScrollTab;
+      if (!tabId) return;
+      const state = this.nativeState(tabId);
+      state.scrollTop = messages.scrollTop;
+      state.scrollHeight = messages.scrollHeight;
+      state.followOutput = isNearBottom(messages);
+      if (state.followOutput && state.newMessages) {
+        state.newMessages = false;
+        this.element.querySelector('[data-new-messages]')?.remove();
+      }
+    }, true);
+    this.element.addEventListener('toggle', (event) => {
+      const detail = event.target;
+      if (!(detail instanceof HTMLDetailsElement) || !detail.dataset.detailId || !this.renderedTabId) return;
+      const expanded = this.nativeState(this.renderedTabId).expandedDetails;
+      if (detail.open) expanded.add(detail.dataset.detailId); else expanded.delete(detail.dataset.detailId);
+    }, true);
     this.element.addEventListener('paste', (event) => {
       const image = [...event.clipboardData?.items ?? []].find((item) => item.type.startsWith('image/'))?.getAsFile();
       if (image) { event.preventDefault(); void this.stageFile(image); }
@@ -89,6 +143,12 @@ export class SessionWorkspace {
     this.applyAppearance();
     for (const runtime of this.runtimes.values()) Object.assign(runtime.terminal.options, this.terminalOptions());
     this.render();
+  }
+
+  setFleetSnapshot(snapshot: FleetSnapshot): void {
+    const changed = this.fleetSnapshot?.revision !== snapshot.revision;
+    this.fleetSnapshot = snapshot;
+    if (changed && this.selectedId) this.render();
   }
 
   private applyAppearance(): void {
@@ -125,7 +185,12 @@ export class SessionWorkspace {
     }
     if (action === 'workspace-close') {
       const id = control.dataset.tabId;
-      if (id) void window.limitsWidget.closeTerminalTab(id);
+      if (id) void this.closeTab(id);
+      return true;
+    }
+    if (action === 'workspace-kill') {
+      const tab = this.tabs.get(this.selectedId);
+      if (tab) void this.killTab(tab);
       return true;
     }
     if (action === 'workspace-retry') {
@@ -154,6 +219,7 @@ export class SessionWorkspace {
       return true;
     }
     if (action === 'native-load-older') { void this.loadOlder(); return true; }
+    if (action === 'native-new-messages') { this.scrollToLatest(); return true; }
     if (action === 'native-approve') {
       const item = this.itemFromControl(control);
       const choice = control.dataset.choice;
@@ -163,6 +229,43 @@ export class SessionWorkspace {
     if (action === 'native-question-submit') {
       const item = this.itemFromControl(control);
       if (item) void this.submitQuestion(item);
+      return true;
+    }
+    if (action === 'native-question-back') {
+      const item = this.itemFromControl(control);
+      if (item) {
+        const state = this.nativeState(this.selectedId);
+        state.questionSteps.set(item.id, Math.max(0, (state.questionSteps.get(item.id) ?? 0) - 1));
+        state.renderMode = 'preserve';
+        this.render();
+      }
+      return true;
+    }
+    if (action === 'native-copy') { void this.copyFromControl(control); return true; }
+    if (action === 'native-limit-schedule') {
+      const attention = this.attentionFromControl(control);
+      if (attention?.targetSessionId && attention.suggestedAt) {
+        void this.scheduleLimit(attention, attention.suggestedAt);
+      }
+      return true;
+    }
+    if (action === 'native-limit-change') {
+      const attention = this.attentionFromControl(control);
+      if (attention?.targetSessionId) {
+        const initial = toLocalDateTimeValue(attention.suggestedAt ?? new Date(Date.now() + 60_000).toISOString());
+        const chosen = window.prompt('Schedule Continue at (local time)', initial);
+        if (chosen) {
+          const instant = new Date(chosen);
+          const state = this.nativeState(this.selectedId);
+          if (Number.isFinite(instant.getTime()) && instant.getTime() > Date.now()) void this.scheduleLimit(attention, instant.toISOString());
+          else { state.notice = 'Choose a valid future time'; this.render(); }
+        }
+      }
+      return true;
+    }
+    if (action === 'native-limit-dismiss') {
+      const attention = this.attentionFromControl(control);
+      if (attention) void this.dismissLimit(attention);
       return true;
     }
     if (action === 'native-attach') { void this.chooseAttachments(); return true; }
@@ -189,9 +292,14 @@ export class SessionWorkspace {
   }
 
   private render(): void {
+    const previous = this.captureRenderSnapshot();
     for (const runtime of this.runtimes.values()) runtime.element.remove();
     const selected = this.tabs.get(this.selectedId) ?? [...this.tabs.values()].at(-1);
     if (selected) this.selectedId = selected.id;
+    if (selected && previous?.tabId === selected.id) {
+      const state = this.nativeState(selected.id);
+      if (state.renderMode === 'append') state.newMessages = !previous.nearBottom;
+    }
     this.element.innerHTML = this.tabs.size ? `
       <div class="workspace-tabs" role="tablist">
         ${[...this.tabs.values()].map((tab) => `<button role="tab" class="workspace-tab ${tab.id === this.selectedId ? 'active' : ''}" data-action="workspace-select" data-workspace-action data-tab-id="${escapeAttr(tab.id)}"><i class="terminal-status status-${tab.status}"></i><span>${escapeHtml(tab.label)}</span><small>${escapeHtml(tab.hostId)}</small><b data-action="workspace-close" data-workspace-action data-tab-id="${escapeAttr(tab.id)}" title="Close tab">×</b></button>`).join('')}
@@ -201,6 +309,7 @@ export class SessionWorkspace {
         <span class="workspace-identity"><strong>${escapeHtml(selected?.label ?? '')}</strong><small>${escapeHtml(selected ? `${selected.hostId} · ${selected.project} · ${selected.tool}` : '')}</small></span>
         <span class="workspace-connection status-text-${selected?.status ?? 'offline'}">${escapeHtml(selected?.statusMessage ?? '')}</span>
         <button class="quiet-button" data-action="workspace-search" data-workspace-action>Find</button>
+        ${selected ? `<details class="workspace-actions-menu"><summary>Actions</summary><div><button data-action="workspace-close" data-workspace-action data-tab-id="${escapeAttr(selected.id)}">Close tab</button><button class="danger-quiet" data-action="workspace-kill" data-workspace-action>Kill session…</button></div></details>` : ''}
         ${selected && selected.status !== 'live' ? '<button class="primary-button" data-action="workspace-retry" data-workspace-action>Retry</button>' : ''}
       </div>
       <div class="workspace-stage">
@@ -208,9 +317,11 @@ export class SessionWorkspace {
         <div class="terminal-session-panel ${selected?.viewMode === 'terminal' ? '' : 'hidden'}"></div>
       </div>` : `<div class="workspace-empty"><span>&gt;_</span><h2>No sessions open</h2><p>Open any fleet session to keep it here as a tab.</p></div>`;
     if (selected) {
+      this.renderedTabId = selected.id;
       this.mountTerminal(selected);
       if (selected.viewMode === 'native') this.startConversation(selected);
-    }
+      queueMicrotask(() => this.restoreRenderSnapshot(selected.id, previous));
+    } else this.renderedTabId = '';
   }
 
   private mountTerminal(tab: TerminalTabDescriptor): void {
@@ -238,7 +349,10 @@ export class SessionWorkspace {
     let state = this.nativeStates.get(tabId);
     if (!state) {
       state = { items: [], interactionMode: 'unknown', connection: 'Connecting…', nextCursor: null,
-        hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '' };
+        hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
+        scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
+        renderMode: 'initial', questionDrafts: new Map(), questionSteps: new Map(),
+        submittingQuestions: new Set(), expandedDetails: new Set() };
       this.nativeStates.set(tabId, state);
     }
     return state;
@@ -261,11 +375,14 @@ export class SessionWorkspace {
     if (!this.tabs.has(tabId)) return;
     const state = this.nativeState(tabId);
     if (frame.type === 'conversation.snapshot') {
+      const firstSnapshot = !state.scrollInitialized && !state.items.length;
       state.items = mergeItems([], frame.items ?? []);
+      state.renderMode = firstSnapshot ? 'initial' : 'preserve';
       state.interactionMode = frame.interactionMode ?? 'unknown';
       state.connection = 'Live'; state.error = '';
       state.nextCursor = frame.nextCursor ?? null; state.hasMore = Boolean(frame.hasMore); state.loadingOlder = false;
     } else if (frame.type === 'conversation.event' && frame.item) {
+      state.renderMode = 'append';
       state.items = mergeItems(state.items, [frame.item]); state.connection = 'Live'; state.error = '';
     } else if (frame.type === 'conversation.error') {
       state.connection = 'Unavailable'; state.error = frame.error?.message ?? 'Native view is unavailable';
@@ -273,29 +390,43 @@ export class SessionWorkspace {
       state.connection = frame.status === 'ready' ? 'Live' : frame.status?.replaceAll('_', ' ') ?? state.connection;
       if (frame.interactionMode && frame.interactionMode !== 'unknown') state.interactionMode = frame.interactionMode;
     }
+    const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
+    for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
     if (tabId === this.selectedId) this.render();
   }
 
   private renderNative(tab: TerminalTabDescriptor): string {
     if (tab.tool === 'shell') return `<div class="native-shell"><div class="native-shell-intro"><strong>Friendly shell</strong><span>Use short navigation commands here. Switch to Terminal for full-screen programs.</span></div>${this.renderComposer(tab, this.nativeState(tab.id))}</div>`;
     const state = this.nativeState(tab.id);
-    return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}">
+    const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
+    const feedItems = pending ? state.items.filter((item) => item.id !== pending.id) : state.items;
+    const attention = this.fleetSnapshot?.attention.find((item) => item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId);
+    return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
       <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i>${escapeHtml(state.connection)}</span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
-      <div class="native-messages">
+      <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
-        ${renderConversationRows(state.items)}
+        ${renderConversationRows(feedItems)}
         ${!state.items.length && !state.error ? '<div class="native-empty"><strong>Loading conversation…</strong><span>The newest messages appear first; older history loads only when requested.</span></div>' : ''}
       </div>
-      ${this.renderComposer(tab, state)}
+      ${state.newMessages ? '<button class="new-messages-button" data-new-messages data-action="native-new-messages" data-workspace-action>New messages ↓</button>' : ''}
+      ${attention ? renderLimitCard(attention) : ''}
+      ${pending ? this.renderPendingAction(pending, state) : this.renderComposer(tab, state)}
     </div>`;
+  }
+
+  private renderPendingAction(item: ConversationItem, state: NativeState): string {
+    const content = item.kind === 'question'
+      ? renderQuestion(item, state.questionSteps.get(item.id) ?? 0, state.questionDrafts.get(item.id), state.submittingQuestions.has(item.id))
+      : renderConversationItem(item);
+    return `<section class="native-pending-panel ${state.interactionMode === 'plan' ? 'planning' : ''}"><div class="pending-panel-heading"><strong>Action needed</strong><small>Complete this to continue the session</small></div>${content}</section>`;
   }
 
   private renderComposer(tab: TerminalTabDescriptor, state: NativeState): string {
     return `<div class="native-composer ${state.interactionMode === 'plan' ? 'planning' : ''}" data-composer-tab="${escapeAttr(tab.id)}">
       ${state.attachments.length ? `<div class="attachment-strip">${state.attachments.map((item) => `<button data-action="native-remove-attachment" data-workspace-action data-attachment-id="${escapeAttr(item.id)}" title="Remove ${escapeAttr(item.name)}"><img src="${item.thumbnail}" alt=""><span>${escapeHtml(item.name)}</span><b>×</b></button>`).join('')}</div>` : ''}
       ${state.notice ? `<small class="composer-notice">${escapeHtml(state.notice)}</small>` : ''}
-      <textarea data-native-message maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
+      <textarea data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
       <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action>Shift+Tab</button><button data-action="native-control-c" data-workspace-action>Ctrl+C</button><span></span><button class="primary-button" data-action="native-send" data-workspace-action>Send</button></div>
     </div>`;
   }
@@ -309,6 +440,7 @@ export class SessionWorkspace {
     if (result.frame?.type === 'conversation.snapshot') {
       state.items = mergeItems(result.frame.items ?? [], state.items);
       state.nextCursor = result.frame.nextCursor ?? null; state.hasMore = Boolean(result.frame.hasMore);
+      state.renderMode = 'prepend';
     } else state.notice = result.message;
     this.render();
   }
@@ -328,24 +460,184 @@ export class SessionWorkspace {
 
   private async submitQuestion(item: ConversationItem): Promise<void> {
     if (!item.revision || !item.questions?.length) return;
-    const card = [...this.element.querySelectorAll<HTMLElement>('[data-conversation-item]')].find((node) => node.dataset.conversationItem === item.id);
-    if (!card) return;
-    const answers: ConversationAnswer[] = [];
+    this.captureVisibleQuestionDraft(item.id);
+    const state = this.nativeState(this.selectedId);
+    const answers = state.questionDrafts.get(item.id) ?? [];
     for (const question of item.questions) {
-      const checked = [...card.querySelectorAll<HTMLInputElement>('input[data-question-choice]:checked')]
-        .filter((input) => input.dataset.questionId === question.id).map((input) => input.value);
-      const text = [...card.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-question-text]')]
-        .find((input) => input.dataset.questionId === question.id)?.value.trim() ?? '';
-      if (question.required && !checked.length && !text) {
-        this.nativeState(this.selectedId).notice = `Answer “${question.header || question.prompt}” first`;
+      const answer = answers.find((value) => value.questionId === question.id);
+      if (question.required && !answer?.choiceIds.length && !answer?.text.trim()) {
+        state.notice = `Answer “${question.header || question.prompt}” first`;
+        state.questionSteps.set(item.id, item.questions.indexOf(question));
         this.render(); return;
       }
-      answers.push({ questionId: question.id, choiceIds: checked, text });
     }
-    const result = await window.limitsWidget.answerConversation(this.selectedId, item.id, item.revision, answers);
-    const state = this.nativeState(this.selectedId); state.notice = result.message;
-    if (result.ok) state.items = mergeItems(state.items, [{ ...item, state: 'running', title: 'Answer sent…', answers }]);
+    state.submittingQuestions.add(item.id);
+    state.notice = 'Submitting answers…';
     this.render();
+    const result = await window.limitsWidget.answerConversation(this.selectedId, item.id, item.revision, answers);
+    state.notice = result.message;
+    if (result.ok) state.items = mergeItems(state.items, [{ ...item, state: 'running', title: 'Answer sent…', answers }]);
+    else state.submittingQuestions.delete(item.id);
+    this.render();
+  }
+
+  private captureQuestionDraft(input: HTMLInputElement | HTMLTextAreaElement): void {
+    const card = input.closest<HTMLElement>('[data-conversation-item]');
+    if (!card?.dataset.conversationItem) return;
+    this.captureVisibleQuestionDraft(card.dataset.conversationItem);
+  }
+
+  private captureVisibleQuestionDraft(itemId: string): void {
+    const card = [...this.element.querySelectorAll<HTMLElement>('[data-conversation-item]')]
+      .find((node) => node.dataset.conversationItem === itemId);
+    const item = this.nativeState(this.selectedId).items.find((value) => value.id === itemId);
+    if (!card || !item) return;
+    const state = this.nativeState(this.selectedId);
+    const answers = [...(state.questionDrafts.get(itemId) ?? item.answers ?? [])];
+    const questionId = card.querySelector<HTMLInputElement | HTMLTextAreaElement>('[data-question-id]')?.dataset.questionId;
+    if (!questionId) return;
+    const checked = [...card.querySelectorAll<HTMLInputElement>('input[data-question-choice]:checked')]
+      .filter((value) => value.dataset.questionId === questionId).map((value) => value.value);
+    const text = [...card.querySelectorAll<HTMLTextAreaElement>('[data-question-text]')]
+      .find((value) => value.dataset.questionId === questionId)?.value ?? '';
+    const next = { questionId, choiceIds: checked, text };
+    const index = answers.findIndex((value) => value.questionId === questionId);
+    if (index >= 0) answers[index] = next; else answers.push(next);
+    state.questionDrafts.set(itemId, answers);
+  }
+
+  private advanceQuestionIfValid(input: HTMLInputElement | HTMLTextAreaElement): void {
+    const card = input.closest<HTMLElement>('[data-conversation-item]');
+    const itemId = card?.dataset.conversationItem;
+    const item = itemId ? this.nativeState(this.selectedId).items.find((value) => value.id === itemId) : undefined;
+    if (!item?.questions?.length || !itemId) return;
+    const state = this.nativeState(this.selectedId);
+    const step = state.questionSteps.get(itemId) ?? 0;
+    const question = item.questions[Math.min(step, item.questions.length - 1)];
+    const answer = state.questionDrafts.get(itemId)?.find((value) => value.questionId === question.id);
+    if (!answer || (!answer.choiceIds.length && !answer.text.trim()) || step >= item.questions.length - 1) return;
+    state.questionSteps.set(itemId, step + 1);
+    state.renderMode = 'preserve';
+    queueMicrotask(() => this.render());
+  }
+
+  private async closeTab(tabId: string): Promise<void> {
+    const state = this.nativeStates.get(tabId);
+    if ((state?.draft.trim() || state?.attachments.length) && !window.confirm('Close this tab and discard its unsent draft and staged attachments?')) return;
+    await window.limitsWidget.closeTerminalTab(tabId);
+  }
+
+  private async killTab(tab: TerminalTabDescriptor): Promise<void> {
+    if (!window.confirm(`Kill “${tab.label}” on ${tab.hostId}? This destroys the tmux session and cancels its pending schedules.`)) return;
+    const result = await window.limitsWidget.killFleetSession(tab.sessionId);
+    const state = this.nativeState(tab.id);
+    state.notice = result.message;
+    if (result.ok) await window.limitsWidget.closeTerminalTab(tab.id);
+    else this.render();
+  }
+
+  private attentionFromControl(control: HTMLElement): FleetAttention | undefined {
+    const id = control.closest<HTMLElement>('[data-attention-id]')?.dataset.attentionId;
+    return this.fleetSnapshot?.attention.find((item) => item.id === id);
+  }
+
+  private async scheduleLimit(attention: FleetAttention, deliverAt: string): Promise<void> {
+    if (!attention.targetSessionId) return;
+    const state = this.nativeState(this.selectedId);
+    state.notice = 'Scheduling Continue…';
+    this.render();
+    const result = await window.limitsWidget.createFleetContinueSchedule(attention.targetSessionId, deliverAt, attention.id);
+    state.notice = result.message;
+    this.render();
+  }
+
+  private async dismissLimit(attention: FleetAttention): Promise<void> {
+    const state = this.nativeState(this.selectedId);
+    state.notice = 'Dismissing limit offer…';
+    this.render();
+    const result = await window.limitsWidget.dismissFleetAttention(attention.id);
+    state.notice = result.message;
+    this.render();
+  }
+
+  private async copyFromControl(control: HTMLElement): Promise<void> {
+    const source = control.closest<HTMLElement>('[data-copy-source]');
+    const value = source?.querySelector<HTMLElement>('[data-copy-value]')?.textContent
+      ?? source?.querySelector<HTMLElement>('pre, code')?.textContent ?? '';
+    const result = await window.limitsWidget.copyConversationText(value);
+    const previous = control.textContent;
+    control.textContent = result.ok ? 'Copied' : 'Copy failed';
+    window.setTimeout(() => { if (control.isConnected) control.textContent = previous; }, 1_500);
+  }
+
+  private scrollToLatest(): void {
+    const messages = this.element.querySelector<HTMLElement>('.native-messages');
+    if (!messages) return;
+    messages.scrollTop = messages.scrollHeight;
+    const state = this.nativeState(this.selectedId);
+    state.followOutput = true; state.newMessages = false; state.scrollTop = messages.scrollTop;
+    this.element.querySelector('[data-new-messages]')?.remove();
+  }
+
+  private captureRenderSnapshot(): RenderSnapshot | null {
+    if (!this.renderedTabId) return null;
+    const messages = this.element.querySelector<HTMLElement>('.native-messages');
+    if (!messages) return null;
+    const state = this.nativeState(this.renderedTabId);
+    state.scrollTop = messages.scrollTop;
+    state.scrollHeight = messages.scrollHeight;
+    state.followOutput = isNearBottom(messages);
+    for (const detail of this.element.querySelectorAll<HTMLDetailsElement>('details[data-detail-id]')) {
+      if (detail.open) state.expandedDetails.add(detail.dataset.detailId!); else state.expandedDetails.delete(detail.dataset.detailId!);
+    }
+    const active = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+      ? document.activeElement : null;
+    return {
+      tabId: this.renderedTabId, scrollTop: messages.scrollTop, scrollHeight: messages.scrollHeight,
+      nearBottom: isNearBottom(messages), focusKey: active?.dataset.focusKey ?? '',
+      selectionStart: active?.selectionStart ?? null, selectionEnd: active?.selectionEnd ?? null
+    };
+  }
+
+  private restoreRenderSnapshot(tabId: string, previous: RenderSnapshot | null): void {
+    const messages = this.element.querySelector<HTMLElement>('.native-messages');
+    const state = this.nativeState(tabId);
+    if (!messages) return;
+    this.enhanceMarkdownCopy();
+    if ((!state.scrollInitialized || state.renderMode === 'initial') && state.items.length) {
+      messages.scrollTop = messages.scrollHeight;
+      state.scrollInitialized = true; state.followOutput = true; state.newMessages = false;
+    } else if (!state.scrollInitialized) {
+      messages.scrollTop = 0;
+    } else if (previous?.tabId === tabId) {
+      messages.scrollTop = resolveConversationScroll(
+        state.renderMode === 'initial' ? 'preserve' : state.renderMode,
+        previous.scrollTop, previous.scrollHeight, messages.scrollHeight, previous.nearBottom
+      );
+      if (state.renderMode === 'append' && !previous.nearBottom) state.newMessages = true;
+    } else messages.scrollTop = Math.min(state.scrollTop, messages.scrollHeight);
+    state.scrollTop = messages.scrollTop; state.scrollHeight = messages.scrollHeight;
+    state.followOutput = isNearBottom(messages); state.renderMode = 'preserve';
+    for (const detail of this.element.querySelectorAll<HTMLDetailsElement>('details[data-detail-id]')) {
+      detail.open = Boolean(detail.dataset.detailId && state.expandedDetails.has(detail.dataset.detailId));
+    }
+    if (previous?.tabId === tabId && previous.focusKey) {
+      const focus = [...this.element.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-focus-key]')]
+        .find((value) => value.dataset.focusKey === previous.focusKey);
+      focus?.focus();
+      if (focus && previous.selectionStart !== null && previous.selectionEnd !== null) focus.setSelectionRange(previous.selectionStart, previous.selectionEnd);
+    }
+  }
+
+  private enhanceMarkdownCopy(): void {
+    for (const pre of this.element.querySelectorAll<HTMLElement>('.native-markdown pre')) {
+      if (pre.parentElement?.matches('[data-copy-source]')) continue;
+      const wrapper = document.createElement('div'); wrapper.className = 'copy-code-block'; wrapper.dataset.copySource = '';
+      const copyValue = document.createElement('span'); copyValue.hidden = true; copyValue.dataset.copyValue = '';
+      copyValue.textContent = pre.textContent ?? '';
+      const button = document.createElement('button'); button.textContent = 'Copy'; button.dataset.action = 'native-copy'; button.dataset.workspaceAction = '';
+      pre.replaceWith(wrapper); wrapper.append(copyValue, button, pre);
+    }
   }
 
   private async stageFile(file: File): Promise<void> {
@@ -428,20 +720,24 @@ function renderConversationItem(item: ConversationItem): string {
   return `<article class="native-message ${role}">${item.title && item.title !== content ? `<small>${escapeHtml(item.title)}</small>` : ''}${markdown(content || item.title)}</article>`;
 }
 
-function renderQuestion(item: ConversationItem): string {
+function renderQuestion(item: ConversationItem, requestedStep = 0, draftAnswers?: ConversationAnswer[], submitting = false): string {
   const complete = item.state === 'complete';
   const questions = item.questions?.length ? item.questions : fallbackQuestion(item);
+  const step = Math.max(0, Math.min(requestedStep, questions.length - 1));
+  const answerSource = draftAnswers?.length ? draftAnswers : item.answers;
+  const visibleQuestions = complete ? questions : [questions[step]];
   return `<article class="native-card question-card state-${escapeAttr(item.state)}" data-conversation-item="${escapeAttr(item.id)}"><small>${complete ? 'Answered' : 'Question'}</small><h3>${escapeHtml(item.title || 'Your input is needed')}</h3>${item.text ? markdown(item.text) : ''}
-    ${questions.map((question) => renderQuestionPart(question, item)).join('')}
-    ${complete ? '<div class="question-complete">Answer submitted</div>' : '<button class="primary-button question-submit" data-action="native-question-submit" data-workspace-action>Submit answers</button>'}</article>`;
+    ${!complete && questions.length > 1 ? `<div class="question-progress"><span>Question ${step + 1} of ${questions.length}</span>${questions.map((_question, index) => `<i class="${index < step ? 'done' : index === step ? 'active' : ''}"></i>`).join('')}</div>` : ''}
+    ${visibleQuestions.map((question) => renderQuestionPart(question, item, answerSource)).join('')}
+    ${complete ? '<div class="question-complete">Answer submitted</div>' : `<div class="question-navigation">${step > 0 ? '<button class="quiet-button" data-action="native-question-back" data-workspace-action>Back</button>' : '<span></span>'}${step === questions.length - 1 ? `<button class="primary-button question-submit" data-action="native-question-submit" data-workspace-action ${submitting ? 'disabled' : ''}>${submitting ? 'Submitting…' : 'Submit answers'}</button>` : '<small>Choose an answer to continue</small>'}</div>`}</article>`;
 }
 
-function renderQuestionPart(question: ConversationQuestion, item: ConversationItem): string {
-  const existing = item.answers?.find((answer) => answer.questionId === question.id);
+function renderQuestionPart(question: ConversationQuestion, item: ConversationItem, answers?: ConversationAnswer[]): string {
+  const existing = answers?.find((answer) => answer.questionId === question.id) ?? item.answers?.find((answer) => answer.questionId === question.id);
   const type = question.type === 'multi' ? 'checkbox' : 'radio';
   const options = question.options.map((option) => `<label class="question-option"><input type="${type}" name="q-${escapeAttr(item.id)}-${escapeAttr(question.id)}" value="${escapeAttr(option.id)}" data-question-choice data-question-id="${escapeAttr(question.id)}" ${existing?.choiceIds.includes(option.id) ? 'checked' : ''}><span><strong>${escapeHtml(option.label)}</strong>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ''}</span></label>`).join('');
   const textInput = question.type === 'text' || question.allowOther
-    ? `<textarea data-question-text data-question-id="${escapeAttr(question.id)}" placeholder="${question.type === 'text' ? 'Type your answer' : 'Or type another answer'}">${escapeHtml(existing?.text ?? '')}</textarea>` : '';
+    ? `<textarea data-question-text data-question-id="${escapeAttr(question.id)}" data-focus-key="question-${escapeAttr(item.id)}-${escapeAttr(question.id)}" placeholder="${question.type === 'text' ? 'Type your answer' : 'Or type another answer'}">${escapeHtml(existing?.text ?? '')}</textarea>` : '';
   return `<fieldset class="question-part"><legend>${question.header ? `<small>${escapeHtml(question.header)}</small>` : ''}<strong>${escapeHtml(question.prompt)}</strong></legend>${options}${textInput}</fieldset>`;
 }
 
@@ -453,7 +749,8 @@ function fallbackQuestion(item: ConversationItem): ConversationQuestion[] {
 function renderToolGroup(tools: ConversationItem[]): string {
   const running = tools.filter((tool) => tool.state === 'running').length;
   const label = tools.map(toolLabel).filter((value, index, all) => all.indexOf(value) === index).slice(0, 3).join(', ');
-  return `<details class="tool-group"><summary><span><strong>${tools.length} tool calls</strong><small>${escapeHtml(label)}${running ? ` · ${running} running` : ''}</small></span><b>Show</b></summary><div>${tools.map(renderTool).join('')}</div></details>`;
+  const completed = tools.filter((tool) => tool.state === 'complete').length;
+  return `<details class="tool-group" data-detail-id="group-${escapeAttr(tools[0].id)}"><summary><span><strong>${tools.length} tool calls</strong><small>${escapeHtml(label)} · ${completed} done${running ? ` · ${running} running` : ''}</small></span><b>Show</b></summary><div>${tools.map(renderTool).join('')}</div></details>`;
 }
 
 function renderTool(item: ConversationItem): string {
@@ -462,13 +759,17 @@ function renderTool(item: ConversationItem): string {
   const subtitle = presentation?.subtitle || item.target || stateLabel(item.state);
   const inputBlocks = presentation?.inputBlocks?.length ? presentation.inputBlocks : item.input ? [{ title: 'Input', kind: 'json', content: item.input }] : [];
   const resultBlocks = presentation?.resultBlocks?.length ? presentation.resultBlocks : item.result ? [{ title: 'Result', kind: 'text', content: item.result }] : [];
-  return `<details class="tool-call state-${escapeAttr(item.state)}"><summary><span class="tool-state"></span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle)}</small></span><b>${escapeHtml(stateLabel(item.state))}</b></summary><div class="tool-detail">${[...inputBlocks, ...resultBlocks].map(renderToolBlock).join('') || '<p>No details reported.</p>'}</div></details>`;
+  const duration = toolDuration(item);
+  const raw = [item.input ? { title: 'Raw input', content: item.input } : null, item.result ? { title: 'Raw result', content: item.result } : null].filter((value): value is { title: string; content: string } => Boolean(value));
+  return `<details class="tool-call state-${escapeAttr(item.state)}" data-detail-id="tool-${escapeAttr(item.id)}"><summary><span class="tool-state"></span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || item.target || 'No target reported')}</small></span><span class="tool-summary-meta"><b>${escapeHtml(stateLabel(item.state))}</b>${duration ? `<small>${escapeHtml(duration)}</small>` : ''}</span></summary><div class="tool-detail">${[...inputBlocks, ...resultBlocks].map(renderToolBlock).join('') || '<p>No details reported.</p>'}${raw.length ? `<details class="tool-raw" data-detail-id="raw-${escapeAttr(item.id)}"><summary>Raw tool data</summary>${raw.map((block) => renderToolBlock({ ...block, kind: 'json' })).join('')}</details>` : ''}</div></details>`;
 }
 
 function renderToolBlock(block: ToolPresentationBlock): string {
-  if (block.kind === 'markdown') return `<section><h4>${escapeHtml(block.title)}</h4>${markdown(block.content)}</section>`;
-  const highlighted = hljs.highlightAuto(block.content).value;
-  return `<section><h4>${escapeHtml(block.title)}</h4><pre><code>${highlighted}</code></pre></section>`;
+  if (block.kind === 'markdown') return `<section data-copy-source><h4><span>${escapeHtml(block.title)}</span><button data-action="native-copy" data-workspace-action>Copy</button></h4><span hidden data-copy-value>${escapeHtml(block.content)}</span>${markdown(block.content)}</section>`;
+  const content = block.kind === 'json' ? prettyJson(block.content) : block.content;
+  const rendered = block.kind === 'diff' ? renderDiff(content)
+    : `<pre class="tool-block-${escapeAttr(block.kind)}"><code>${hljs.highlightAuto(content).value}</code></pre>`;
+  return `<section data-copy-source><h4><span>${escapeHtml(block.title)}</span><button data-action="native-copy" data-workspace-action>Copy</button></h4><span hidden data-copy-value>${escapeHtml(content)}</span>${rendered}</section>`;
 }
 
 function markdown(value: string): string {
@@ -483,20 +784,46 @@ function toolLabel(item: ConversationItem): string { return item.presentation?.t
 function humanizeTool(value: string): string { return value.replaceAll('_', ' ').replace(/\b\w/gu, (match) => match.toUpperCase()); }
 function stateLabel(value: string): string { return value === 'complete' ? 'Done' : value === 'running' ? 'Running' : value === 'error' ? 'Failed' : 'Pending'; }
 
-function mergeItems(current: ConversationItem[], incoming: ConversationItem[]): ConversationItem[] {
-  const values = new Map(current.map((item) => [item.id, item]));
-  for (const item of incoming) {
-    const old = values.get(item.id);
-    values.set(item.id, old && ['tool', 'question'].includes(item.kind) ? {
-      ...old, ...item,
-      state: old.state === 'complete' || item.state === 'complete' ? 'complete' : item.state || old.state,
-      text: item.text || old.text, detail: item.detail || old.detail,
-      questions: item.questions?.length ? item.questions : old.questions,
-      answers: item.answers?.length ? item.answers : old.answers,
-      presentation: item.presentation ?? old.presentation
-    } : item);
-  }
-  return [...values.values()].slice(-2_000);
+export function mergeItems(current: ConversationItem[], incoming: ConversationItem[]): ConversationItem[] {
+  return mergeConversationItems(current, incoming);
+}
+
+function renderLimitCard(item: FleetAttention): string {
+  return `<section class="native-limit-card" data-attention-id="${escapeAttr(item.id)}"><div><small>Usage limit detected</small><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div><div><button class="primary-button" data-action="native-limit-schedule" data-workspace-action>Schedule Continue</button><button class="quiet-button" data-action="native-limit-change" data-workspace-action>Change time</button><button class="danger-quiet" data-action="native-limit-dismiss" data-workspace-action>Dismiss</button></div></section>`;
+}
+
+function toolDuration(item: ConversationItem): string {
+  if (!item.startedAt || !item.completedAt) return '';
+  const milliseconds = Date.parse(item.completedAt) - Date.parse(item.startedAt);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '';
+  if (milliseconds < 1_000) return `${milliseconds} ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
+  return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1_000)}s`;
+}
+
+function prettyJson(value: string): string {
+  try { return JSON.stringify(JSON.parse(value) as unknown, null, 2); }
+  catch { return value; }
+}
+
+function renderDiff(value: string): string {
+  return `<pre class="tool-diff"><code>${value.split('\n').map((line) => {
+    const kind = line.startsWith('+') && !line.startsWith('+++') ? 'add'
+      : line.startsWith('-') && !line.startsWith('---') ? 'remove'
+        : line.startsWith('@@') ? 'range' : 'context';
+    return `<span class="diff-${kind}">${escapeHtml(line)}</span>`;
+  }).join('\n')}</code></pre>`;
+}
+
+function isNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 120;
+}
+
+function toLocalDateTimeValue(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function escapeHtml(value: string): string {

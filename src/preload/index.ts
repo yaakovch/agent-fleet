@@ -57,6 +57,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.conversationRemoveAttachment, tabId, attachmentId),
   sendConversationMessage: (tabId: string, text: string): Promise<NativeActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.conversationSend, tabId, text),
+  copyConversationText: (text: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationCopyText, text),
   killFleetSession: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.killFleetSession, sessionId),
   renameFleetSession: (sessionId: string, name: string): Promise<{ ok: boolean; message: string }> =>
@@ -69,8 +71,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.launchFleetFavorite, presetId),
   cancelFleetSchedule: (scheduleId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.cancelFleetSchedule, scheduleId),
-  createFleetContinueSchedule: (sessionId: string, deliverAt: string): Promise<{ ok: boolean; message: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.createFleetContinueSchedule, sessionId, deliverAt),
+  createFleetContinueSchedule: (sessionId: string, deliverAt: string, attentionId?: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.createFleetContinueSchedule, sessionId, deliverAt, attentionId),
+  dismissFleetAttention: (attentionId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.dismissFleetAttention, attentionId),
   updateFleetSchedule: (scheduleId: string, deliverAt: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.updateFleetSchedule, scheduleId, deliverAt),
   runFleetDoctor: (hostId: string): Promise<{ ok: boolean; message: string; doctor?: FleetDoctorResult }> =>

@@ -143,3 +143,20 @@ The private bridge/runtime companion plan is maintained in
   acceptance checks. Install `0.11.0-beta.1` on gaming-desktop first, require the
   full same-day matrix, then promote the identical artifact to work-m. Retain
   beta.3, the prior runtime, and a forward-code Android rollback build.
+
+## 11. Native Reliability Release
+
+- Replace full workspace rerenders with keyed incremental feed updates and
+  per-tab bottom-follow, anchor-preserving pagination, unread, and New messages
+  behavior.
+- Align tool lifecycle merging with Android, add human-readable grouped details
+  and complete code-block copying, and pin transcript-confirmed questions and
+  approvals in place of the composer.
+- Feed live fleet attention into each workspace, add linked schedule/edit/dismiss
+  actions, and add guarded Close/Kill commands to the tab toolbar.
+- Cover scroll, reconnect, tools, forms, copying, limits, draft guards, and
+  session actions in renderer/IPC tests; then run lint, unit, build, directory
+  package, and packaged smoke checks.
+- Package `0.11.0-beta.2`, validate and install it on gaming-desktop in the
+  same-day gate, then promote the identical artifact to work-m before Android
+  parity is released.
