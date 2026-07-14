@@ -71,7 +71,7 @@ export class SessionWorkspace {
   private resizeObserver: ResizeObserver;
   private nativeRenderQueued = false;
 
-  constructor(settings: WidgetSettings) {
+  constructor(settings: WidgetSettings, private readonly openRepository: (sessionId: string) => void = () => undefined) {
     this.settings = settings;
     this.element.className = 'session-workspace';
     this.applyAppearance();
@@ -207,6 +207,11 @@ export class SessionWorkspace {
     if (action === 'workspace-kill') {
       const tab = this.tabs.get(this.selectedId);
       if (tab) void this.killTab(tab);
+      return true;
+    }
+    if (action === 'workspace-download') {
+      const tab = this.tabs.get(this.selectedId);
+      if (tab) this.openRepository(tab.sessionId);
       return true;
     }
     if (action === 'workspace-retry') {
@@ -386,7 +391,7 @@ export class SessionWorkspace {
         <span class="workspace-identity"><strong>${escapeHtml(selected?.label ?? '')}</strong><small>${escapeHtml(selected ? `${selected.hostId} · ${selected.project} · ${selected.tool}` : '')}</small></span>
         <span class="workspace-connection status-text-${selected?.status ?? 'offline'}">${escapeHtml(selected?.statusMessage ?? '')}</span>
         <button class="quiet-button" data-action="workspace-search" data-workspace-action>Find</button>
-        ${selected ? `<details class="workspace-actions-menu"><summary>Actions</summary><div><button data-action="workspace-close" data-workspace-action data-tab-id="${escapeAttr(selected.id)}">Close tab</button><button class="danger-quiet" data-action="workspace-kill" data-workspace-action>Kill session…</button></div></details>` : ''}
+        ${selected ? `<details class="workspace-actions-menu"><summary>Actions</summary><div><button data-action="workspace-download" data-workspace-action>Download a file…</button><button data-action="workspace-close" data-workspace-action data-tab-id="${escapeAttr(selected.id)}">Close tab</button><button class="danger-quiet" data-action="workspace-kill" data-workspace-action>Kill session…</button></div></details>` : ''}
         ${selected && selected.status !== 'live' ? '<button class="primary-button" data-action="workspace-retry" data-workspace-action>Retry</button>' : ''}
       </div>
       <div class="workspace-stage">

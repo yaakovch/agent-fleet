@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0-beta.6 - 2026-07-14
+
+- Added a streamlined session More menu with repository folder browsing,
+  recursive file-name search, and explicit hidden-file control.
+- Added verified background downloads to Windows Downloads with large-file
+  confirmation, progress, cancellation, completion notifications, and Open or
+  Show in folder actions.
+- Added Download a file to the embedded session workspace while keeping file
+  metadata transient and file bytes outside the fleet snapshot bridge.
+
 ## 0.11.0-beta.5 - 2026-07-14
 
 - Added live Codex/Claude task boards and dedicated Markdown plan viewers while

@@ -1,0 +1,27 @@
+{
+  "rootName": "demo-project",
+  "relativePath": "docs",
+  "parentPath": "",
+  "entries": [
+    {
+      "name": "api",
+      "relativePath": "docs/api",
+      "kind": "directory",
+      "size": null,
+      "modifiedAt": "2026-07-14T12:00:00Z",
+      "hidden": false,
+      "isLink": false
+    },
+    {
+      "name": "guide.pdf",
+      "relativePath": "docs/guide.pdf",
+      "kind": "file",
+      "size": 1200,
+      "modifiedAt": "2026-07-14T12:01:00Z",
+      "hidden": false,
+      "isLink": false
+    }
+  ],
+  "nextCursor": null,
+  "truncated": false
+}

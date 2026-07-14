@@ -208,3 +208,18 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
   tests.
 - Package `0.11.0-beta.5`, deploy it to gaming-desktop and work-m before the
   matched Android and host runtime updates, and retain beta.4 for rollback.
+
+## 15. Session Repository Downloads
+
+- Consume transient strict repository list/search pages without persisting file
+  names in the fleet cache, diagnostics, or logs.
+- Stream files through the direct WSL `wtmux file download` argv into Windows
+  Downloads with bounded progress parsing, collision-safe verified completion,
+  cancellation, and notifications while the tray window is hidden.
+- Replace scattered session icon buttons with a clear More menu and add a
+  repository browser to both that menu and embedded workspace Actions.
+- Confirm files above 50 MiB, expose recursive search and hidden-file control,
+  and provide Open and Show in folder completion actions.
+- Test strict parsing, cache exclusion, direct argv construction, progress,
+  completion, cancellation, renderer compilation, and the production build;
+  release as `0.11.0-beta.6` before the matched Android APK.

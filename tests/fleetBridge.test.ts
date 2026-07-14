@@ -103,6 +103,26 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('returns repository pages without putting file names in the snapshot cache', async () => {
+    const directory = temporaryDirectory();
+    const cachePath = join(directory, 'fleet-cache-v1.json');
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath,
+      launch: { command: process.execPath, args: [writeFakeBridge(directory, fixture)], distro: 'Test Linux' },
+      logger
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    const page = await supervisor.mutate('repository.list', {
+      hostId: 'test-host', sessionId: 'test-host:session-1', relativePath: '', includeHidden: false,
+      cursor: '', idempotencyKey: 'repository-1'
+    });
+    expect(page.entries[0]?.relativePath).toBe('private-report.pdf');
+    expect(readFileSync(cachePath, 'utf8')).not.toContain('private-report.pdf');
+    supervisor.stop();
+  }, 20_000);
+
   it('returns an invitation secret only to the caller and never writes it to the fleet cache', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');
@@ -231,6 +251,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     backend: 'linux', path: '/home/test', parentPath: '/home', truncated: false,
     entries: [{ name: 'private-work', path: '/home/test/private-work' }],
     shortcuts: [{ id: 'home', label: 'Home', path: '/home/test' }]
+  } : request.method === 'repository.list' ? {
+    rootName: 'project', relativePath: '', parentPath: null, nextCursor: null, truncated: false,
+    entries: [{ name: 'private-report.pdf', relativePath: 'private-report.pdf', kind: 'file', size: 12,
+      modifiedAt: '2026-07-14T12:00:00Z', hidden: false, isLink: false }]
   } : {
     operationId: request.params.idempotencyKey,
     status: request.method === 'session.create' ? 'created' : request.method === 'session.kill' ? 'killed' : 'cancelled',

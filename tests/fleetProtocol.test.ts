@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseBridgeFleetSnapshot, parseFleetDirectoryListing, toFleetSnapshot } from '../src/shared/fleet-protocol';
+import { parseBridgeFleetSnapshot, parseFleetDirectoryListing, parseFleetRepositoryPage, toFleetSnapshot } from '../src/shared/fleet-protocol';
 
 const fixturePath = join(process.cwd(), 'tests', 'fixtures', 'fleet-snapshot-v1.json');
 
@@ -92,5 +92,14 @@ describe('fleet protocol v1', () => {
     });
     expect(listing.entries[0]).toEqual({ name: 'work', path: '/home/user/work' });
     expect(() => parseFleetDirectoryListing({ ...listing, entries: [{ name: 'bad', path: '/ok', extra: true }] })).toThrow(/fields/i);
+  });
+
+  it('parses strict transient repository pages', () => {
+    const shared = JSON.parse(readFileSync(join(process.cwd(), 'tests', 'fixtures', 'repository_page_v1.json'), 'utf8'));
+    const page = parseFleetRepositoryPage(shared);
+    expect(page.entries[1]).toMatchObject({ relativePath: 'docs/guide.pdf', size: 1200 });
+    expect(() => parseFleetRepositoryPage({ ...page, entries: [{ ...page.entries[1], size: null }] })).toThrow(/size/i);
+    expect(() => parseFleetRepositoryPage({ ...page, entries: [{ ...page.entries[1], prompt: 'secret' }] })).toThrow(/fields/i);
+    expect(() => parseFleetRepositoryPage({ ...page, relativePath: '../secret' })).toThrow(/invalid/i);
   });
 });

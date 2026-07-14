@@ -4,6 +4,9 @@ import type {
   ClaudeIntegrationState,
   FileOperationResult,
   FleetDirectoryResult,
+  FleetDownloadJob,
+  FleetDownloadResult,
+  FleetRepositoryResult,
   SettingsImportSelection,
   SettingsOperationResult,
   UpdaterState,
@@ -100,6 +103,18 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.listFleetDirectory, hostId, backend, path),
   createFleetDirectory: (hostId: string, backend: 'linux' | 'windows', parentPath: string, name: string): Promise<FleetDirectoryResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.createFleetDirectory, hostId, backend, parentPath, name),
+  listFleetRepository: (sessionId: string, relativePath: string, includeHidden: boolean, cursor = ''): Promise<FleetRepositoryResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.listFleetRepository, sessionId, relativePath, includeHidden, cursor),
+  searchFleetRepository: (sessionId: string, query: string, includeHidden: boolean): Promise<FleetRepositoryResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.searchFleetRepository, sessionId, query, includeHidden),
+  startFleetDownload: (sessionId: string, relativePath: string, name: string, size: number): Promise<FleetDownloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.startFleetDownload, sessionId, relativePath, name, size),
+  cancelFleetDownload: (jobId: string): Promise<FleetDownloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.cancelFleetDownload, jobId),
+  openFleetDownload: (jobId: string): Promise<FleetDownloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.openFleetDownload, jobId),
+  openFleetDownloadFolder: (jobId: string): Promise<FleetDownloadResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.openFleetDownloadFolder, jobId),
   createFleetPairingInvitation: (): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.createFleetPairingInvitation),
   reviewFleetPairing: (requestId: string): Promise<{ ok: boolean; message: string }> =>
@@ -136,6 +151,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, state: FleetBridgeView): void => callback(state);
     ipcRenderer.on(IPC_CHANNELS.fleetStateUpdated, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.fleetStateUpdated, listener);
+  },
+  onFleetDownloadUpdated: (callback: (job: FleetDownloadJob) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, job: FleetDownloadJob): void => callback(job);
+    ipcRenderer.on(IPC_CHANNELS.fleetDownloadUpdated, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.fleetDownloadUpdated, listener);
   },
   onInteractionModeUpdated: (callback: (mode: InteractionMode) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, mode: InteractionMode): void => callback(mode);

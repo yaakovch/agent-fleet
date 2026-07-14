@@ -52,6 +52,7 @@ import { ConversationManager } from './conversation-manager';
 import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
 import type { StagedAttachment } from '../shared/conversation';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
+import { FleetDownloadManager } from './fleet-download';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
 import { loadWindowPosition, saveWindowPosition } from './window-state';
@@ -103,6 +104,14 @@ const conversationManager = new ConversationManager({
   resolveTab: (tabId) => terminalManager.list().find((tab) => tab.id === tabId),
   sendTerminalInput: (tabId, data) => terminalManager.input(tabId, data),
   onEvent: (event) => broadcast(IPC_CHANNELS.conversationEvent, event)
+});
+const fleetDownloadManager = new FleetDownloadManager({
+  distro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  downloadsDirectory: () => app.getPath('downloads'),
+  onUpdate: (job) => broadcast(IPC_CHANNELS.fleetDownloadUpdated, job),
+  onComplete: (job) => {
+    if (Notification.isSupported()) showFleetNotification('Download complete', job.name);
+  }
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -874,6 +883,75 @@ handle(IPC_CHANNELS.createFleetDirectory, async (_event, hostId, backend, parent
     return fleetMutationFailure(error);
   }
 });
+handle(IPC_CHANNELS.listFleetRepository, async (_event, sessionId, relativePath, includeHidden, cursor) => {
+  if (typeof sessionId !== 'string' || typeof relativePath !== 'string' || typeof includeHidden !== 'boolean'
+    || typeof cursor !== 'string' || !validRepositoryPath(relativePath, true) || !validRepositoryCursor(cursor)) {
+    return { ok: false, message: 'Repository request is invalid' };
+  }
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
+  try {
+    const page = await fleetBridge.mutate('repository.list', {
+      hostId: session.hostId, sessionId, relativePath, includeHidden, cursor, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Repository loaded', page };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.searchFleetRepository, async (_event, sessionId, query, includeHidden) => {
+  const queryValue: unknown = query;
+  if (typeof sessionId !== 'string' || typeof queryValue !== 'string' || typeof includeHidden !== 'boolean'
+    || queryValue.trim().length < 2 || queryValue.length > 160 || /[\u0000-\u001f\u007f]/u.test(queryValue)) {
+    return { ok: false, message: 'Search needs at least two characters' };
+  }
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
+  try {
+    const page = await fleetBridge.mutate('repository.search', {
+      hostId: session.hostId, sessionId, query: queryValue.trim(), includeHidden, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Search complete', page };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.startFleetDownload, (_event, sessionId, relativePath, name, size) => {
+  if (typeof sessionId !== 'string' || typeof relativePath !== 'string' || typeof name !== 'string'
+    || typeof size !== 'number' || !validRepositoryPath(relativePath, false)) {
+    return { ok: false, message: 'Download request is invalid' };
+  }
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  if (!session || !host || !session.internalName) return { ok: false, message: 'Session host is offline or no longer available' };
+  try {
+    const job = fleetDownloadManager.start({
+      sessionId, hostId: session.hostId, internalName: session.internalName, relativePath, name, size
+    });
+    return { ok: true, message: 'Download started', job };
+  } catch (error) {
+    logger.warn('Could not start repository download', error);
+    return { ok: false, message: error instanceof Error ? error.message : 'Download could not be started' };
+  }
+});
+handle(IPC_CHANNELS.cancelFleetDownload, (_event, jobId) => {
+  const job = typeof jobId === 'string' ? fleetDownloadManager.cancel(jobId) : undefined;
+  return job ? { ok: true, message: job.message, job } : { ok: false, message: 'Download is no longer available' };
+});
+handle(IPC_CHANNELS.openFleetDownload, async (_event, jobId) => {
+  const job = typeof jobId === 'string' ? fleetDownloadManager.get(jobId) : undefined;
+  if (!job?.path || job.state !== 'completed') return { ok: false, message: 'Downloaded file is not available', job };
+  const message = await shell.openPath(job.path);
+  return message ? { ok: false, message, job } : { ok: true, message: `Opened ${job.name}`, job };
+});
+handle(IPC_CHANNELS.openFleetDownloadFolder, (_event, jobId) => {
+  const job = typeof jobId === 'string' ? fleetDownloadManager.get(jobId) : undefined;
+  if (!job?.path || job.state !== 'completed') return { ok: false, message: 'Downloaded file is not available', job };
+  shell.showItemInFolder(job.path);
+  return { ok: true, message: 'Opened Downloads', job };
+});
 handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool, path, locationKind) => {
   if (![hostId, project, backend, tool, path, locationKind].every((value) => typeof value === 'string')) {
     return { ok: false, message: 'Launcher selection is invalid' };
@@ -915,6 +993,17 @@ function validFleetPath(value: string, backend: string, empty: boolean): boolean
   return backend === 'linux'
     ? value.startsWith('/')
     : !value.startsWith('\\\\') && !value.startsWith('//') && /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function validRepositoryPath(value: string, empty: boolean): boolean {
+  if (value.length > 2048 || (!empty && !value) || value.startsWith('/') || value.includes('\\')
+    || /[\u0000-\u001f\u007f]/u.test(value)) return false;
+  if (!value) return empty;
+  return value.split('/').every((part) => Boolean(part) && part !== '.' && part !== '..');
+}
+
+function validRepositoryCursor(value: string): boolean {
+  return value.length <= 2048 && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 handle(IPC_CHANNELS.createFleetPairingInvitation, async () => {
   try {
@@ -1197,6 +1286,7 @@ app.on('before-quit', () => {
   updater?.stop();
   stateManager.stop();
   fleetBridge.stop();
+  fleetDownloadManager.stop();
   terminalManager.dispose();
   conversationManager.dispose();
 });

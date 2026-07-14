@@ -37,6 +37,9 @@ view presents supported Codex and Claude conversations as an Android-style
 message surface with readable tool activity, approvals, planning questions,
 and image attachments. Terminal view exposes the same live tmux session through
 ConPTY/xterm.js. Windows Terminal and VS Code remain selectable alternatives.
+Each session's More menu can also browse its repository and place a verified
+copy of a selected file in Windows Downloads, with search, progress,
+cancellation, and Open or Show in folder actions.
 
 ## Development
 

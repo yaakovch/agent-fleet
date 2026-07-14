@@ -8,12 +8,14 @@ import {
   FLEET_PROTOCOL_VERSION,
   emptyFleetSnapshot,
   parseFleetDirectoryListing,
+  parseFleetRepositoryPage,
   parseBridgeFleetSnapshot,
   toFleetSnapshot,
   type BridgeFleetSnapshot,
   type FleetBridgeStatus,
   type FleetBridgeView,
   type FleetDirectoryListing,
+  type FleetRepositoryPage,
   type FleetMutationMethod,
   type FleetMutationResult,
   type FleetDoctorResult
@@ -51,7 +53,7 @@ interface CacheEnvelope {
 
 interface PendingMutation {
   requestId: string;
-  resolve: (result: FleetMutationResult | FleetDirectoryListing) => void;
+  resolve: (result: FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
@@ -125,8 +127,9 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   mutate(method: 'directory.list', params: Record<string, unknown>): Promise<FleetDirectoryListing>;
-  mutate(method: Exclude<FleetMutationMethod, 'directory.list'>, params: Record<string, unknown>): Promise<FleetMutationResult>;
-  mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing> {
+  mutate(method: 'repository.list' | 'repository.search', params: Record<string, unknown>): Promise<FleetRepositoryPage>;
+  mutate(method: Exclude<FleetMutationMethod, 'directory.list' | 'repository.list' | 'repository.search'>, params: Record<string, unknown>): Promise<FleetMutationResult>;
+  mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage> {
     if (this.status !== 'live' || !this.snapshot || !this.child || this.child.killed || !this.child.stdin.writable) {
       return Promise.reject(new FleetMutationError('host_offline', 'Fleet controller is not live'));
     }
@@ -273,6 +276,13 @@ export class FleetBridgeSupervisor extends EventEmitter {
       const listing = parseFleetDirectoryListing(result);
       this.finishPendingMutation();
       pending.resolve(listing);
+      return;
+    }
+    const repositoryKeys = ['entries', 'nextCursor', 'parentPath', 'relativePath', 'rootName', 'truncated'].sort();
+    if (sameKeys(keys, repositoryKeys)) {
+      const page = parseFleetRepositoryPage(result);
+      this.finishPendingMutation();
+      pending.resolve(page);
       return;
     }
     const baseKeys = ['operationId', 'snapshot', 'status'].sort();

@@ -124,7 +124,7 @@ export interface FleetBridgeView {
 export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create' | 'schedule.update'
   | 'attention.dismiss'
   | 'host.doctor' | 'host.update' | 'session.rename'
-  | 'directory.list' | 'directory.create'
+  | 'directory.list' | 'directory.create' | 'repository.list' | 'repository.search'
   | 'preset.upsert' | 'preset.delete'
   | 'pairing.invite' | 'pairing.review' | 'pairing.approve' | 'pairing.reject' | 'pairing.revoke';
 
@@ -163,6 +163,25 @@ export interface FleetDirectoryListing {
   parentPath: string | null;
   entries: FleetDirectoryEntry[];
   shortcuts: FleetDirectoryShortcut[];
+  truncated: boolean;
+}
+
+export interface FleetRepositoryEntry {
+  name: string;
+  relativePath: string;
+  kind: 'directory' | 'file';
+  size: number | null;
+  modifiedAt: string;
+  hidden: boolean;
+  isLink: boolean;
+}
+
+export interface FleetRepositoryPage {
+  rootName: string;
+  relativePath: string;
+  parentPath: string | null;
+  entries: FleetRepositoryEntry[];
+  nextCursor: string | null;
   truncated: boolean;
 }
 
@@ -260,6 +279,44 @@ export function parseFleetDirectoryListing(input: unknown): FleetDirectoryListin
     };
   });
   return { backend, path, parentPath, entries, shortcuts, truncated: boolean(value.truncated, 'directory.truncated') };
+}
+
+export function parseFleetRepositoryPage(input: unknown): FleetRepositoryPage {
+  const value = exactObject(input, ['rootName', 'relativePath', 'parentPath', 'entries', 'nextCursor', 'truncated'], 'repository page');
+  const parentPath = value.parentPath === null ? null : text(value.parentPath, 'repository.parentPath', 2048);
+  const nextCursor = value.nextCursor === null ? null : text(value.nextCursor, 'repository.nextCursor', 2048, false);
+  const entries = array(value.entries, 'repository.entries', 250).map((entry) => {
+    const item = exactObject(entry, ['name', 'relativePath', 'kind', 'size', 'modifiedAt', 'hidden', 'isLink'], 'repository entry');
+    const kind = oneOf(item.kind, 'repository.kind', ['directory', 'file']);
+    const size = item.size === null ? null : integer(item.size, 'repository.size', 0, 2 * 1024 * 1024 * 1024);
+    if ((kind === 'directory') !== (size === null)) fail('repository entry size does not match its kind');
+    return {
+      name: text(item.name, 'repository.name', 255, false),
+      relativePath: repositoryPath(item.relativePath, 'repository.relativePath', false),
+      kind,
+      size,
+      modifiedAt: instant(item.modifiedAt, 'repository.modifiedAt', false) as string,
+      hidden: boolean(item.hidden, 'repository.hidden'),
+      isLink: boolean(item.isLink, 'repository.isLink')
+    };
+  });
+  return {
+    rootName: text(value.rootName, 'repository.rootName', 255, false),
+    relativePath: repositoryPath(value.relativePath, 'repository.relativePath', true),
+    parentPath: parentPath === null ? null : repositoryPath(parentPath, 'repository.parentPath', true),
+    entries,
+    nextCursor,
+    truncated: boolean(value.truncated, 'repository.truncated')
+  };
+}
+
+function repositoryPath(input: unknown, label: string, empty: boolean): string {
+  const value = text(input, label, 2048, empty);
+  if (value.startsWith('/') || value.includes('\\') || /[\u0000-\u001f\u007f]/u.test(value)
+    || (value && value.split('/').some((part) => !part || part === '.' || part === '..'))) {
+    fail(`${label} is invalid`);
+  }
+  return value;
 }
 
 function parseHost(input: unknown): BridgeHostSnapshot {

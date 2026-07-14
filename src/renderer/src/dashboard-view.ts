@@ -11,7 +11,10 @@ import {
   CloudOff,
   Command,
   Copy,
+  Download,
+  Eye,
   ExternalLink,
+  File,
   FolderOpen,
   Gauge,
   HeartPulse,
@@ -53,7 +56,8 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
-import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult } from '../../shared/fleet-protocol';
+import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
+import type { FleetDownloadJob } from '../../shared/app';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
 import { FLEET_FIXTURE } from './fleet-fixtures';
 import { SessionWorkspace } from './session-workspace';
@@ -85,7 +89,10 @@ const dashboardIcons = {
   CloudOff,
   Command,
   Copy,
+  Download,
+  Eye,
   ExternalLink,
+  File,
   FolderOpen,
   Gauge,
   HeartPulse,
@@ -134,6 +141,15 @@ export class DashboardPrototype {
   private scheduleTab: 'pending' | 'history' = 'pending';
   private search = '';
   private modal: ModalState = null;
+  private sessionMenuId = '';
+  private repositorySessionId = '';
+  private repositoryPage: FleetRepositoryPage | null = null;
+  private repositoryLoading = false;
+  private repositoryError = '';
+  private repositoryShowHidden = false;
+  private repositoryQuery = '';
+  private repositoryPendingDownload: FleetRepositoryEntry | null = null;
+  private repositoryDownload: FleetDownloadJob | null = null;
   private toast = '';
   private snapshot: FleetSnapshot;
   private cacheSavedAt: string | null = null;
@@ -148,7 +164,7 @@ export class DashboardPrototype {
   private launcherTool: FleetTool = 'codex';
   private settings: WidgetSettings = createDefaultSettings();
   private settingsDraft: WidgetSettings = createDefaultSettings();
-  private readonly workspace = new SessionWorkspace(this.settings);
+  private readonly workspace = new SessionWorkspace(this.settings, (sessionId) => this.openRepository(sessionId));
 
   constructor(
     private readonly root: HTMLElement,
@@ -165,7 +181,14 @@ export class DashboardPrototype {
         this.launcherLabel = input.value;
         const launch = this.root.querySelector<HTMLButtonElement>('[data-action="dashboard-launch"]');
         if (launch) launch.disabled = !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(input.value.trim());
+      } else if (input.dataset.repositorySearch !== undefined) {
+        this.repositoryQuery = input.value;
       }
+    });
+    window.limitsWidget.onFleetDownloadUpdated((job) => {
+      if (job.id !== this.repositoryDownload?.id) return;
+      this.repositoryDownload = job;
+      this.render();
     });
     root.addEventListener('change', (event) => {
       const select = event.target as HTMLSelectElement;
@@ -237,6 +260,8 @@ export class DashboardPrototype {
           </div>
         </section>
         ${this.modal ? this.renderModal(this.modal) : ''}
+        ${this.sessionMenuId ? this.renderSessionMenu() : ''}
+        ${this.repositorySessionId ? this.renderRepositoryBrowser() : ''}
         ${this.toast ? `<div class="fleet-toast">${icon('circle-check')}<span>${escapeHtml(this.toast)}</span></div>` : ''}
       </main>`;
     createIcons({ icons: dashboardIcons });
@@ -270,7 +295,7 @@ export class DashboardPrototype {
     }
     if (action === 'dashboard-kill-session') {
       const session = this.sessionFromControl(control);
-      if (session) this.confirmKill(session);
+      if (session) { this.sessionMenuId = ''; this.confirmKill(session); }
       return true;
     }
     if (action === 'dashboard-cancel-schedule') {
@@ -324,6 +349,7 @@ export class DashboardPrototype {
     if (action === 'dashboard-open-session') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = '';
       void window.limitsWidget.openFleetSession(session.id).then((result) => {
         if (result.tab) this.openWorkspaceTab(result.tab);
         else this.showToast(result.message);
@@ -333,12 +359,14 @@ export class DashboardPrototype {
     if (action === 'dashboard-copy') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = '';
       void window.limitsWidget.copyFleetAttachCommand(session.id).then((result) => this.showToast(result.message));
       return true;
     }
     if (action === 'dashboard-rename-session') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = '';
       this.modal = {
         title: `Rename ${session.name}`,
         body: 'This changes the managed display name while preserving the internal tmux identity and pending schedules.',
@@ -352,12 +380,105 @@ export class DashboardPrototype {
     if (action === 'dashboard-session-details') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = '';
       this.modal = {
         title: `Session details · ${session.name}`,
         body: `${session.hostId} · ${session.backend} · ${session.tool}${session.projectPath ? ` · ${session.projectPath}` : ' · Path unavailable for this older session'}`,
         confirm: 'Done'
       };
       this.render();
+      return true;
+    }
+    if (action === 'dashboard-session-more') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = session.id;
+      this.render();
+      return true;
+    }
+    if (action === 'session-more-close') {
+      this.sessionMenuId = '';
+      this.render();
+      return true;
+    }
+    if (action === 'dashboard-download-file') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      this.sessionMenuId = '';
+      this.openRepository(session.id);
+      return true;
+    }
+    if (action === 'repository-close') {
+      this.repositorySessionId = '';
+      this.repositoryPage = null;
+      this.repositoryPendingDownload = null;
+      this.repositoryLoading = false;
+      this.render();
+      return true;
+    }
+    if (action === 'repository-folder') {
+      const path = control.dataset.path;
+      if (path !== undefined) void this.loadRepository(path);
+      return true;
+    }
+    if (action === 'repository-up') {
+      void this.loadRepository(this.repositoryPage?.parentPath ?? '');
+      return true;
+    }
+    if (action === 'repository-toggle-hidden') {
+      this.repositoryShowHidden = !this.repositoryShowHidden;
+      void this.loadRepository(this.repositoryPage?.relativePath ?? '');
+      return true;
+    }
+    if (action === 'repository-search') {
+      const query = this.root.querySelector<HTMLInputElement>('[data-repository-search]')?.value.trim() ?? '';
+      if (query.length < 2) return this.showToast('Search needs at least two characters');
+      this.repositoryQuery = query;
+      void this.searchRepository(query);
+      return true;
+    }
+    if (action === 'repository-clear-search') {
+      this.repositoryQuery = '';
+      void this.loadRepository('');
+      return true;
+    }
+    if (action === 'repository-more') {
+      const cursor = this.repositoryPage?.nextCursor;
+      if (cursor) void this.loadRepository(this.repositoryPage?.relativePath ?? '', cursor, true);
+      return true;
+    }
+    if (action === 'repository-download') {
+      const entry = this.repositoryEntryFromControl(control);
+      if (!entry || entry.kind !== 'file' || entry.size === null) return this.showToast('File is no longer available');
+      if (entry.size > 50 * 1024 * 1024 && this.repositoryPendingDownload?.relativePath !== entry.relativePath) {
+        this.repositoryPendingDownload = entry;
+        this.render();
+      } else {
+        void this.startRepositoryDownload(entry);
+      }
+      return true;
+    }
+    if (action === 'repository-cancel-confirm') {
+      this.repositoryPendingDownload = null;
+      this.render();
+      return true;
+    }
+    if (action === 'repository-cancel-download') {
+      const id = this.repositoryDownload?.id;
+      if (id) void window.limitsWidget.cancelFleetDownload(id).then((result) => {
+        if (result.job) this.repositoryDownload = result.job;
+        this.showToast(result.message);
+      });
+      return true;
+    }
+    if (action === 'repository-open-download') {
+      const id = this.repositoryDownload?.id;
+      if (id) void window.limitsWidget.openFleetDownload(id).then((result) => this.showToast(result.message));
+      return true;
+    }
+    if (action === 'repository-open-folder') {
+      const id = this.repositoryDownload?.id;
+      if (id) void window.limitsWidget.openFleetDownloadFolder(id).then((result) => this.showToast(result.message));
       return true;
     }
     if (action === 'launcher-folder') {
@@ -522,6 +643,125 @@ export class DashboardPrototype {
       deliverAt: suggestedAt
     };
     this.render();
+  }
+
+  private openRepository(sessionId: string): void {
+    const session = this.snapshot.sessions.find((item) => item.id === sessionId);
+    if (!session) { this.showToast('Session is no longer available'); return; }
+    this.repositorySessionId = session.id;
+    this.repositoryPage = null;
+    this.repositoryError = '';
+    this.repositoryQuery = '';
+    this.repositoryPendingDownload = null;
+    this.repositoryDownload = null;
+    void this.loadRepository('');
+  }
+
+  private async loadRepository(relativePath: string, cursor = '', append = false): Promise<void> {
+    const sessionId = this.repositorySessionId;
+    if (!sessionId || this.repositoryLoading) return;
+    this.repositoryLoading = true;
+    this.repositoryError = '';
+    this.render();
+    const result = await window.limitsWidget.listFleetRepository(sessionId, relativePath, this.repositoryShowHidden, cursor);
+    if (sessionId !== this.repositorySessionId) return;
+    this.repositoryLoading = false;
+    if (!result.ok || !result.page) {
+      this.repositoryError = result.message;
+    } else if (append && this.repositoryPage?.relativePath === result.page.relativePath) {
+      this.repositoryPage = { ...result.page, entries: [...this.repositoryPage.entries, ...result.page.entries] };
+    } else {
+      this.repositoryPage = result.page;
+      this.repositoryQuery = '';
+    }
+    this.render();
+  }
+
+  private async searchRepository(query: string): Promise<void> {
+    const sessionId = this.repositorySessionId;
+    if (!sessionId || this.repositoryLoading) return;
+    this.repositoryLoading = true;
+    this.repositoryError = '';
+    this.render();
+    const result = await window.limitsWidget.searchFleetRepository(sessionId, query, this.repositoryShowHidden);
+    if (sessionId !== this.repositorySessionId) return;
+    this.repositoryLoading = false;
+    if (!result.ok || !result.page) this.repositoryError = result.message;
+    else this.repositoryPage = result.page;
+    this.render();
+  }
+
+  private async startRepositoryDownload(entry: FleetRepositoryEntry): Promise<void> {
+    if (entry.kind !== 'file' || entry.size === null || !this.repositorySessionId) return;
+    this.repositoryPendingDownload = null;
+    const result = await window.limitsWidget.startFleetDownload(
+      this.repositorySessionId, entry.relativePath, entry.name, entry.size
+    );
+    if (result.job) this.repositoryDownload = result.job;
+    if (!result.ok) this.repositoryError = result.message;
+    this.render();
+  }
+
+  private renderSessionMenu(): string {
+    const session = this.snapshot.sessions.find((item) => item.id === this.sessionMenuId);
+    if (!session) return '';
+    return `<div class="fleet-modal-backdrop"><section class="fleet-modal session-more-modal" role="dialog" aria-modal="true" data-session-id="${escapeAttr(session.id)}">
+      <div class="repository-heading"><div><small>Session actions</small><h2>${escapeHtml(session.name)}</h2><p>${escapeHtml(session.project)} · ${escapeHtml(session.hostId)}</p></div><button class="quiet-button icon-only" data-action="session-more-close" aria-label="Close">${icon('x')}</button></div>
+      <div class="session-more-actions">
+        <button data-action="dashboard-download-file">${icon('download')}<span><strong>Download a file</strong><small>Browse this session’s repository</small></span>${icon('chevron-right')}</button>
+        <button data-action="dashboard-session-details">${icon('eye')}<span><strong>Session details</strong><small>Host, backend, tool, and path</small></span>${icon('chevron-right')}</button>
+        <button data-action="dashboard-copy">${icon('copy')}<span><strong>Copy attach command</strong><small>Use from another terminal</small></span>${icon('chevron-right')}</button>
+        <button data-action="dashboard-rename-session">${icon('sliders-horizontal')}<span><strong>Rename session</strong><small>Keep its internal tmux identity</small></span>${icon('chevron-right')}</button>
+        <button class="danger-action" data-action="dashboard-kill-session">${icon('trash-2')}<span><strong>Kill session</strong><small>Stops it and cancels pending schedules</small></span>${icon('chevron-right')}</button>
+      </div>
+    </section></div>`;
+  }
+
+  private renderRepositoryBrowser(): string {
+    const session = this.snapshot.sessions.find((item) => item.id === this.repositorySessionId);
+    if (!session) return '';
+    const page = this.repositoryPage;
+    const searching = Boolean(this.repositoryQuery);
+    const path = page?.relativePath ?? '';
+    const entries = page?.entries ?? [];
+    const job = this.repositoryDownload;
+    const pending = this.repositoryPendingDownload;
+    const progress = job?.total ? Math.min(100, Math.round(job.received * 100 / job.total)) : 0;
+    return `<div class="fleet-modal-backdrop"><section class="fleet-modal repository-modal" role="dialog" aria-modal="true">
+      <div class="repository-heading"><div><small>Download from repository</small><h2>${escapeHtml(session.name)}</h2><p>${escapeHtml(page?.rootName ?? session.project)}${path ? ` / ${escapeHtml(path)}` : ''}</p></div><button class="quiet-button icon-only" data-action="repository-close" aria-label="Close">${icon('x')}</button></div>
+      <div class="repository-toolbar">
+        <button class="quiet-button" data-action="repository-up" ${!page?.parentPath && !path ? 'disabled' : ''}>${icon('chevron-right')}Up</button>
+        <label><span class="sr-only">Search file names</span><input data-repository-search placeholder="Search file names" value="${escapeAttr(this.repositoryQuery)}"></label>
+        <button class="primary-button" data-action="repository-search">${icon('search')}Search</button>
+        ${searching ? `<button class="quiet-button" data-action="repository-clear-search">Clear</button>` : ''}
+        <button class="quiet-button" data-action="repository-toggle-hidden">${icon('eye')}${this.repositoryShowHidden ? 'Hide hidden' : 'Show hidden'}</button>
+      </div>
+      ${this.repositoryError ? `<div class="repository-error">${icon('circle-alert')}<span>${escapeHtml(this.repositoryError)}</span></div>` : ''}
+      <div class="repository-list" aria-busy="${this.repositoryLoading}">
+        ${this.repositoryLoading && !entries.length ? '<div class="repository-empty">Loading repository…</div>' : entries.map((entry) => this.renderRepositoryEntry(entry)).join('')}
+        ${!this.repositoryLoading && !entries.length && !this.repositoryError ? `<div class="repository-empty">${searching ? 'No matching files or folders' : 'This folder is empty'}</div>` : ''}
+        ${page?.nextCursor ? `<button class="quiet-button repository-more" data-action="repository-more" ${this.repositoryLoading ? 'disabled' : ''}>Load more</button>` : ''}
+      </div>
+      ${page?.truncated && !page.nextCursor ? '<small class="repository-note">Results were limited. Narrow your search to find more.</small>' : ''}
+      ${pending ? `<div class="repository-confirm"><div><strong>Download ${escapeHtml(pending.name)}?</strong><small>${formatBytes(pending.size ?? 0)} is a large transfer.</small></div><button class="quiet-button" data-action="repository-cancel-confirm">Cancel</button><button class="primary-button" data-action="repository-download" data-path="${escapeAttr(pending.relativePath)}">Download</button></div>` : ''}
+      ${job ? `<div class="repository-job job-${job.state}"><div><strong>${escapeHtml(job.name)}</strong><small>${escapeHtml(job.message)}</small></div>${job.state === 'running' ? `<div class="repository-progress"><i style="width:${progress}%"></i></div><button class="danger-quiet" data-action="repository-cancel-download">Cancel</button>` : job.state === 'completed' ? `<button class="quiet-button" data-action="repository-open-download">Open</button><button class="primary-button" data-action="repository-open-folder">Show in folder</button>` : ''}</div>` : ''}
+    </section></div>`;
+  }
+
+  private renderRepositoryEntry(entry: FleetRepositoryEntry): string {
+    const folder = entry.kind === 'directory';
+    return `<button class="repository-entry" data-action="${folder ? 'repository-folder' : 'repository-download'}" data-path="${escapeAttr(entry.relativePath)}">
+      <span class="repository-entry-icon">${icon(folder ? 'folder-open' : 'file')}</span>
+      <span><strong>${escapeHtml(entry.name)}</strong><small>${folder ? 'Folder' : formatBytes(entry.size ?? 0)}${entry.isLink ? ' · Link' : ''}</small></span>
+      <small>${formatDateTime(entry.modifiedAt)}</small>${icon('chevron-right')}
+    </button>`;
+  }
+
+  private repositoryEntryFromControl(control: HTMLElement): FleetRepositoryEntry | undefined {
+    const path = control.dataset.path;
+    if (!path) return undefined;
+    if (this.repositoryPendingDownload?.relativePath === path) return this.repositoryPendingDownload;
+    return this.repositoryPage?.entries.find((item) => item.relativePath === path);
   }
 
   private renderSidebar(): string {
@@ -824,7 +1064,7 @@ export class DashboardPrototype {
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
-      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-copy" title="Copy attach command">${icon('copy')}</button><button class="quiet-button" data-action="dashboard-session-details" title="Session details">${icon('more-horizontal')}</button><button class="quiet-button" data-action="dashboard-rename-session" title="Rename session">${icon('sliders-horizontal')}</button><button class="danger-quiet" data-action="dashboard-kill-session" title="Kill session">${icon('trash-2')}</button>`}</span>
+      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-session-more" title="More session actions">${icon('more-horizontal')}</button>`}</span>
     </div>`;
   }
 
@@ -1010,6 +1250,19 @@ function formatDateTime(value: string): string {
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let amount = value / 1024;
+  let unit = units[0];
+  for (let index = 0; index < units.length; index += 1) {
+    unit = units[index];
+    if (amount < 1024 || index === units.length - 1) break;
+    amount /= 1024;
+  }
+  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${unit}`;
 }
 
 function defaultScheduleTime(suggestedAt?: string): string {

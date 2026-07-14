@@ -1,5 +1,5 @@
 import type { CodexProfileSettings, SettingsImportPreview, WidgetSettings } from './settings';
-import type { FleetDirectoryListing } from './fleet-protocol';
+import type { FleetDirectoryListing, FleetRepositoryPage } from './fleet-protocol';
 
 export interface AppInfo {
   name: string;
@@ -70,4 +70,30 @@ export interface FleetDirectoryResult {
   message: string;
   listing?: FleetDirectoryListing;
   path?: string;
+}
+
+export interface FleetRepositoryResult {
+  ok: boolean;
+  message: string;
+  page?: FleetRepositoryPage;
+}
+
+export type FleetDownloadState = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface FleetDownloadJob {
+  id: string;
+  sessionId: string;
+  name: string;
+  relativePath: string;
+  state: FleetDownloadState;
+  received: number;
+  total: number;
+  path?: string;
+  message: string;
+}
+
+export interface FleetDownloadResult {
+  ok: boolean;
+  message: string;
+  job?: FleetDownloadJob;
 }
