@@ -62,6 +62,8 @@ export class SessionWorkspace {
   private conversationStarted = new Set<string>();
   private selectedId = '';
   private renderedTabId = '';
+  private mounted = false;
+  private boundTerminalId = '';
   private fleetSnapshot: FleetSnapshot | null = null;
   private settings: WidgetSettings;
   private resizeObserver: ResizeObserver;
@@ -74,12 +76,18 @@ export class SessionWorkspace {
     this.resizeObserver.observe(this.element);
     window.limitsWidget.onTerminalData(({ tabId, data }) => this.runtimes.get(tabId)?.terminal.write(data));
     window.limitsWidget.onTerminalStatus(({ tab }) => {
+      const previous = this.tabs.get(tab.id);
+      if (previous && terminalDescriptorEqual(previous, tab)) return;
       this.tabs.set(tab.id, tab);
       this.render();
     });
     window.limitsWidget.onTerminalClosed(({ tabId }) => this.remove(tabId));
     window.limitsWidget.onTerminalOpened((tab) => this.open(tab));
     window.limitsWidget.onConversationEvent(({ tabId, frame }) => this.applyConversationFrame(tabId, frame));
+    document.addEventListener('visibilitychange', () => {
+      this.syncConversation();
+      this.syncTerminal();
+    });
     this.element.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
@@ -148,7 +156,7 @@ export class SessionWorkspace {
   setFleetSnapshot(snapshot: FleetSnapshot): void {
     const changed = this.fleetSnapshot?.revision !== snapshot.revision;
     this.fleetSnapshot = snapshot;
-    if (changed && this.selectedId) this.render();
+    if (changed && this.selectedId) this.renderSelectedNative();
   }
 
   private applyAppearance(): void {
@@ -157,12 +165,16 @@ export class SessionWorkspace {
 
   mount(container: Element | null): void {
     if (!container) return;
+    this.mounted = true;
     container.append(this.element);
     this.render();
   }
 
   detach(): void {
+    this.mounted = false;
     this.element.remove();
+    this.syncConversation();
+    this.syncTerminal();
   }
 
   open(tab: TerminalTabDescriptor): void {
@@ -197,13 +209,20 @@ export class SessionWorkspace {
       if (this.selectedId) void window.limitsWidget.retryTerminalTab(this.selectedId);
       return true;
     }
+    if (action === 'workspace-open-vscode' || action === 'workspace-open-windows') {
+      const tab = this.tabs.get(this.selectedId);
+      if (tab) void window.limitsWidget.openFleetSessionExternal(
+        tab.sessionId,
+        action === 'workspace-open-vscode' ? 'vscode' : 'windowsTerminal'
+      );
+      return true;
+    }
     if (action === 'workspace-view') {
       const mode = control.dataset.mode === 'terminal' ? 'terminal' : 'native';
       const tab = this.tabs.get(this.selectedId);
       if (tab) {
         tab.viewMode = mode;
         void window.limitsWidget.setTerminalView(tab.id, mode);
-        if (mode === 'native') this.startConversation(tab);
         this.render();
       }
       return true;
@@ -289,6 +308,7 @@ export class SessionWorkspace {
     this.conversationStarted.delete(tabId);
     if (this.selectedId === tabId) this.selectedId = [...this.tabs.keys()].at(-1) ?? '';
     this.render();
+    this.syncConversation();
   }
 
   private render(): void {
@@ -319,14 +339,23 @@ export class SessionWorkspace {
     if (selected) {
       this.renderedTabId = selected.id;
       this.mountTerminal(selected);
-      if (selected.viewMode === 'native') this.startConversation(selected);
+      this.syncConversation();
+      this.syncTerminal();
       queueMicrotask(() => this.restoreRenderSnapshot(selected.id, previous));
-    } else this.renderedTabId = '';
+    } else {
+      this.renderedTabId = '';
+      this.syncConversation();
+      this.syncTerminal();
+    }
   }
 
   private mountTerminal(tab: TerminalTabDescriptor): void {
     const host = this.element.querySelector<HTMLElement>('.terminal-session-panel');
-    if (!host) return;
+    if (!host || tab.viewMode !== 'terminal') return;
+    if (tab.failure) {
+      host.insertAdjacentHTML('beforeend', `<section class="terminal-unavailable"><strong>Terminal unavailable</strong><p>${escapeHtml(tab.failure.message)}</p><div><button class="primary-button" data-action="workspace-retry" data-workspace-action>Retry</button><button data-action="workspace-open-vscode" data-workspace-action>Open in VS Code</button><button data-action="workspace-open-windows" data-workspace-action>Open in Windows Terminal</button></div></section>`);
+      return;
+    }
     let runtime = this.runtimes.get(tab.id);
     if (!runtime) {
       const terminal = new Terminal(this.terminalOptions());
@@ -366,9 +395,31 @@ export class SessionWorkspace {
       if (!started) {
         const state = this.nativeState(tab.id);
         state.error = 'Native view could not start. Terminal remains available.';
-        this.render();
+        this.renderSelectedNative();
       }
     });
+  }
+
+  private syncConversation(): void {
+    const selected = this.tabs.get(this.selectedId);
+    const desired = this.mounted && !document.hidden && selected?.viewMode === 'native' && selected.tool !== 'shell'
+      ? selected.id : '';
+    for (const tabId of [...this.conversationStarted]) {
+      if (tabId !== desired) {
+        this.conversationStarted.delete(tabId);
+        void window.limitsWidget.stopConversation(tabId);
+      }
+    }
+    if (desired && selected) this.startConversation(selected);
+  }
+
+  private syncTerminal(): void {
+    const selected = this.tabs.get(this.selectedId);
+    const desired = this.mounted && !document.hidden && selected?.viewMode === 'terminal' && !selected.failure
+      ? selected.id : '';
+    if (desired === this.boundTerminalId) return;
+    this.boundTerminalId = desired;
+    void window.limitsWidget.bindTerminalTab(desired);
   }
 
   private applyConversationFrame(tabId: string, frame: ConversationFrame): void {
@@ -387,12 +438,25 @@ export class SessionWorkspace {
     } else if (frame.type === 'conversation.error') {
       state.connection = 'Unavailable'; state.error = frame.error?.message ?? 'Native view is unavailable';
     } else {
-      state.connection = frame.status === 'ready' ? 'Live' : frame.status?.replaceAll('_', ' ') ?? state.connection;
-      if (frame.interactionMode && frame.interactionMode !== 'unknown') state.interactionMode = frame.interactionMode;
+      const connection = frame.status === 'ready' ? 'Live' : frame.status?.replaceAll('_', ' ') ?? state.connection;
+      const interactionMode = frame.interactionMode && frame.interactionMode !== 'unknown'
+        ? frame.interactionMode : state.interactionMode;
+      if (connection === state.connection && interactionMode === state.interactionMode) return;
+      state.connection = connection;
+      state.interactionMode = interactionMode;
     }
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
-    if (tabId === this.selectedId) this.render();
+    if (tabId === this.selectedId) this.renderSelectedNative();
+  }
+
+  private renderSelectedNative(): void {
+    const tab = this.tabs.get(this.selectedId);
+    const host = this.element.querySelector<HTMLElement>('.native-session-panel');
+    if (!tab || !host || tab.viewMode !== 'native') return;
+    const previous = this.captureRenderSnapshot();
+    host.innerHTML = this.renderNative(tab);
+    queueMicrotask(() => this.restoreRenderSnapshot(tab.id, previous));
   }
 
   private renderNative(tab: TerminalTabDescriptor): string {
@@ -707,6 +771,15 @@ function renderConversationRows(items: ConversationItem[]): string {
     html += renderConversationItem(items[index++]);
   }
   return html;
+}
+
+function terminalDescriptorEqual(left: TerminalTabDescriptor, right: TerminalTabDescriptor): boolean {
+  return left.id === right.id && left.sessionId === right.sessionId && left.hostId === right.hostId
+    && left.project === right.project && left.internalName === right.internalName && left.label === right.label
+    && left.tool === right.tool && left.backend === right.backend && left.viewMode === right.viewMode
+    && left.status === right.status && left.statusMessage === right.statusMessage
+    && left.failure?.code === right.failure?.code && left.failure?.message === right.failure?.message
+    && left.failure?.retryable === right.failure?.retryable;
 }
 
 function renderConversationItem(item: ConversationItem): string {

@@ -160,3 +160,26 @@ The private bridge/runtime companion plan is maintained in
 - Package `0.11.0-beta.2`, validate and install it on gaming-desktop in the
   same-day gate, then promote the identical artifact to work-m before Android
   parity is released.
+
+## 12. Packaged Terminal And CPU Hotfix
+
+- Resolve and validate an absolute Windows `wsl.exe` path for node-pty, add a
+  renderer-ready output handoff, and classify deterministic startup failures as
+  non-retryable with in-app Retry, VS Code, and Windows Terminal fallbacks.
+- Keep PTYs attached but scope Native streams and rendering to the selected
+  visible view. Replace heartbeat-driven workspace reconstruction with keyed,
+  no-op-aware updates that never remount xterm unnecessarily.
+- Add sanitized terminal health to diagnostics and cover path resolution,
+  failure classification, reconnect, initial output, visibility, heartbeat,
+  and state preservation in unit and renderer tests.
+- Add packaged ConPTY/WSL smoke coverage plus a repeatable three-tab process-
+  tree CPU benchmark using 30 seconds of settling and 60 one-second samples.
+- Package `0.11.0-beta.3`, run the full Windows suite plus wtmux and Android
+  regressions, and install on gaming-desktop. Promote the identical installer
+  to work-m after the functional smoke even if CPU still misses its target; in
+  that case continue to a performance-only beta.4 before closing the milestone.
+
+Acceptance record (2026-07-14): beta.3 passed 72 Windows tests, the signed
+packaged ConPTY/WSL smoke, three restored live PTY attaches, and 60-sample CPU
+gates at 0.000% average in both hidden and visible states. The shared wtmux
+Python/Bats/smoke suites and Android debug unit suite also passed.

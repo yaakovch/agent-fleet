@@ -31,14 +31,17 @@ describe('embedded terminal manager', () => {
     const manager = new TerminalManager({
       statePath, logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
       resolveSession: (id) => id === session.id ? session : undefined,
-      onData: data, onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn
+      onData: data, onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn,
+      resolveWslExecutable: () => WINDOWS_WSL
     });
     const tab = manager.open(session);
-    expect(spawn.mock.calls[0]?.slice(0, 2)).toEqual(['wsl.exe', [
+    expect(spawn.mock.calls[0]?.slice(0, 2)).toEqual([WINDOWS_WSL, [
       '-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux', '--host', 'gaming',
       '--project', 'agent-fleet', '--session', 'wtmux-agent-fleet-1', '--fast'
     ]]);
     pty.data?.('private prompt text');
+    expect(data).not.toHaveBeenCalled();
+    manager.bind(tab.id);
     expect(data).toHaveBeenCalledWith({ tabId: tab.id, data: 'private prompt text' });
     expect(manager.input(tab.id, 'hello\r')).toBe(true);
     expect(manager.resize(tab.id, 100, 30)).toBe(true);
@@ -60,6 +63,73 @@ describe('embedded terminal manager', () => {
     expect(second.spawn).toHaveBeenCalledOnce();
     second.manager.dispose();
   });
+
+  it('emits output only for the currently bound terminal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const firstProcess = new FakePty();
+    const secondProcess = new FakePty();
+    const ptys = [firstProcess, secondProcess];
+    const data = vi.fn();
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'), logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: (id) => [session, secondSession].find((item) => item.id === id),
+      onData: data, onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: vi.fn(() => ptys.shift()!),
+      resolveWslExecutable: () => WINDOWS_WSL
+    });
+    const first = manager.open(session);
+    const second = manager.open(secondSession);
+    manager.bind(first.id);
+    firstProcess.data?.('first live');
+    secondProcess.data?.('second buffered');
+    expect(data).toHaveBeenLastCalledWith({ tabId: first.id, data: 'first live' });
+    manager.bind(second.id);
+    expect(data).toHaveBeenLastCalledWith({ tabId: second.id, data: 'second buffered' });
+    firstProcess.data?.('first buffered');
+    secondProcess.data?.('second live');
+    expect(data).toHaveBeenLastCalledWith({ tabId: second.id, data: 'second live' });
+    manager.dispose();
+  });
+
+  it('restarts before binding when inactive output exceeded the safe buffer', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const first = new FakePty();
+    const second = new FakePty();
+    const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const data = vi.fn();
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'), logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: (id) => id === session.id ? session : undefined,
+      onData: data, onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn,
+      resolveWslExecutable: () => WINDOWS_WSL
+    });
+    const tab = manager.open(session);
+    first.data?.('x'.repeat(1024 * 1024 + 1));
+    manager.bind(tab.id);
+    expect(first.killed).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(data).not.toHaveBeenCalled();
+    second.data?.('fresh screen');
+    expect(data).toHaveBeenCalledWith({ tabId: tab.id, data: 'fresh screen' });
+    manager.dispose();
+  });
+
+  it('stops retrying and reports a stable failure when WSL is unavailable', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const status = vi.fn();
+    const spawn = vi.fn(() => new FakePty());
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'), logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: (id) => id === session.id ? session : undefined,
+      onData: vi.fn(), onStatus: status, onClosed: vi.fn(), spawnPty: spawn,
+      resolveWslExecutable: () => { throw new Error('File not found: wsl.exe'); }
+    });
+    const tab = manager.open(session);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(manager.list()[0]).toMatchObject({ id: tab.id, status: 'unavailable', failure: { code: 'wsl_not_found', retryable: false } });
+    expect(manager.getHealth()).toMatchObject({ wslAvailable: false, unavailablePtys: 1, failureCodes: ['wsl_not_found'] });
+    expect(status.mock.calls.at(-1)?.[0].tab.status).toBe('unavailable');
+    manager.dispose();
+  });
 });
 
 function makeManager(statePath: string): { manager: TerminalManager; spawn: ReturnType<typeof vi.fn> } {
@@ -67,13 +137,23 @@ function makeManager(statePath: string): { manager: TerminalManager; spawn: Retu
   return { spawn, manager: new TerminalManager({
     statePath, logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
     resolveSession: (id) => id === session.id ? session : undefined,
-    onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn
+    onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn,
+    resolveWslExecutable: () => WINDOWS_WSL
   }) };
 }
+
+const WINDOWS_WSL = 'C:\\Windows\\System32\\wsl.exe';
 
 const session: FleetSession = {
   id: 'gaming:wtmux-agent-fleet-1', hostId: 'gaming', internalName: 'wtmux-agent-fleet-1',
   name: 'Agent Fleet', title: 'codex', project: 'agent-fleet', projectPath: '/home/me/projects/agent-fleet',
   tool: 'codex', backend: 'linux', activity: 'active', attached: false, updatedAt: null,
   pendingScheduleCount: 0, favorite: false
+};
+
+const secondSession: FleetSession = {
+  ...session,
+  id: 'gaming:wtmux-agent-fleet-2',
+  internalName: 'wtmux-agent-fleet-2',
+  name: 'Agent Fleet 2'
 };

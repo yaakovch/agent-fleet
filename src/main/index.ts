@@ -17,7 +17,7 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { AppInfo, SettingsImportSelection, UpdaterState } from '../shared/app';
 import type { CombinedLimitState } from '../shared/limits';
@@ -47,6 +47,7 @@ import { LimitStateManager } from './state-manager';
 import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
 import { openFleetTerminal, openFleetVscode } from './fleet-terminal';
 import { TerminalManager } from './terminal-manager';
+import { runPackagedTerminalSmoke } from './terminal-smoke';
 import { ConversationManager } from './conversation-manager';
 import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
 import type { StagedAttachment } from '../shared/conversation';
@@ -66,7 +67,14 @@ app.setAppUserModelId(APP_ID);
 app.setPath('userData', dataDirectory);
 
 const isUninstallCleanup = process.argv.includes('--uninstall-cleanup');
-const hasSingleInstanceLock = isUninstallCleanup || app.requestSingleInstanceLock();
+const terminalSmokeCandidate = process.env.AGENT_FLEET_ENABLE_TERMINAL_SMOKE === '1'
+  ? process.argv.find((value) => value.startsWith('--agent-fleet-terminal-smoke='))?.slice('--agent-fleet-terminal-smoke='.length)
+  : undefined;
+const terminalSmokePath = terminalSmokeCandidate
+  && basename(terminalSmokeCandidate) === 'terminal-smoke.json'
+  && resolve(dirname(terminalSmokeCandidate)) === resolve(dataDirectory)
+  ? terminalSmokeCandidate : undefined;
+const hasSingleInstanceLock = isUninstallCleanup || Boolean(terminalSmokePath) || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
 const migrationResult = migrateLegacyData(dataDirectory);
@@ -552,11 +560,22 @@ handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   return openFleetSessionById(sessionId);
 });
-handle(IPC_CHANNELS.terminalList, () => ({
-  version: 1 as const,
-  selectedTabId: terminalManager.getSelectedTabId(),
-  tabs: terminalManager.list()
-}));
+handle(IPC_CHANNELS.openFleetSessionExternal, async (_event, sessionId, target) => {
+  if (typeof sessionId !== 'string' || (target !== 'vscode' && target !== 'windowsTerminal')) {
+    return { ok: false, message: 'Session target is invalid' };
+  }
+  return openFleetSessionExternallyById(sessionId, target);
+});
+handle(IPC_CHANNELS.terminalList, () => {
+  terminalManager.unbindAll();
+  return {
+    version: 1 as const,
+    selectedTabId: terminalManager.getSelectedTabId(),
+    tabs: terminalManager.list()
+  };
+});
+handle(IPC_CHANNELS.terminalBind, (_event, tabId) =>
+  typeof tabId === 'string' ? terminalManager.bind(tabId) : null);
 handle(IPC_CHANNELS.terminalInput, (_event, tabId, data) =>
   typeof tabId === 'string' && typeof data === 'string' && terminalManager.input(tabId, data));
 handle(IPC_CHANNELS.terminalResize, (_event, tabId, columns, rows) =>
@@ -986,6 +1005,33 @@ async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResu
     return { ok: false, message: 'Windows Terminal could not be opened' };
   }
 }
+
+async function openFleetSessionExternallyById(
+  sessionId: string,
+  target: 'vscode' | 'windowsTerminal'
+): Promise<TerminalOpenResult> {
+  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session?.internalName) return { ok: false, message: 'Session is no longer available' };
+  const value = {
+    id: session.id,
+    hostId: session.hostId,
+    project: session.project,
+    sessionName: session.internalName,
+    label: session.name
+  };
+  const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
+  try {
+    if (target === 'vscode') {
+      await openFleetVscode(value, distro);
+      return { ok: true, message: `Opening ${session.name} in VS Code` };
+    }
+    await openFleetTerminal(value, distro);
+    return { ok: true, message: `Opening ${session.name} in Windows Terminal` };
+  } catch (error) {
+    logger.warn('External terminal fallback failed', target, error);
+    return { ok: false, message: target === 'vscode' ? 'VS Code could not open this session' : 'Windows Terminal could not open this session' };
+  }
+}
 handle(IPC_CHANNELS.getSettings, () => getSettingsResult());
 handle(IPC_CHANNELS.saveSettings, (_event, input) => applyAndPersistSettings(normalizeSettings(input).settings));
 handle(IPC_CHANNELS.testCodexProfile, async (_event, profile) => {
@@ -1059,7 +1105,8 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
     state: stateManager.getState(),
     logPath: getLogPath(dataDirectory),
     fleet: getFleetView(),
-    doctors: [...lastDoctorResults.values()]
+    doctors: [...lastDoctorResults.values()],
+    terminal: terminalManager.getHealth()
   });
   return { canceled: false, message: `Diagnostics exported to ${basename(result.filePath)}`, path: result.filePath };
 });
@@ -1085,7 +1132,12 @@ stateManager.on('changed', (state) => {
   updateTrayTooltip(state);
 });
 
-if (isUninstallCleanup) {
+if (terminalSmokePath) {
+  app.whenReady().then(async () => {
+    const ok = await runPackagedTerminalSmoke(terminalSmokePath);
+    app.exit(ok ? 0 : 1);
+  });
+} else if (isUninstallCleanup) {
   app.whenReady().then(() => {
     try {
       removeClaudeStatusLine(getClaudeStatusLinePaths(getResourceRoot(), dataDirectory));

@@ -43,6 +43,9 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .workspace-stage { position: relative; flex: 1; min-height: 0; }
 .terminal-session-panel,.native-session-panel { position: absolute; inset: 0; min-width: 0; min-height: 0; }
 .terminal-session-panel { padding: var(--terminal-padding, 12px); background: #0b1017; }
+.terminal-unavailable { position: absolute; z-index: 3; inset: 24px; display: grid; place-content: center; justify-items: start; gap: 10px; padding: 24px; border: 1px solid #51343a; border-radius: 14px; background: rgba(20,25,33,.96); color: #e7edf5; }
+.terminal-unavailable p { margin: 0; color: #aab7c6; }
+.terminal-unavailable div { display: flex; flex-wrap: wrap; gap: 8px; }
 .terminal-session-panel.hidden,.native-session-panel.hidden { visibility: hidden; pointer-events: none; }
 .terminal-session-panel .xterm,.xterm-runtime { height: 100%; }
 .native-session-panel { background: radial-gradient(circle at 60% 0, rgba(52,86,130,.18), transparent 40%), #0d131b; }

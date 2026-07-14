@@ -6,17 +6,21 @@ import type { Logger } from 'electron-log';
 import type { FleetSession } from '../shared/fleet';
 import type {
   SessionViewMode,
+  TerminalFailure,
+  TerminalFailureCode,
+  TerminalHealth,
   TerminalClosedEvent,
   TerminalDataEvent,
   TerminalStatusEvent,
   TerminalTabDescriptor,
   TerminalWorkspaceState
 } from '../shared/terminal';
-import { buildFleetWslAttachCommand } from './fleet-terminal';
+import { buildFleetWslAttachCommand, resolveWslExecutable, WindowsExecutableError } from './fleet-terminal';
 
 const MAX_TABS = 32;
 const MAX_INPUT_CHARS = 64 * 1024;
 const MAX_OUTPUT_CHARS = 64 * 1024;
+const MAX_PENDING_OUTPUT_CHARS = 1024 * 1024;
 const RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,320}$/u;
 const SAFE_SESSION = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -38,6 +42,7 @@ export interface TerminalManagerOptions {
   onStatus(event: TerminalStatusEvent): void;
   onClosed(event: TerminalClosedEvent): void;
   spawnPty?: (command: string, args: string[], options: nodePty.IPtyForkOptions) => PtyProcess;
+  resolveWslExecutable?: () => string;
 }
 
 interface ManagedTab {
@@ -49,6 +54,9 @@ interface ManagedTab {
   closed: boolean;
   columns: number;
   rows: number;
+  bound: boolean;
+  pendingOutput: string;
+  pendingOutputOverflowed: boolean;
 }
 
 export class TerminalManager {
@@ -121,6 +129,46 @@ export class TerminalManager {
     return this.selectedTabId;
   }
 
+  bind(tabId: string): TerminalTabDescriptor | null {
+    this.unbindAll();
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.closed) return null;
+    tab.bound = true;
+    if (tab.pendingOutputOverflowed) {
+      tab.pendingOutput = '';
+      tab.pendingOutputOverflowed = false;
+      this.stopProcess(tab);
+      tab.reconnectIndex = 0;
+      tab.descriptor.status = 'connecting';
+      tab.descriptor.statusMessage = 'Refreshing terminal screen…';
+      delete tab.descriptor.failure;
+      this.emitStatus(tab);
+      this.start(tab);
+    } else if (tab.pendingOutput) {
+      const data = tab.pendingOutput;
+      tab.pendingOutput = '';
+      this.emitData(tab, data);
+    }
+    return { ...tab.descriptor };
+  }
+
+  unbindAll(): void {
+    for (const tab of this.tabs.values()) tab.bound = false;
+  }
+
+  getHealth(): TerminalHealth {
+    const tabs = [...this.tabs.values()].filter((tab) => !tab.closed);
+    const failureCodes = [...new Set(tabs.map((tab) => tab.descriptor.failure?.code).filter((code): code is TerminalFailureCode => Boolean(code)))];
+    return {
+      wslAvailable: !failureCodes.includes('wsl_not_found'),
+      conptyState: failureCodes.includes('conpty_unavailable') ? 'unavailable' : tabs.some((tab) => tab.process) ? 'ready' : 'unknown',
+      activePtys: tabs.filter((tab) => Boolean(tab.process)).length,
+      reconnectingPtys: tabs.filter((tab) => tab.descriptor.status === 'reconnecting' || tab.descriptor.status === 'offline').length,
+      unavailablePtys: tabs.filter((tab) => tab.descriptor.status === 'unavailable').length,
+      failureCodes
+    };
+  }
+
   select(tabId: string): boolean {
     if (!this.tabs.has(tabId)) return false;
     this.selectedTabId = tabId;
@@ -164,6 +212,7 @@ export class TerminalManager {
     tab.reconnectIndex = 0;
     tab.descriptor.status = 'connecting';
     tab.descriptor.statusMessage = 'Connecting…';
+    delete tab.descriptor.failure;
     this.emitStatus(tab);
     this.start(tab);
     return { ...tab.descriptor };
@@ -196,7 +245,8 @@ export class TerminalManager {
   private createManagedTab(descriptor: TerminalTabDescriptor): ManagedTab {
     return {
       descriptor: { ...descriptor }, process: null, reconnectIndex: 0, reconnectTimer: null,
-      generation: 0, closed: false, columns: 120, rows: 36
+      generation: 0, closed: false, columns: 120, rows: 36,
+      bound: false, pendingOutput: '', pendingOutputOverflowed: false
     };
   }
 
@@ -218,7 +268,8 @@ export class TerminalManager {
       tool: session.tool,
       backend: session.backend === 'windows' ? 'windows' : 'linux',
       status: tab.reconnectIndex ? 'reconnecting' : 'connecting',
-      statusMessage: tab.reconnectIndex ? 'Reconnecting…' : 'Connecting…'
+      statusMessage: tab.reconnectIndex ? 'Reconnecting…' : 'Connecting…',
+      failure: undefined
     };
     this.emitStatus(tab);
     const launch = buildFleetWslAttachCommand({
@@ -230,8 +281,9 @@ export class TerminalManager {
     }, this.options.getDistro());
     const generation = ++tab.generation;
     try {
+      const executable = this.options.resolveWslExecutable?.() ?? resolveWslExecutable();
       const spawn = this.options.spawnPty ?? ((command, args, options) => nodePty.spawn(command, args, options));
-      const process = spawn(launch.command, launch.args, {
+      const process = spawn(executable, launch.args, {
         name: 'xterm-256color',
         cols: tab.columns,
         rows: tab.rows,
@@ -244,9 +296,8 @@ export class TerminalManager {
       tab.descriptor.statusMessage = 'Live';
       process.onData((data) => {
         if (tab.closed || generation !== tab.generation) return;
-        for (let offset = 0; offset < data.length; offset += MAX_OUTPUT_CHARS) {
-          this.options.onData({ tabId: tab.descriptor.id, data: data.slice(offset, offset + MAX_OUTPUT_CHARS) });
-        }
+        if (tab.bound) this.emitData(tab, data);
+        else this.bufferData(tab, data);
       });
       process.onExit(({ exitCode }) => {
         if (generation !== tab.generation || tab.closed || this.quitting) return;
@@ -264,8 +315,13 @@ export class TerminalManager {
       this.persist();
       this.options.logger.info('Embedded terminal connected', tab.descriptor.id, tab.descriptor.sessionId);
     } catch (error) {
-      this.options.logger.warn('Embedded terminal spawn failed', error);
-      this.scheduleReconnect(tab);
+      const failure = terminalFailure(error);
+      tab.descriptor.status = 'unavailable';
+      tab.descriptor.statusMessage = failure.message;
+      tab.descriptor.failure = failure;
+      this.options.logger.warn('Embedded terminal unavailable', failure.code);
+      this.emitStatus(tab);
+      this.persist();
     }
   }
 
@@ -287,7 +343,24 @@ export class TerminalManager {
     const process = tab.process;
     tab.process = null;
     if (!process) return;
+    tab.generation += 1;
     try { process.kill(); } catch { /* already exited */ }
+  }
+
+  private bufferData(tab: ManagedTab, data: string): void {
+    if (tab.pendingOutputOverflowed) return;
+    if (tab.pendingOutput.length + data.length > MAX_PENDING_OUTPUT_CHARS) {
+      tab.pendingOutput = '';
+      tab.pendingOutputOverflowed = true;
+      return;
+    }
+    tab.pendingOutput += data;
+  }
+
+  private emitData(tab: ManagedTab, data: string): void {
+    for (let offset = 0; offset < data.length; offset += MAX_OUTPUT_CHARS) {
+      this.options.onData({ tabId: tab.descriptor.id, data: data.slice(offset, offset + MAX_OUTPUT_CHARS) });
+    }
   }
 
   private emitStatus(tab: ManagedTab): void {
@@ -298,10 +371,27 @@ export class TerminalManager {
     const state: TerminalWorkspaceState = {
       version: 1,
       selectedTabId: this.selectedTabId,
-      tabs: this.list().map((tab) => ({ ...tab, status: 'connecting', statusMessage: 'Restoring session…' }))
+      tabs: this.list().map((tab) => persistedDescriptor(tab))
     };
     writeWorkspaceState(this.options.statePath, state);
   }
+}
+
+function terminalFailure(error: unknown): TerminalFailure {
+  if (error instanceof WindowsExecutableError) return { code: error.code, message: error.message, retryable: false };
+  const message = error instanceof Error ? error.message : String(error);
+  if (/conpty|native module|\.node|dll/i.test(message)) {
+    return { code: 'conpty_unavailable', message: 'The embedded Windows terminal is unavailable.', retryable: false };
+  }
+  if (/file not found|enoent|cannot find/i.test(message)) {
+    return { code: 'wsl_not_found', message: 'Windows Subsystem for Linux could not be started.', retryable: false };
+  }
+  return { code: 'terminal_spawn_failed', message: 'The embedded terminal could not be started.', retryable: false };
+}
+
+function persistedDescriptor(tab: TerminalTabDescriptor): TerminalTabDescriptor {
+  const { failure: _failure, ...descriptor } = tab;
+  return { ...descriptor, status: 'connecting', statusMessage: 'Restoring session…' };
 }
 
 export function readWorkspaceState(path: string): TerminalWorkspaceState {

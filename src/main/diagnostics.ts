@@ -6,6 +6,7 @@ import type { AppInfo } from '../shared/app';
 import type { CombinedLimitState } from '../shared/limits';
 import type { WidgetSettings } from '../shared/settings';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
+import type { TerminalHealth } from '../shared/terminal';
 
 interface DiagnosticsInput {
   app: AppInfo;
@@ -14,6 +15,7 @@ interface DiagnosticsInput {
   logPath: string;
   fleet: FleetBridgeView;
   doctors: FleetDoctorResult[];
+  terminal: TerminalHealth;
 }
 
 interface ArchiveWriter {
@@ -46,7 +48,8 @@ export async function writeDiagnosticsArchive(destination: string, input: Diagno
         runtime: process.versions,
         state: input.state,
         fleet: input.fleet,
-        doctors: input.doctors
+        doctors: input.doctors,
+        terminal: input.terminal
       },
       null,
       2

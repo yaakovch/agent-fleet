@@ -290,3 +290,30 @@ areas.
   local tab after host confirmation.
 - Commands, output, diffs, paths, tool blocks, and fenced Markdown expose an
   explicit Copy action and local confirmation without logging clipboard text.
+
+## Packaged Terminal Reliability And Performance
+
+- Every session explicitly opened in Agent Fleet owns one attached PTY and can
+  switch between Native and the exact live terminal. Sessions merely attached
+  in VS Code or Windows Terminal remain discoverable but are not opened as app
+  tabs automatically.
+- Packaged ConPTY launch resolves the selected WSL executable to an absolute,
+  validated Windows system path. A deterministic WSL, ConPTY, or native-module
+  failure stops retrying and shows Retry plus VS Code and Windows Terminal
+  fallbacks; only a previously live PTY may reconnect automatically.
+- The renderer binds before terminal output is released, shows the current tmux
+  screen, and retains subsequent output in memory only. It does not import tmux
+  scrollback from before Agent Fleet attached.
+- Open PTYs remain attached while tabs are inactive or the window is hidden,
+  but inactive terminal rendering and Native content streams pause. At most one
+  Native stream is active, for the selected visible Native tab.
+- Heartbeats and unchanged status frames never reconstruct the workspace DOM.
+  Terminal elements remain stable across Native updates and keyed feed changes
+  preserve scroll, focus, drafts, questions, and expanded details.
+- With the current three-tab Codex, Copilot, and Shell mix idle for 30 seconds,
+  total Agent Fleet process-tree CPU averages below 2% while visible and below
+  1% while hidden over a 60-second sample. Ordinary tab and view changes respond
+  within 250 ms.
+- Diagnostics may contain sanitized WSL/ConPTY availability, stable failure
+  codes, and PTY counts, but never command arguments, terminal output,
+  transcripts, drafts, or attachment content.

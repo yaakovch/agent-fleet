@@ -1,4 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { win32 } from 'node:path';
 
 export interface FleetSessionOpenTarget {
   id: string;
@@ -14,8 +16,15 @@ export interface FleetTerminalCommand {
 }
 
 export interface FleetWslAttachCommand {
-  command: 'wsl.exe';
+  command: string;
   args: string[];
+}
+
+export class WindowsExecutableError extends Error {
+  constructor(readonly code: 'wsl_not_found', message: string) {
+    super(message);
+    this.name = 'WindowsExecutableError';
+  }
 }
 
 const VSCODE_EXTENSION_ID = 'wtmux.wtmux-image-paste';
@@ -45,6 +54,21 @@ export function buildFleetWslAttachCommand(target: FleetSessionOpenTarget, distr
       '--session', target.sessionName, '--fast'
     ]
   };
+}
+
+export function resolveWslExecutable(
+  environment: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = existsSync
+): string {
+  const systemRoot = environment.SystemRoot || environment.WINDIR;
+  if (!systemRoot || /[\u0000-\u001f\u007f]/u.test(systemRoot)) {
+    throw new WindowsExecutableError('wsl_not_found', 'Windows Subsystem for Linux could not be located.');
+  }
+  const executable = win32.join(systemRoot, 'System32', 'wsl.exe');
+  if (!exists(executable)) {
+    throw new WindowsExecutableError('wsl_not_found', 'Windows Subsystem for Linux is not installed or is unavailable.');
+  }
+  return executable;
 }
 
 export function openFleetTerminal(

@@ -28,7 +28,11 @@ const api = {
   refreshFleet: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.refreshFleet),
   openFleetSession: (sessionId: string): Promise<TerminalOpenResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.openFleetSession, sessionId),
+  openFleetSessionExternal: (sessionId: string, target: 'vscode' | 'windowsTerminal'): Promise<TerminalOpenResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.openFleetSessionExternal, sessionId, target),
   listTerminalTabs: (): Promise<TerminalWorkspaceState> => ipcRenderer.invoke(IPC_CHANNELS.terminalList),
+  bindTerminalTab: (tabId: string): Promise<TerminalTabDescriptor | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalBind, tabId),
   terminalInput: (tabId: string, data: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.terminalInput, tabId, data),
   terminalResize: (tabId: string, columns: number, rows: number): Promise<boolean> =>

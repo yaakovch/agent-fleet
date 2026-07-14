@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildFleetTerminalCommand, buildFleetVscodeUri, buildFleetWslAttachCommand } from '../src/main/fleet-terminal';
+import { buildFleetTerminalCommand, buildFleetVscodeUri, buildFleetWslAttachCommand, resolveWslExecutable } from '../src/main/fleet-terminal';
 
 describe('fleet terminal launcher', () => {
+  it('resolves WSL from the Windows system directory instead of PATH', () => {
+    const expected = 'C:\\Windows\\System32\\wsl.exe';
+    expect(resolveWslExecutable({ SystemRoot: 'C:\\Windows' }, (path) => path === expected)).toBe(expected);
+    expect(() => resolveWslExecutable({}, () => false)).toThrow(/could not be located/i);
+  });
   it('builds a direct argv launch for the exact validated session', () => {
     expect(buildFleetTerminalCommand({
       id: 'work-m-ubuntu:wtmux-project-1',

@@ -33,6 +33,9 @@ export class ConversationManager {
   start(tabId: string): boolean {
     const tab = this.options.resolveTab(tabId);
     if (!tab || tab.tool === 'shell') return false;
+    for (const otherTabId of [...this.streams.keys()]) {
+      if (otherTabId !== tabId) this.stop(otherTabId);
+    }
     this.stop(tabId);
     const generation = (this.generations.get(tabId) ?? 0) + 1;
     this.generations.set(tabId, generation);
