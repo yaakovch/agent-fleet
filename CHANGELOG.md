@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0-beta.5 - 2026-07-14
+
+- Added live Codex/Claude task boards and dedicated Markdown plan viewers while
+  suppressing redundant generic Working/Done activity.
+- Moved complete tools into a bounded terminal-style viewer and kept only short
+  semantic previews in the conversation feed.
+- Replaced oversized pending cards with a pinned, scrollable question sheet;
+  final single/boolean answers submit on tap, multi-select uses Done, and text
+  uses Send.
+- Coalesced Native rendering and preserved bottom-follow, history anchors, and
+  drafts across live structured updates.
+
 ## 0.11.0-beta.4 - 2026-07-14
 
 - Replaced Codex orchestration wrappers and transport-result JSON in Native

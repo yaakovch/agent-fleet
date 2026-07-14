@@ -5,6 +5,10 @@ export interface ConversationQuestion {
   required: boolean; allowOther: boolean; options: ConversationQuestionOption[];
 }
 export interface ConversationAnswer { questionId: string; choiceIds: string[]; text: string }
+export interface ConversationTask {
+  id: string; title: string; activeTitle: string; detail: string;
+  state: 'pending' | 'in_progress' | 'completed';
+}
 export interface ToolPresentationBlock { title: string; kind: string; content: string }
 export interface ToolPresentation {
   version: 1; title: string; subtitle: string; previewLines: number;
@@ -15,6 +19,7 @@ export interface ConversationItem {
   state: string; tool: string; attachments: string[]; choices: ConversationChoice[]; revision?: string;
   action?: string; target?: string; input?: string; result?: string; startedAt?: string; completedAt?: string;
   questions?: ConversationQuestion[]; answers?: ConversationAnswer[]; presentation?: ToolPresentation;
+  source?: string; turnId?: string; taskListId?: string; updateMode?: 'replace' | 'merge'; tasks?: ConversationTask[];
 }
 export interface ConversationFrame {
   protocolVersion: 2;
@@ -31,6 +36,11 @@ export function mergeConversationItems(current: ConversationItem[], incoming: Co
   const values = new Map(current.map((item) => [item.id, item]));
   for (const item of incoming) {
     const old = values.get(item.id);
+    if (old && item.kind === 'task_list') {
+      const tasks = item.updateMode === 'replace' ? item.tasks ?? [] : mergeTasks(old.tasks ?? [], item.tasks ?? []);
+      values.set(item.id, { ...old, ...item, text: item.text || old.text, tasks });
+      continue;
+    }
     values.set(item.id, old && ['tool', 'question'].includes(item.kind) ? {
       ...old, ...item,
       state: old.state === 'complete' || item.state === 'complete' ? 'complete' : item.state || old.state,
@@ -43,6 +53,20 @@ export function mergeConversationItems(current: ConversationItem[], incoming: Co
     } : item);
   }
   return [...values.values()].slice(-2_000);
+}
+
+function mergeTasks(current: ConversationTask[], incoming: ConversationTask[]): ConversationTask[] {
+  const tasks = new Map(current.map((task) => [task.id, task]));
+  for (const task of incoming) {
+    const old = tasks.get(task.id);
+    tasks.set(task.id, old ? {
+      ...old, ...task,
+      title: task.title || old.title,
+      activeTitle: task.activeTitle || old.activeTitle,
+      detail: task.detail || old.detail
+    } : task);
+  }
+  return [...tasks.values()];
 }
 
 export function resolveConversationScroll(

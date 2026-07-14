@@ -241,10 +241,11 @@ areas.
   and Terminal fallback. Basic shell sessions expose directory navigation,
   command entry, and command/result cards; unsupported or alternate-screen
   programs use the full terminal.
-- Native questions advance by tapping each non-final answer and submit once at
-  the end. Answers remain editable through failures. Success is shown only
-  after the provider transcript confirms delivery; stale or ambiguous terminal
-  state fails safely with Retry and Terminal actions.
+- Native single and boolean questions advance on tap and submit immediately
+  when final. Multi-select uses Done and text uses Send. Answers remain editable
+  through failures. Success is shown only after the provider transcript
+  confirms delivery; stale or ambiguous terminal state fails safely with Retry
+  and Terminal actions.
 - Native view accepts PNG, JPEG, and WebP images from clipboard, drag/drop, and
   picker, with at most eight 20 MiB items. Images are staged through
   `wtmux image send --json`, shown as thumbnail chips, and their host paths are
@@ -277,9 +278,10 @@ areas.
   and approvals. Consecutive tools are grouped, but every collapsed row names
   its action, target, state, duration, and useful counts; expansion shows
   ordered semantic input/output before optional raw data.
-- Pending questions and approvals replace the composer in a pinned action
-  panel. The first valid input advances, previous answers remain editable, and
-  one final Submit remains pending until transcript confirmation.
+- Pending questions and approvals replace the composer with a compact pinned
+  action bar and viewport-bounded sheet. Single/boolean taps advance or submit,
+  multi-select uses Done, text uses Send, and prior answers remain editable
+  until transcript confirmation.
 - A matching host-detected hard limit appears both in Native view and global
   attention surfaces within five seconds. Schedule Continue defaults to reset
   plus one minute, supports time editing, and resolves the originating event;
@@ -317,3 +319,18 @@ areas.
 - Diagnostics may contain sanitized WSL/ConPTY availability, stable failure
   codes, and PTY counts, but never command arguments, terminal output,
   transcripts, drafts, or attachment content.
+
+## Native Structured Work And Interaction Reliability
+
+- Consume stable additive `task_list` and `plan` records from wtmux. A task
+  board updates in place, highlights active work, bounds large lists around it,
+  and collapses when complete; Markdown plans open in a dedicated viewer.
+- Tool feed cards remain small and semantic. Full ordered input/output moves to
+  a dedicated viewport-bounded viewer with terminal output wrapping,
+  horizontal code/path scrolling, per-block Copy, and optional Raw data.
+- Pending question/approval sheets scroll independently with their navigation
+  and delivery actions fixed. Exact wtmux-verified Plan gates are tappable;
+  unknown terminal screens fail closed and retain the Terminal escape hatch.
+- Large task, plan, tool, and question bodies never replace the whole workspace
+  DOM. Selected-tab updates coalesce to one animation frame, preserve bottom
+  follow and history anchors, and do not jump the conversation to the top.

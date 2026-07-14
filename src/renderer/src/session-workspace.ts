@@ -42,6 +42,8 @@ interface NativeState {
   questionSteps: Map<string, number>;
   submittingQuestions: Set<string>;
   expandedDetails: Set<string>;
+  questionSheetId: string;
+  viewer: { itemId: string; actionIndex: number | null; wrap: boolean } | null;
 }
 
 interface RenderSnapshot {
@@ -67,6 +69,7 @@ export class SessionWorkspace {
   private fleetSnapshot: FleetSnapshot | null = null;
   private settings: WidgetSettings;
   private resizeObserver: ResizeObserver;
+  private nativeRenderQueued = false;
 
   constructor(settings: WidgetSettings) {
     this.settings = settings;
@@ -89,6 +92,15 @@ export class SessionWorkspace {
       this.syncTerminal();
     });
     this.element.addEventListener('keydown', (event) => {
+      const questionText = event.target instanceof HTMLTextAreaElement && event.target.matches('[data-question-text]')
+        ? event.target : null;
+      if (questionText && event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        this.captureQuestionDraft(questionText);
+        const item = this.itemFromControl(questionText);
+        if (item) void this.advanceOrSubmitQuestion(item);
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
         void this.sendMessage();
@@ -100,14 +112,6 @@ export class SessionWorkspace {
         this.nativeState(this.selectedId).draft = input.value;
       } else if (input instanceof HTMLTextAreaElement && input.matches('[data-question-text]')) {
         this.captureQuestionDraft(input);
-        this.advanceQuestionIfValid(input);
-      }
-    });
-    this.element.addEventListener('change', (event) => {
-      const input = event.target;
-      if (input instanceof HTMLInputElement && input.matches('[data-question-choice]')) {
-        this.captureQuestionDraft(input);
-        this.advanceQuestionIfValid(input);
       }
     });
     this.element.addEventListener('scroll', (event) => {
@@ -250,6 +254,28 @@ export class SessionWorkspace {
       if (item) void this.submitQuestion(item);
       return true;
     }
+    if (action === 'native-question-choice') {
+      const item = this.itemFromControl(control);
+      const questionId = control.dataset.questionId;
+      const choice = control.dataset.choice;
+      if (item && questionId && choice) void this.chooseQuestionOption(item, questionId, choice);
+      return true;
+    }
+    if (action === 'native-question-next') {
+      const item = this.itemFromControl(control);
+      if (item) void this.advanceOrSubmitQuestion(item);
+      return true;
+    }
+    if (action === 'native-question-open') {
+      const item = this.itemFromControl(control);
+      if (item) { this.nativeState(this.selectedId).questionSheetId = item.id; this.render(); }
+      return true;
+    }
+    if (action === 'native-question-close') {
+      this.nativeState(this.selectedId).questionSheetId = '';
+      this.render();
+      return true;
+    }
     if (action === 'native-question-back') {
       const item = this.itemFromControl(control);
       if (item) {
@@ -261,6 +287,37 @@ export class SessionWorkspace {
       return true;
     }
     if (action === 'native-copy') { void this.copyFromControl(control); return true; }
+    if (action === 'native-open-tool' || action === 'native-open-plan') {
+      const item = this.itemFromControl(control);
+      if (item) {
+        const actionIndex = Number.parseInt(control.dataset.actionIndex ?? '', 10);
+        this.nativeState(this.selectedId).viewer = {
+          itemId: item.id, actionIndex: Number.isFinite(actionIndex) ? actionIndex : null, wrap: false
+        };
+        this.render();
+      }
+      return true;
+    }
+    if (action === 'native-viewer-close') {
+      this.nativeState(this.selectedId).viewer = null;
+      this.render();
+      return true;
+    }
+    if (action === 'native-viewer-wrap') {
+      const viewer = this.nativeState(this.selectedId).viewer;
+      if (viewer) { viewer.wrap = !viewer.wrap; this.render(); }
+      return true;
+    }
+    if (action === 'native-toggle-tasks') {
+      const item = this.itemFromControl(control);
+      if (item) {
+        const key = `tasks-${item.id}`;
+        const expanded = this.nativeState(this.selectedId).expandedDetails;
+        if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+        this.render();
+      }
+      return true;
+    }
     if (action === 'native-limit-schedule') {
       const attention = this.attentionFromControl(control);
       if (attention?.targetSessionId && attention.suggestedAt) {
@@ -381,7 +438,7 @@ export class SessionWorkspace {
         hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
         scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
         renderMode: 'initial', questionDrafts: new Map(), questionSteps: new Map(),
-        submittingQuestions: new Set(), expandedDetails: new Set() };
+        submittingQuestions: new Set(), expandedDetails: new Set(), questionSheetId: '', viewer: null };
       this.nativeStates.set(tabId, state);
     }
     return state;
@@ -425,6 +482,7 @@ export class SessionWorkspace {
   private applyConversationFrame(tabId: string, frame: ConversationFrame): void {
     if (!this.tabs.has(tabId)) return;
     const state = this.nativeState(tabId);
+    const pendingBefore = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete')?.id ?? '';
     if (frame.type === 'conversation.snapshot') {
       const firstSnapshot = !state.scrollInitialized && !state.items.length;
       state.items = mergeItems([], frame.items ?? []);
@@ -447,7 +505,19 @@ export class SessionWorkspace {
     }
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
-    if (tabId === this.selectedId) this.renderSelectedNative();
+    const pendingAfter = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete')?.id ?? '';
+    if (!pendingAfter) state.questionSheetId = '';
+    else if (pendingAfter !== pendingBefore && state.followOutput && !state.viewer) state.questionSheetId = pendingAfter;
+    if (tabId === this.selectedId) this.queueNativeRender();
+  }
+
+  private queueNativeRender(): void {
+    if (this.nativeRenderQueued) return;
+    this.nativeRenderQueued = true;
+    requestAnimationFrame(() => {
+      this.nativeRenderQueued = false;
+      this.renderSelectedNative();
+    });
   }
 
   private renderSelectedNative(): void {
@@ -464,18 +534,20 @@ export class SessionWorkspace {
     const state = this.nativeState(tab.id);
     const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
     const feedItems = pending ? state.items.filter((item) => item.id !== pending.id) : state.items;
+    const viewerItem = state.viewer ? state.items.find((item) => item.id === state.viewer?.itemId) : undefined;
     const attention = this.fleetSnapshot?.attention.find((item) => item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId);
     return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
       <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i>${escapeHtml(state.connection)}</span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
-        ${renderConversationRows(feedItems)}
+        ${renderConversationRows(feedItems, state.expandedDetails)}
         ${!state.items.length && !state.error ? '<div class="native-empty"><strong>Loading conversation…</strong><span>The newest messages appear first; older history loads only when requested.</span></div>' : ''}
       </div>
       ${state.newMessages ? '<button class="new-messages-button" data-new-messages data-action="native-new-messages" data-workspace-action>New messages ↓</button>' : ''}
       ${attention ? renderLimitCard(attention) : ''}
       ${pending ? this.renderPendingAction(pending, state) : this.renderComposer(tab, state)}
+      ${viewerItem && state.viewer ? renderConversationViewer(viewerItem, state.viewer) : ''}
     </div>`;
   }
 
@@ -483,7 +555,9 @@ export class SessionWorkspace {
     const content = item.kind === 'question'
       ? renderQuestion(item, state.questionSteps.get(item.id) ?? 0, state.questionDrafts.get(item.id), state.submittingQuestions.has(item.id))
       : renderConversationItem(item);
-    return `<section class="native-pending-panel ${state.interactionMode === 'plan' ? 'planning' : ''}"><div class="pending-panel-heading"><strong>Action needed</strong><small>Complete this to continue the session</small></div>${content}</section>`;
+    const label = item.kind === 'question' ? (item.title || 'Answer needed') : (item.title || 'Approval needed');
+    return `<section class="native-answer-bar ${state.interactionMode === 'plan' ? 'planning' : ''}" data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action><span><strong>${escapeHtml(label)}</strong><small>Tap to respond</small></span><b>Open</b></button></section>
+      ${state.questionSheetId === item.id ? `<div class="native-sheet-backdrop"><section class="native-question-sheet"><header><span><strong>Action needed</strong><small>Complete this to continue the session</small></span><button class="quiet-button" data-action="native-question-close" data-workspace-action aria-label="Close">×</button></header>${content}</section></div>` : ''}`;
   }
 
   private renderComposer(tab: TerminalTabDescriptor, state: NativeState): string {
@@ -552,37 +626,64 @@ export class SessionWorkspace {
   }
 
   private captureVisibleQuestionDraft(itemId: string): void {
-    const card = [...this.element.querySelectorAll<HTMLElement>('[data-conversation-item]')]
-      .find((node) => node.dataset.conversationItem === itemId);
+    const candidates = [...this.element.querySelectorAll<HTMLElement>('[data-conversation-item]')]
+      .filter((node) => node.dataset.conversationItem === itemId);
+    const card = candidates.find((node) => node.querySelector('[data-question-id]')) ?? candidates[0];
     const item = this.nativeState(this.selectedId).items.find((value) => value.id === itemId);
     if (!card || !item) return;
     const state = this.nativeState(this.selectedId);
     const answers = [...(state.questionDrafts.get(itemId) ?? item.answers ?? [])];
-    const questionId = card.querySelector<HTMLInputElement | HTMLTextAreaElement>('[data-question-id]')?.dataset.questionId;
-    if (!questionId) return;
-    const checked = [...card.querySelectorAll<HTMLInputElement>('input[data-question-choice]:checked')]
-      .filter((value) => value.dataset.questionId === questionId).map((value) => value.value);
-    const text = [...card.querySelectorAll<HTMLTextAreaElement>('[data-question-text]')]
-      .find((value) => value.dataset.questionId === questionId)?.value ?? '';
-    const next = { questionId, choiceIds: checked, text };
+    const step = state.questionSteps.get(itemId) ?? 0;
+    const question = item.questions?.[Math.min(step, (item.questions?.length ?? 1) - 1)];
+    const textInput = card.querySelector<HTMLTextAreaElement>('[data-question-text]');
+    const questionId = textInput?.dataset.questionId ?? question?.id;
+    if (!questionId || !textInput) return;
+    const previous = answers.find((value) => value.questionId === questionId);
+    const next = { questionId, choiceIds: previous?.choiceIds ?? [], text: textInput.value };
     const index = answers.findIndex((value) => value.questionId === questionId);
     if (index >= 0) answers[index] = next; else answers.push(next);
     state.questionDrafts.set(itemId, answers);
   }
 
-  private advanceQuestionIfValid(input: HTMLInputElement | HTMLTextAreaElement): void {
-    const card = input.closest<HTMLElement>('[data-conversation-item]');
-    const itemId = card?.dataset.conversationItem;
-    const item = itemId ? this.nativeState(this.selectedId).items.find((value) => value.id === itemId) : undefined;
-    if (!item?.questions?.length || !itemId) return;
+  private async chooseQuestionOption(item: ConversationItem, questionId: string, choice: string): Promise<void> {
+    if (!item.questions?.length) return;
     const state = this.nativeState(this.selectedId);
-    const step = state.questionSteps.get(itemId) ?? 0;
+    const step = state.questionSteps.get(item.id) ?? 0;
     const question = item.questions[Math.min(step, item.questions.length - 1)];
-    const answer = state.questionDrafts.get(itemId)?.find((value) => value.questionId === question.id);
-    if (!answer || (!answer.choiceIds.length && !answer.text.trim()) || step >= item.questions.length - 1) return;
-    state.questionSteps.set(itemId, step + 1);
+    if (question.id !== questionId) return;
+    const answers = [...(state.questionDrafts.get(item.id) ?? item.answers ?? [])];
+    const index = answers.findIndex((value) => value.questionId === question.id);
+    const previous = index >= 0 ? answers[index] : { questionId: question.id, choiceIds: [], text: '' };
+    const choiceIds = question.type === 'multi'
+      ? (previous.choiceIds.includes(choice) ? previous.choiceIds.filter((value) => value !== choice) : [...previous.choiceIds, choice])
+      : [choice];
+    const next = { ...previous, choiceIds };
+    if (index >= 0) answers[index] = next; else answers.push(next);
+    state.questionDrafts.set(item.id, answers);
+    if (question.type === 'multi') { this.render(); return; }
+    if (step < item.questions.length - 1) {
+      state.questionSteps.set(item.id, step + 1);
+      state.renderMode = 'preserve';
+      this.render();
+    } else await this.submitQuestion(item);
+  }
+
+  private async advanceOrSubmitQuestion(item: ConversationItem): Promise<void> {
+    if (!item.questions?.length) return;
+    this.captureVisibleQuestionDraft(item.id);
+    const state = this.nativeState(this.selectedId);
+    const step = state.questionSteps.get(item.id) ?? 0;
+    const question = item.questions[Math.min(step, item.questions.length - 1)];
+    const answer = state.questionDrafts.get(item.id)?.find((value) => value.questionId === question.id);
+    if (!answer || (!answer.choiceIds.length && !answer.text.trim())) {
+      state.notice = `Answer “${question.header || question.prompt}” first`;
+      this.render();
+      return;
+    }
+    if (step >= item.questions.length - 1) { await this.submitQuestion(item); return; }
+    state.questionSteps.set(item.id, step + 1);
     state.renderMode = 'preserve';
-    queueMicrotask(() => this.render());
+    this.render();
   }
 
   private async closeTab(tabId: string): Promise<void> {
@@ -759,16 +860,18 @@ export class SessionWorkspace {
   }
 }
 
-function renderConversationRows(items: ConversationItem[]): string {
+export function renderConversationRows(items: ConversationItem[], expanded = new Set<string>()): string {
   let html = '';
+  const hasTasks = items.some((item) => item.kind === 'task_list');
   for (let index = 0; index < items.length;) {
+    if (hasTasks && items[index].kind === 'status' && ['Working', 'Done'].includes(items[index].title)) { index += 1; continue; }
     if (items[index].kind === 'tool') {
       const tools: ConversationItem[] = [];
       while (items[index]?.kind === 'tool') tools.push(items[index++]);
       html += tools.length > 1 ? renderToolGroup(tools) : renderTool(tools[0]);
       continue;
     }
-    html += renderConversationItem(items[index++]);
+    html += renderConversationItem(items[index++], expanded);
   }
   return html;
 }
@@ -782,8 +885,10 @@ function terminalDescriptorEqual(left: TerminalTabDescriptor, right: TerminalTab
     && left.failure?.retryable === right.failure?.retryable;
 }
 
-function renderConversationItem(item: ConversationItem): string {
+function renderConversationItem(item: ConversationItem, expanded = new Set<string>()): string {
   if (item.kind === 'question') return renderQuestion(item);
+  if (item.kind === 'task_list') return renderTaskList(item, expanded.has(`tasks-${item.id}`));
+  if (item.kind === 'plan') return `<article class="native-card plan-card" data-conversation-item="${escapeAttr(item.id)}"><small>Plan</small><h3>${escapeHtml(item.title || 'Plan ready')}</h3><div class="plan-preview">${markdown(item.text)}</div><div class="card-actions"><button data-action="native-open-plan" data-workspace-action>Open plan</button></div></article>`;
   if (item.kind === 'approval') return `<article class="native-card approval-card state-${escapeAttr(item.state)}" data-conversation-item="${escapeAttr(item.id)}"><small>Approval</small><h3>${escapeHtml(item.title || 'Approval needed')}</h3>${markdown(item.text || item.detail)}<div class="native-choice-actions">${item.state === 'complete' ? '<b>Answered</b>' : item.choices.map((choice) => `<button class="${/deny|reject|cancel/iu.test(choice.id) ? 'quiet-button' : 'primary-button'}" data-action="native-approve" data-workspace-action data-choice="${escapeAttr(choice.id)}">${escapeHtml(choice.label)}</button>`).join('')}</div></article>`;
   if (item.kind === 'change') return `<article class="native-card change-card"><small>Files changed</small><h3>${escapeHtml(item.title || item.target || 'Change')}</h3>${markdown(item.text || item.detail)}</article>`;
   if (item.kind === 'error') return `<article class="native-card native-error"><strong>${escapeHtml(item.title || 'Error')}</strong>${markdown(item.text || item.detail)}</article>`;
@@ -793,24 +898,46 @@ function renderConversationItem(item: ConversationItem): string {
   return `<article class="native-message ${role}">${item.title && item.title !== content ? `<small>${escapeHtml(item.title)}</small>` : ''}${markdown(content || item.title)}</article>`;
 }
 
+function renderTaskList(item: ConversationItem, expanded: boolean): string {
+  const tasks = item.tasks ?? [];
+  if (!tasks.length) return '';
+  const complete = tasks.every((task) => task.state === 'completed');
+  const active = tasks.findIndex((task) => task.state === 'in_progress');
+  let visible = tasks;
+  if (!expanded && !complete && tasks.length > 6) {
+    const center = active >= 0 ? active : tasks.findIndex((task) => task.state === 'pending');
+    const start = Math.max(0, Math.min(tasks.length - 6, center - 2));
+    visible = tasks.slice(start, start + 6);
+  }
+  const rows = visible.map((task) => `<li class="task-${escapeAttr(task.state)}"><i>${task.state === 'completed' ? '✓' : task.state === 'in_progress' ? '●' : '○'}</i><span><strong>${escapeHtml(task.state === 'in_progress' && task.activeTitle ? task.activeTitle : task.title)}</strong>${task.detail ? `<small>${escapeHtml(task.detail)}</small>` : ''}</span></li>`).join('');
+  if (complete && !expanded) return `<article class="native-card task-card complete" data-conversation-item="${escapeAttr(item.id)}"><button class="task-summary" data-action="native-toggle-tasks" data-workspace-action><span>✓</span><strong>All ${tasks.length} tasks complete</strong><b>Show</b></button></article>`;
+  return `<article class="native-card task-card" data-conversation-item="${escapeAttr(item.id)}"><small>${complete ? 'Completed tasks' : 'Current work'}</small><h3>${escapeHtml(item.title || 'Tasks')}</h3>${item.text ? `<p>${escapeHtml(item.text)}</p>` : ''}<ol>${rows}</ol>${tasks.length > visible.length || complete ? `<button class="task-toggle" data-action="native-toggle-tasks" data-workspace-action>${expanded ? 'Show less' : `Show all ${tasks.length}`}</button>` : ''}</article>`;
+}
+
 function renderQuestion(item: ConversationItem, requestedStep = 0, draftAnswers?: ConversationAnswer[], submitting = false): string {
   const complete = item.state === 'complete';
   const questions = item.questions?.length ? item.questions : fallbackQuestion(item);
   const step = Math.max(0, Math.min(requestedStep, questions.length - 1));
   const answerSource = draftAnswers?.length ? draftAnswers : item.answers;
   const visibleQuestions = complete ? questions : [questions[step]];
-  return `<article class="native-card question-card state-${escapeAttr(item.state)}" data-conversation-item="${escapeAttr(item.id)}"><small>${complete ? 'Answered' : 'Question'}</small><h3>${escapeHtml(item.title || 'Your input is needed')}</h3>${item.text ? markdown(item.text) : ''}
+  const current = questions[step];
+  const explicitAction = !complete && current && (['multi', 'text'].includes(current.type) || current.allowOther);
+  const actionLabel = current?.type === 'multi' ? 'Done' : 'Send';
+  return `<article class="native-card question-card state-${escapeAttr(item.state)} ${submitting ? 'submitting' : ''}" data-conversation-item="${escapeAttr(item.id)}"><div class="question-scroll"><small>${complete ? 'Answered' : 'Question'}</small><h3>${escapeHtml(item.title || 'Your input is needed')}</h3>${item.text ? markdown(item.text) : ''}
     ${!complete && questions.length > 1 ? `<div class="question-progress"><span>Question ${step + 1} of ${questions.length}</span>${questions.map((_question, index) => `<i class="${index < step ? 'done' : index === step ? 'active' : ''}"></i>`).join('')}</div>` : ''}
     ${visibleQuestions.map((question) => renderQuestionPart(question, item, answerSource)).join('')}
-    ${complete ? '<div class="question-complete">Answer submitted</div>' : `<div class="question-navigation">${step > 0 ? '<button class="quiet-button" data-action="native-question-back" data-workspace-action>Back</button>' : '<span></span>'}${step === questions.length - 1 ? `<button class="primary-button question-submit" data-action="native-question-submit" data-workspace-action ${submitting ? 'disabled' : ''}>${submitting ? 'Submitting…' : 'Submit answers'}</button>` : '<small>Choose an answer to continue</small>'}</div>`}</article>`;
+    ${complete ? '<div class="question-complete">Answer submitted</div>' : ''}</div>
+    ${complete ? '' : `<div class="question-navigation">${step > 0 ? '<button class="quiet-button" data-action="native-question-back" data-workspace-action>Back</button>' : '<span></span>'}${explicitAction ? `<button class="primary-button question-submit" data-action="native-question-next" data-workspace-action ${submitting ? 'disabled' : ''}>${submitting ? 'Sending…' : actionLabel}</button>` : '<small>Tap an answer to continue</small>'}</div>`}</article>`;
 }
 
 function renderQuestionPart(question: ConversationQuestion, item: ConversationItem, answers?: ConversationAnswer[]): string {
   const existing = answers?.find((answer) => answer.questionId === question.id) ?? item.answers?.find((answer) => answer.questionId === question.id);
-  const type = question.type === 'multi' ? 'checkbox' : 'radio';
-  const options = question.options.map((option) => `<label class="question-option"><input type="${type}" name="q-${escapeAttr(item.id)}-${escapeAttr(question.id)}" value="${escapeAttr(option.id)}" data-question-choice data-question-id="${escapeAttr(question.id)}" ${existing?.choiceIds.includes(option.id) ? 'checked' : ''}><span><strong>${escapeHtml(option.label)}</strong>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ''}</span></label>`).join('');
+  const choices = question.type === 'boolean' && !question.options.length
+    ? [{ id: 'true', label: 'Yes', description: '' }, { id: 'false', label: 'No', description: '' }]
+    : question.options;
+  const options = choices.map((option) => `<button type="button" class="question-option ${existing?.choiceIds.includes(option.id) ? 'selected' : ''}" data-action="native-question-choice" data-workspace-action data-choice="${escapeAttr(option.id)}" data-question-id="${escapeAttr(question.id)}"><span><strong>${escapeHtml(option.label)}</strong>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ''}</span><b>${existing?.choiceIds.includes(option.id) ? '✓' : ''}</b></button>`).join('');
   const textInput = question.type === 'text' || question.allowOther
-    ? `<textarea data-question-text data-question-id="${escapeAttr(question.id)}" data-focus-key="question-${escapeAttr(item.id)}-${escapeAttr(question.id)}" placeholder="${question.type === 'text' ? 'Type your answer' : 'Or type another answer'}">${escapeHtml(existing?.text ?? '')}</textarea>` : '';
+    ? `<textarea data-question-text data-question-id="${escapeAttr(question.id)}" data-focus-key="question-${escapeAttr(item.id)}-${escapeAttr(question.id)}" placeholder="${question.type === 'text' ? 'Type your answer' : 'Or type another answer'}" enterkeyhint="send">${escapeHtml(existing?.text ?? '')}</textarea>` : '';
   return `<fieldset class="question-part"><legend>${question.header ? `<small>${escapeHtml(question.header)}</small>` : ''}<strong>${escapeHtml(question.prompt)}</strong></legend>${options}${textInput}</fieldset>`;
 }
 
@@ -833,29 +960,48 @@ function renderTool(item: ConversationItem): string {
   const inputBlocks = presentation?.inputBlocks?.length ? presentation.inputBlocks : item.input ? [{ title: 'Input', kind: 'json', content: item.input }] : [];
   const resultBlocks = presentation?.resultBlocks?.length ? presentation.resultBlocks : item.result ? [{ title: 'Result', kind: 'text', content: item.result }] : [];
   const duration = toolDuration(item);
-  const raw = [item.input ? { title: 'Raw input', content: item.input } : null, item.result ? { title: 'Raw result', content: item.result } : null].filter((value): value is { title: string; content: string } => Boolean(value));
-  const semanticInput = inputBlocks.length > 1 ? renderToolActions(inputBlocks) : inputBlocks.map((block) => renderToolBlock(block)).join('');
-  const semanticOutput = resultBlocks.map((block) => renderToolBlock(block)).join('');
-  return `<details class="tool-call state-${escapeAttr(item.state)}" data-detail-id="tool-${escapeAttr(item.id)}"><summary><span class="tool-state"></span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || item.target || stateLabel(item.state))}</small></span><span class="tool-summary-meta"><b>${escapeHtml(stateLabel(item.state))}</b>${duration ? `<small>${escapeHtml(duration)}</small>` : ''}</span></summary><div class="tool-detail">${semanticInput}${semanticOutput || (!semanticInput ? '<p>No details reported.</p>' : '')}${raw.length ? `<details class="tool-raw" data-detail-id="raw-${escapeAttr(item.id)}"><summary>Raw tool data</summary>${raw.map((block) => renderToolBlock({ ...block, kind: 'json' })).join('')}</details>` : ''}</div></details>`;
+  const actions = inputBlocks.length > 1 ? renderToolActions(item, inputBlocks) : '';
+  const preview = resultBlocks[0] ?? inputBlocks[0];
+  return `<article class="tool-call state-${escapeAttr(item.state)}" data-conversation-item="${escapeAttr(item.id)}"><div class="tool-call-heading"><span class="tool-state"></span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || item.target || stateLabel(item.state))}</small></span><span class="tool-summary-meta"><b>${escapeHtml(stateLabel(item.state))}</b>${duration ? `<small>${escapeHtml(duration)}</small>` : ''}</span></div>${actions}${preview ? renderToolPreview(preview) : '<p class="tool-empty">No details reported.</p>'}<div class="card-actions"><button data-action="native-open-tool" data-workspace-action>Details</button></div></article>`;
 }
 
-function renderToolActions(blocks: ToolPresentationBlock[]): string {
+function renderToolActions(item: ConversationItem, blocks: ToolPresentationBlock[]): string {
   return `<div class="tool-actions">${blocks.map((block, index) => {
     const preview = block.content.split(/\r?\n/u).find((line) => line.trim())?.trim() || 'No details';
     const shortened = preview.length > 120 ? `${preview.slice(0, 117)}…` : preview;
-    return `<details class="tool-action"><summary><span><strong>${index + 1}. ${escapeHtml(block.title)}</strong><small>${escapeHtml(shortened)}</small></span><b>Details</b></summary><div>${renderToolBlock(block, true)}</div></details>`;
+    return `<button class="tool-action" data-action="native-open-tool" data-workspace-action data-action-index="${index}" data-conversation-item="${escapeAttr(item.id)}"><span><strong>${index + 1}. ${escapeHtml(block.title)}</strong><small>${escapeHtml(shortened)}</small></span><b>Details</b></button>`;
   }).join('')}</div>`;
 }
 
-function renderToolBlock(block: ToolPresentationBlock, compact = false): string {
+function renderToolPreview(block: ToolPresentationBlock): string {
+  const lines = block.content.split(/\r?\n/u).slice(0, 6);
+  let content = lines.join('\n');
+  if (content.length > 700) content = `${content.slice(0, 697)}…`;
+  if (block.content.split(/\r?\n/u).length > 6) content += '\n…';
+  return `<div class="tool-preview"><small>${escapeHtml(block.title)}</small><pre><code>${escapeHtml(content)}</code></pre></div>`;
+}
+
+function renderToolBlock(block: ToolPresentationBlock, compact = false, wrap = false): string {
   const controls = compact
     ? `<div class="tool-action-controls"><button data-action="native-copy" data-workspace-action>Copy</button></div>`
     : `<h4><span>${escapeHtml(block.title)}</span><button data-action="native-copy" data-workspace-action>Copy</button></h4>`;
   if (block.kind === 'markdown') return `<section data-copy-source>${controls}<span hidden data-copy-value>${escapeHtml(block.content)}</span>${markdown(block.content)}</section>`;
   const content = block.kind === 'json' ? prettyJson(block.content) : block.content;
+  const highlighted = content.length <= 24_000 ? hljs.highlightAuto(content).value : escapeHtml(content);
   const rendered = block.kind === 'diff' ? renderDiff(content)
-    : `<pre class="tool-block-${escapeAttr(block.kind)}"><code>${hljs.highlightAuto(content).value}</code></pre>`;
+    : `<pre class="tool-block-${escapeAttr(block.kind)} ${wrap || block.kind === 'terminal' || block.kind === 'text' ? 'wrap' : 'no-wrap'}"><code>${highlighted}</code></pre>`;
   return `<section data-copy-source>${controls}<span hidden data-copy-value>${escapeHtml(content)}</span>${rendered}</section>`;
+}
+
+function renderConversationViewer(item: ConversationItem, viewer: { itemId: string; actionIndex: number | null; wrap: boolean }): string {
+  if (item.kind === 'plan') return `<div class="native-viewer-backdrop"><section class="native-viewer" data-conversation-item="${escapeAttr(item.id)}"><header><span><small>Plan</small><strong>${escapeHtml(item.title || 'Plan')}</strong></span><div data-copy-source><span hidden data-copy-value>${escapeHtml(item.text)}</span><button data-action="native-copy" data-workspace-action>Copy</button><button class="quiet-button" data-action="native-viewer-close" data-workspace-action>Close</button></div></header><div class="native-viewer-body plan-viewer">${markdown(item.text)}</div></section></div>`;
+  const presentation = item.presentation;
+  const allInput = presentation?.inputBlocks?.length ? presentation.inputBlocks : item.input ? [{ title: 'Input', kind: 'json', content: item.input }] : [];
+  const result = presentation?.resultBlocks?.length ? presentation.resultBlocks : item.result ? [{ title: 'Result', kind: 'text', content: item.result }] : [];
+  const selected = viewer.actionIndex === null ? allInput : allInput[viewer.actionIndex] ? [allInput[viewer.actionIndex]] : allInput;
+  const raw = [item.input ? { title: 'Raw input', kind: 'json', content: item.input } : null, item.result ? { title: 'Raw result', kind: 'json', content: item.result } : null].filter((value): value is ToolPresentationBlock => Boolean(value));
+  const title = presentation?.title || humanizeTool(item.tool || item.action || 'Tool');
+  return `<div class="native-viewer-backdrop"><section class="native-viewer" data-conversation-item="${escapeAttr(item.id)}"><header><span><small>${escapeHtml(stateLabel(item.state))}</small><strong>${escapeHtml(title)}</strong></span><div><button data-action="native-viewer-wrap" data-workspace-action>${viewer.wrap ? 'No wrap' : 'Wrap'}</button><button class="quiet-button" data-action="native-viewer-close" data-workspace-action>Close</button></div></header><div class="native-viewer-body">${selected.map((block) => renderToolBlock(block, false, viewer.wrap)).join('')}${result.map((block) => renderToolBlock(block, false, viewer.wrap)).join('')}${raw.length ? `<details class="tool-raw"><summary>Raw data</summary>${raw.map((block) => renderToolBlock(block, false, viewer.wrap)).join('')}</details>` : ''}</div></section></div>`;
 }
 
 function markdown(value: string): string {

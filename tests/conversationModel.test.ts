@@ -49,4 +49,23 @@ describe('conversation lifecycle model', () => {
     expect(resolveConversationScroll('append', 300, 1_000, 1_200, false)).toBe(300);
     expect(resolveConversationScroll('append', 760, 1_000, 1_200, true)).toBe(1_200);
   });
+
+  it('replaces Codex task boards and merges Claude task patches', () => {
+    const board = item({ kind: 'task_list', id: 'tasks-1', updateMode: 'replace', tasks: [
+      { id: 'one', title: 'First', activeTitle: 'Doing first', detail: 'Details', state: 'in_progress' },
+      { id: 'two', title: 'Second', activeTitle: '', detail: '', state: 'pending' }
+    ] });
+    const patch = item({ kind: 'task_list', id: 'tasks-1', updateMode: 'merge', tasks: [
+      { id: 'one', title: '', activeTitle: '', detail: '', state: 'completed' }
+    ] });
+    const merged = mergeConversationItems([board], [patch])[0];
+    expect(merged.tasks).toEqual([
+      { id: 'one', title: 'First', activeTitle: 'Doing first', detail: 'Details', state: 'completed' },
+      { id: 'two', title: 'Second', activeTitle: '', detail: '', state: 'pending' }
+    ]);
+    const replacement = item({ kind: 'task_list', id: 'tasks-1', updateMode: 'replace', tasks: [
+      { id: 'three', title: 'Only', activeTitle: '', detail: '', state: 'pending' }
+    ] });
+    expect(mergeConversationItems([merged], [replacement])[0].tasks?.map((task) => task.id)).toEqual(['three']);
+  });
 });

@@ -192,3 +192,19 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
   per-block Copy controls, bounded previews, and complete raw data collapsed.
 - Release Windows beta.4 first, then the matching signed Android update with
   the same renderer behavior and the current wtmux runtime baseline.
+
+## 14. Structured Work And Interaction Repair
+
+- Consume additive task/plan records and the byte-identical shared golden
+  fixture used by wtmux and Android; merge one stable task board in place and
+  suppress redundant generic Working/Done activity.
+- Bound feed previews and move full semantic tools and Markdown plans into
+  dedicated viewers with wrapping, horizontal scrolling, Copy, and Raw data.
+- Replace pending cards with a pinned action bar and scrollable sheet. Use
+  immediate single/boolean tap delivery, Done for multi-select, and Send for
+  text while retaining revision and transcript confirmation.
+- Coalesce selected Native updates, preserve scroll/focus/drafts, and cover long
+  tools, tasks, plans, questions, and plan gates with renderer and contract
+  tests.
+- Package `0.11.0-beta.5`, deploy it to gaming-desktop and work-m before the
+  matched Android and host runtime updates, and retain beta.4 for rollback.
