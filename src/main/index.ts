@@ -892,7 +892,7 @@ handle(IPC_CHANNELS.listFleetRepository, async (_event, sessionId, relativePath,
     return { ok: false, message: 'Repository request is invalid' };
   }
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
-  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId);
   if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
   try {
     const page = await fleetBridge.mutate('repository.list', {
@@ -910,7 +910,7 @@ handle(IPC_CHANNELS.searchFleetRepository, async (_event, sessionId, query, incl
     return { ok: false, message: 'Search needs at least two characters' };
   }
   const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
-  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId);
   if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
   try {
     const page = await fleetBridge.mutate('repository.search', {

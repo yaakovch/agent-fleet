@@ -148,6 +148,8 @@ export class DashboardPrototype {
   private repositoryError = '';
   private repositoryShowHidden = false;
   private repositoryQuery = '';
+  private repositoryLastRequest: { kind: 'list'; relativePath: string; cursor: string; append: boolean }
+    | { kind: 'search'; query: string } | null = null;
   private repositoryPendingDownload: FleetRepositoryEntry | null = null;
   private repositoryDownload: FleetDownloadJob | null = null;
   private toast = '';
@@ -413,7 +415,14 @@ export class DashboardPrototype {
       this.repositoryPage = null;
       this.repositoryPendingDownload = null;
       this.repositoryLoading = false;
+      this.repositoryLastRequest = null;
       this.render();
+      return true;
+    }
+    if (action === 'repository-retry') {
+      const request = this.repositoryLastRequest;
+      if (request?.kind === 'search') void this.searchRepository(request.query);
+      else if (request) void this.loadRepository(request.relativePath, request.cursor, request.append);
       return true;
     }
     if (action === 'repository-folder') {
@@ -654,12 +663,14 @@ export class DashboardPrototype {
     this.repositoryQuery = '';
     this.repositoryPendingDownload = null;
     this.repositoryDownload = null;
+    this.repositoryLastRequest = null;
     void this.loadRepository('');
   }
 
   private async loadRepository(relativePath: string, cursor = '', append = false): Promise<void> {
     const sessionId = this.repositorySessionId;
     if (!sessionId || this.repositoryLoading) return;
+    this.repositoryLastRequest = { kind: 'list', relativePath, cursor, append };
     this.repositoryLoading = true;
     this.repositoryError = '';
     this.render();
@@ -680,6 +691,7 @@ export class DashboardPrototype {
   private async searchRepository(query: string): Promise<void> {
     const sessionId = this.repositorySessionId;
     if (!sessionId || this.repositoryLoading) return;
+    this.repositoryLastRequest = { kind: 'search', query };
     this.repositoryLoading = true;
     this.repositoryError = '';
     this.render();
@@ -736,7 +748,7 @@ export class DashboardPrototype {
         ${searching ? `<button class="quiet-button" data-action="repository-clear-search">Clear</button>` : ''}
         <button class="quiet-button" data-action="repository-toggle-hidden">${icon('eye')}${this.repositoryShowHidden ? 'Hide hidden' : 'Show hidden'}</button>
       </div>
-      ${this.repositoryError ? `<div class="repository-error">${icon('circle-alert')}<span>${escapeHtml(this.repositoryError)}</span></div>` : ''}
+      ${this.repositoryError ? `<div class="repository-error">${icon('circle-alert')}<span>${escapeHtml(this.repositoryError)}</span><button class="quiet-button" data-action="repository-retry">Retry</button></div>` : ''}
       <div class="repository-list" aria-busy="${this.repositoryLoading}">
         ${this.repositoryLoading && !entries.length ? '<div class="repository-empty">Loading repository…</div>' : entries.map((entry) => this.renderRepositoryEntry(entry)).join('')}
         ${!this.repositoryLoading && !entries.length && !this.repositoryError ? `<div class="repository-empty">${searching ? 'No matching files or folders' : 'This folder is empty'}</div>` : ''}

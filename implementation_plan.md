@@ -233,3 +233,12 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
 - Treat already-resolved host responses as successful idempotent completion,
   validate the full Windows suite, and package `0.11.0-beta.7` before activating
   the matched Android and wtmux runtime releases.
+
+## 17. Repository Browser Readiness Hotfix
+
+- Wait through a starting or cached controller for transient directory and
+  repository reads, then let the shared bridge own selected-host readiness.
+- Preserve the last folder/search operation and offer Retry without combining
+  an error with an empty-folder state or changing repository protocol data.
+- Run the full suite, production package, and real text/binary download smoke;
+  ship `0.11.0-beta.8` before Android `.30` and retain beta.7 for rollback.

@@ -123,6 +123,26 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('waits for a cached controller to become live before a repository read', async () => {
+    const directory = temporaryDirectory();
+    const cachePath = join(directory, 'fleet-cache-v1.json');
+    writeFileSync(cachePath, JSON.stringify({
+      cacheVersion: 1, protocolVersion: 1, savedAt: '2026-07-12T04:01:00Z', snapshot: fixture
+    }));
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath,
+      launch: { command: process.execPath, args: [writeFakeBridge(directory, fixture, 100)], distro: 'Test Linux' },
+      logger
+    });
+    supervisor.start();
+    const page = await supervisor.mutate('repository.list', {
+      hostId: 'test-host', sessionId: 'test-host:session-1', relativePath: '', includeHidden: false,
+      cursor: '', idempotencyKey: 'repository-while-cached'
+    });
+    expect(page.entries[0]?.relativePath).toBe('private-report.pdf');
+    supervisor.stop();
+  }, 20_000);
+
   it('returns an invitation secret only to the caller and never writes it to the fleet cache', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');

@@ -130,6 +130,14 @@ export class FleetBridgeSupervisor extends EventEmitter {
   mutate(method: 'repository.list' | 'repository.search', params: Record<string, unknown>): Promise<FleetRepositoryPage>;
   mutate(method: Exclude<FleetMutationMethod, 'directory.list' | 'repository.list' | 'repository.search'>, params: Record<string, unknown>): Promise<FleetMutationResult>;
   mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage> {
+    const transientRead = method === 'directory.list' || method === 'repository.list' || method === 'repository.search';
+    if (transientRead && this.status !== 'live' && !this.stopped && this.child && !this.child.killed) {
+      return this.waitUntilLive(10_000).then(() => this.sendMutation(method, params));
+    }
+    return this.sendMutation(method, params);
+  }
+
+  private sendMutation(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage> {
     if (this.status !== 'live' || !this.snapshot || !this.child || this.child.killed || !this.child.stdin.writable) {
       return Promise.reject(new FleetMutationError('host_offline', 'Fleet controller is not live'));
     }
@@ -159,6 +167,32 @@ export class FleetBridgeSupervisor extends EventEmitter {
       this.child!.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
         if (error) this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge write failed');
       });
+    });
+  }
+
+  private waitUntilLive(timeoutMs: number): Promise<void> {
+    if (this.status === 'live') return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: FleetMutationError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        this.off('changed', changed);
+        if (error) reject(error); else resolve();
+      };
+      const changed = () => {
+        if (this.status === 'live') finish();
+        else if (this.status === 'error' || this.stopped) {
+          finish(new FleetMutationError('host_offline', 'Fleet controller is not live'));
+        }
+      };
+      const timeout = setTimeout(() => {
+        finish(new FleetMutationError('host_offline', 'Fleet controller did not become ready'));
+      }, timeoutMs);
+      timeout.unref();
+      this.on('changed', changed);
+      changed();
     });
   }
 

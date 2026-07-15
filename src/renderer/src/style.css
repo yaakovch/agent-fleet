@@ -1249,6 +1249,8 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .repository-more { justify-self: center; margin: 8px; }
 .fleet-modal > .repository-error { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; border: 1px solid #6d3b41; border-radius: 7px; padding: 9px 11px; color: #ffc0c4; background: #301c21; font-size: 12px; }
 .repository-error svg { width: 15px; }
+.repository-error span { min-width: 0; flex: 1; }
+.repository-error button { flex: 0 0 auto; }
 .repository-note { color: #8391a1; font-size: 10px; }
 .fleet-modal > .repository-confirm,
 .fleet-modal > .repository-job { display: flex; align-items: center; gap: 9px; width: 100%; margin-top: 12px; border: 1px solid #3b4a59; border-radius: 8px; padding: 10px 11px; background: #161f28; }
