@@ -334,3 +334,14 @@ areas.
 - Large task, plan, tool, and question bodies never replace the whole workspace
   DOM. Selected-tab updates coalesce to one animation frame, preserve bottom
   follow and history anchors, and do not jump the conversation to the top.
+
+## Stale Hard-Limit Attention
+
+- Consume only `detected`, `offering`, and `offered` hard-limit attention from
+  the bridge. Resolved, expired, dismissed, scheduled, and unknown future states
+  never produce cards in the dashboard or Native workspace.
+- Dismiss removes the Native card before the host round trip. The exact event
+  operation is resource-idempotent across unrelated fleet revision changes;
+  genuine failures restore the card and explain the failure.
+- Recovery authority remains on the wtmux host. Windows never infers recovery
+  from rendered terminal text or conversation UI state.

@@ -223,3 +223,13 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
 - Test strict parsing, cache exclusion, direct argv construction, progress,
   completion, cancellation, renderer compilation, and the production build;
   release as `0.11.0-beta.6` before the matched Android APK.
+
+## 16. Stale Hard-Limit Attention Hotfix
+
+- Defensively allow only active attention states through the Windows fleet
+  adapter and suppress a Native card immediately when Dismiss is tapped.
+- Preserve suppression while unrelated snapshots arrive, clear it after host
+  acknowledgement, and restore the card only on a genuine mutation failure.
+- Treat already-resolved host responses as successful idempotent completion,
+  validate the full Windows suite, and package `0.11.0-beta.7` before activating
+  the matched Android and wtmux runtime releases.

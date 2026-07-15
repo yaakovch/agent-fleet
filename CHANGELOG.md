@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0-beta.7 - 2026-07-15
+
+- Hide stale hard-limit cards immediately after Dismiss and keep them hidden
+  through unrelated fleet updates; restore only after a genuine host failure.
+- Accept idempotent already-resolved dismissals and show only active hard-limit
+  attention states in dashboard and Native session views.
+
 ## 0.11.0-beta.6 - 2026-07-14
 
 - Added a streamlined session More menu with repository folder browsing,
