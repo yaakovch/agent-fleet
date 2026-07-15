@@ -800,7 +800,10 @@ handle(IPC_CHANNELS.dismissFleetAttention, async (_event, attentionId) => {
     const result = await fleetBridge.mutate('attention.dismiss', {
       hostId: attention.hostId, attentionId: attention.id, idempotencyKey: randomUUID()
     });
-    return { ok: true, message: result.status === 'already-dismissed' ? 'Limit offer was already dismissed' : 'Limit offer dismissed' };
+    const message = result.status === 'already-dismissed'
+      ? 'Limit offer was already dismissed'
+      : result.status === 'already-resolved' ? 'Limit offer is already gone' : 'Limit offer dismissed';
+    return { ok: true, message };
   } catch (error) {
     return fleetMutationFailure(error);
   }

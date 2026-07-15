@@ -236,7 +236,7 @@ export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): Fleet
     hosts: raw.hosts.map((host) => toHost(host, sessions)),
     sessions,
     schedules: raw.schedules.map((schedule) => toSchedule(schedule, hostTimeZones.get(schedule.hostId) ?? '')),
-    attention: raw.attention.filter((item) => !['dismissed', 'scheduled', 'resolved'].includes(item.state)).map(toAttention),
+    attention: raw.attention.filter((item) => ['detected', 'offering', 'offered'].includes(item.state)).map(toAttention),
     favorites: raw.presets,
     events: [],
     pairingRequests: raw.pairingRequests,

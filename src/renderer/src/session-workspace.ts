@@ -67,6 +67,7 @@ export class SessionWorkspace {
   private mounted = false;
   private boundTerminalId = '';
   private fleetSnapshot: FleetSnapshot | null = null;
+  private dismissedAttention = new Set<string>();
   private settings: WidgetSettings;
   private resizeObserver: ResizeObserver;
   private nativeRenderQueued = false;
@@ -160,6 +161,9 @@ export class SessionWorkspace {
   setFleetSnapshot(snapshot: FleetSnapshot): void {
     const changed = this.fleetSnapshot?.revision !== snapshot.revision;
     this.fleetSnapshot = snapshot;
+    for (const id of this.dismissedAttention) {
+      if (!snapshot.attention.some((item) => item.id === id)) this.dismissedAttention.delete(id);
+    }
     if (changed && this.selectedId) this.renderSelectedNative();
   }
 
@@ -540,7 +544,9 @@ export class SessionWorkspace {
     const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
     const feedItems = pending ? state.items.filter((item) => item.id !== pending.id) : state.items;
     const viewerItem = state.viewer ? state.items.find((item) => item.id === state.viewer?.itemId) : undefined;
-    const attention = this.fleetSnapshot?.attention.find((item) => item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId);
+    const attention = this.fleetSnapshot?.attention.find((item) =>
+      item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId && !this.dismissedAttention.has(item.id)
+    );
     return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
       <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i>${escapeHtml(state.connection)}</span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
@@ -722,12 +728,15 @@ export class SessionWorkspace {
   }
 
   private async dismissLimit(attention: FleetAttention): Promise<void> {
-    const state = this.nativeState(this.selectedId);
+    const tabId = this.selectedId;
+    const state = this.nativeState(tabId);
+    this.dismissedAttention.add(attention.id);
     state.notice = 'Dismissing limit offer…';
-    this.render();
+    this.renderSelectedNative();
     const result = await window.limitsWidget.dismissFleetAttention(attention.id);
+    if (!result.ok) this.dismissedAttention.delete(attention.id);
     state.notice = result.message;
-    this.render();
+    if (this.selectedId === tabId) this.renderSelectedNative();
   }
 
   private async copyFromControl(control: HTMLElement): Promise<void> {

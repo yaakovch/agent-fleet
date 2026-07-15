@@ -1,6 +1,6 @@
 {
   "name": "agent-fleet",
-  "version": "0.11.0-beta.6",
+  "version": "0.11.0-beta.7",
   "description": "Windows tray dashboard for local AI coding sessions, schedules, hosts, and usage limits.",
   "main": "out/main/index.js",
   "type": "module",

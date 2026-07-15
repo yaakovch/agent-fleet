@@ -84,6 +84,24 @@ describe('fleet protocol v1', () => {
     expect(snapshot.sessions[0].name).not.toContain('/srv/private/work');
   });
 
+  it('shows only active hard-limit attention states', () => {
+    const payload = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const base = {
+      id: 'limit-active', hostId: payload.hosts[0].id, kind: 'hard-limit',
+      sessionId: payload.sessions[0].id, agent: 'codex', resetAt: '2026-07-12T06:00:00Z',
+      detectedAt: '2026-07-12T05:00:00Z', updatedAt: '2026-07-12T05:00:00Z'
+    };
+    payload.attention = [
+      { ...base, id: 'detected', state: 'detected' },
+      { ...base, id: 'offered', state: 'offered' },
+      { ...base, id: 'resolved', state: 'resolved' },
+      { ...base, id: 'expired', state: 'expired' },
+      { ...base, id: 'future-state', state: 'future-state' }
+    ];
+    expect(toFleetSnapshot(parseBridgeFleetSnapshot(payload), 'Ubuntu').attention.map((item) => item.id))
+      .toEqual(['detected', 'offered']);
+  });
+
   it('parses bounded transient directory listings', () => {
     const listing = parseFleetDirectoryListing({
       backend: 'linux', path: '/home/user', parentPath: '/home', truncated: false,
