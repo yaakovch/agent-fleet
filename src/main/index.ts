@@ -45,6 +45,7 @@ import {
 } from './settings-store';
 import { LimitStateManager } from './state-manager';
 import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
+import { isRetryableFleetErrorCode } from '../shared/fleet-errors';
 import { openFleetTerminal, openFleetVscode } from './fleet-terminal';
 import { TerminalManager } from './terminal-manager';
 import { runPackagedTerminalSmoke } from './terminal-smoke';
@@ -1051,15 +1052,16 @@ handle(IPC_CHANNELS.reviewFleetPairing, async (_event, requestId) => {
   }
 });
 
-function fleetMutationFailure(error: unknown): { ok: false; message: string } {
+function fleetMutationFailure(error: unknown): { ok: false; message: string; retryable: boolean } {
   logger.warn('Fleet mutation failed', error);
   if (error instanceof FleetMutationError) {
-    if (error.code === 'stale_revision') return { ok: false, message: 'Fleet changed; refresh and try again' };
-    if (error.code === 'host_offline') return { ok: false, message: 'Host is offline; no changes were made' };
-    if (error.code === 'conflict') return { ok: false, message: error.message };
-    if (error.code === 'timeout') return { ok: false, message: error.message };
+    if (error.code === 'stale_revision') return { ok: false, message: 'Fleet changed; refresh and try again', retryable: false };
+    if (error.code === 'host_offline') {
+      return { ok: false, message: 'Host is offline; no changes were made', retryable: true };
+    }
+    return { ok: false, message: error.message, retryable: isRetryableFleetErrorCode(error.code) };
   }
-  return { ok: false, message: 'Action failed safely; refresh before retrying' };
+  return { ok: false, message: 'Action failed safely; refresh before retrying', retryable: false };
 }
 
 async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResult> {

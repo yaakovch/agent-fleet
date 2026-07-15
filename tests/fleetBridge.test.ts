@@ -143,6 +143,25 @@ describe('fleet bridge supervisor', () => {
     supervisor.stop();
   }, 20_000);
 
+  it('preserves a permanent repository failure code and message', async () => {
+    const directory = temporaryDirectory();
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: process.execPath, args: [writeFakeBridge(directory, fixture)], distro: 'Test Linux' },
+      logger
+    });
+    const live = waitForStatus(supervisor, 'live');
+    supervisor.start();
+    await live;
+    await expect(supervisor.mutate('repository.list', {
+      hostId: 'test-host', sessionId: 'test-host:session-1', relativePath: 'missing', includeHidden: false,
+      cursor: '', idempotencyKey: 'repository-missing'
+    })).rejects.toMatchObject({
+      code: 'repository_unavailable', message: 'Repository path is unavailable for this session'
+    });
+    supervisor.stop();
+  }, 20_000);
+
   it('returns an invitation secret only to the caller and never writes it to the fleet cache', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');
@@ -267,6 +286,12 @@ emit({ protocolVersion: 1, type: 'event', eventId: 'event-1', event: 'fleet.hear
   timestamp: new Date().toISOString(), revision: snapshot.revision, data: { hostCount: snapshot.hosts.length } });
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
+  if (request.method === 'repository.list' && request.params.relativePath === 'missing') {
+    emit({ protocolVersion: 1, type: 'response', requestId: request.requestId,
+      timestamp: new Date().toISOString(), ok: false,
+      error: { code: 'repository_unavailable', message: 'Repository path is unavailable for this session' } });
+    return;
+  }
   const result = request.method === 'fleet.snapshot' ? snapshot : request.method === 'directory.list' ? {
     backend: 'linux', path: '/home/test', parentPath: '/home', truncated: false,
     entries: [{ name: 'private-work', path: '/home/test/private-work' }],

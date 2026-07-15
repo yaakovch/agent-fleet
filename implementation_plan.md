@@ -251,3 +251,15 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
 - Validate the full Windows suite and production build against the shared
   no-hard-link regression, then activate the matched host runtime while
   retaining the previous runtime for rollback.
+
+## 19. Legacy Repository Recovery And Retry Clarity
+
+- Consume the host's typed `repository_unavailable` failure and preserve its
+  bounded actionable message instead of replacing it with a generic action
+  failure.
+- Add `retryable` to repository results. Show Retry only for offline,
+  disconnect, and timeout failures; keep permanent session/path errors visible
+  without an ineffective action.
+- Retain the cold-controller readiness wait, cover permanent error correlation
+  and retry classification, run lint plus the full Windows suite, and release
+  `0.11.0-beta.9` with beta.8 available for rollback.

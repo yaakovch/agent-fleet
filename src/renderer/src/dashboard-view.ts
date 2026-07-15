@@ -146,6 +146,7 @@ export class DashboardPrototype {
   private repositoryPage: FleetRepositoryPage | null = null;
   private repositoryLoading = false;
   private repositoryError = '';
+  private repositoryRetryable = false;
   private repositoryShowHidden = false;
   private repositoryQuery = '';
   private repositoryLastRequest: { kind: 'list'; relativePath: string; cursor: string; append: boolean }
@@ -413,6 +414,8 @@ export class DashboardPrototype {
     if (action === 'repository-close') {
       this.repositorySessionId = '';
       this.repositoryPage = null;
+      this.repositoryError = '';
+      this.repositoryRetryable = false;
       this.repositoryPendingDownload = null;
       this.repositoryLoading = false;
       this.repositoryLastRequest = null;
@@ -660,6 +663,7 @@ export class DashboardPrototype {
     this.repositorySessionId = session.id;
     this.repositoryPage = null;
     this.repositoryError = '';
+    this.repositoryRetryable = false;
     this.repositoryQuery = '';
     this.repositoryPendingDownload = null;
     this.repositoryDownload = null;
@@ -673,12 +677,14 @@ export class DashboardPrototype {
     this.repositoryLastRequest = { kind: 'list', relativePath, cursor, append };
     this.repositoryLoading = true;
     this.repositoryError = '';
+    this.repositoryRetryable = false;
     this.render();
     const result = await window.limitsWidget.listFleetRepository(sessionId, relativePath, this.repositoryShowHidden, cursor);
     if (sessionId !== this.repositorySessionId) return;
     this.repositoryLoading = false;
     if (!result.ok || !result.page) {
       this.repositoryError = result.message;
+      this.repositoryRetryable = result.retryable === true;
     } else if (append && this.repositoryPage?.relativePath === result.page.relativePath) {
       this.repositoryPage = { ...result.page, entries: [...this.repositoryPage.entries, ...result.page.entries] };
     } else {
@@ -694,11 +700,15 @@ export class DashboardPrototype {
     this.repositoryLastRequest = { kind: 'search', query };
     this.repositoryLoading = true;
     this.repositoryError = '';
+    this.repositoryRetryable = false;
     this.render();
     const result = await window.limitsWidget.searchFleetRepository(sessionId, query, this.repositoryShowHidden);
     if (sessionId !== this.repositorySessionId) return;
     this.repositoryLoading = false;
-    if (!result.ok || !result.page) this.repositoryError = result.message;
+    if (!result.ok || !result.page) {
+      this.repositoryError = result.message;
+      this.repositoryRetryable = result.retryable === true;
+    }
     else this.repositoryPage = result.page;
     this.render();
   }
@@ -710,7 +720,10 @@ export class DashboardPrototype {
       this.repositorySessionId, entry.relativePath, entry.name, entry.size
     );
     if (result.job) this.repositoryDownload = result.job;
-    if (!result.ok) this.repositoryError = result.message;
+    if (!result.ok) {
+      this.repositoryError = result.message;
+      this.repositoryRetryable = false;
+    }
     this.render();
   }
 
@@ -748,7 +761,7 @@ export class DashboardPrototype {
         ${searching ? `<button class="quiet-button" data-action="repository-clear-search">Clear</button>` : ''}
         <button class="quiet-button" data-action="repository-toggle-hidden">${icon('eye')}${this.repositoryShowHidden ? 'Hide hidden' : 'Show hidden'}</button>
       </div>
-      ${this.repositoryError ? `<div class="repository-error">${icon('circle-alert')}<span>${escapeHtml(this.repositoryError)}</span><button class="quiet-button" data-action="repository-retry">Retry</button></div>` : ''}
+      ${this.repositoryError ? `<div class="repository-error">${icon('circle-alert')}<span>${escapeHtml(this.repositoryError)}</span>${this.repositoryRetryable ? '<button class="quiet-button" data-action="repository-retry">Retry</button>' : ''}</div>` : ''}
       <div class="repository-list" aria-busy="${this.repositoryLoading}">
         ${this.repositoryLoading && !entries.length ? '<div class="repository-empty">Loading repository…</div>' : entries.map((entry) => this.renderRepositoryEntry(entry)).join('')}
         ${!this.repositoryLoading && !entries.length && !this.repositoryError ? `<div class="repository-empty">${searching ? 'No matching files or folders' : 'This folder is empty'}</div>` : ''}

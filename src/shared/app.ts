@@ -75,6 +75,7 @@ export interface FleetDirectoryResult {
 export interface FleetRepositoryResult {
   ok: boolean;
   message: string;
+  retryable?: boolean;
   page?: FleetRepositoryPage;
 }
 
