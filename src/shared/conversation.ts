@@ -52,7 +52,34 @@ export function mergeConversationItems(current: ConversationItem[], incoming: Co
       presentation: mergeToolPresentation(old.presentation, item.presentation)
     } : item);
   }
-  return [...values.values()].slice(-2_000);
+  return retireSupersededQuestions([...values.values()].slice(-2_000));
+}
+
+export function retireSupersededQuestions(items: ConversationItem[]): ConversationItem[] {
+  const timestamps = items.map((item) => item.timestamp).filter(Boolean);
+  const latestTimestamp = timestamps.sort().at(-1) ?? '';
+  let latestTimestampIndex = -1;
+  if (latestTimestamp) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index].timestamp === latestTimestamp) { latestTimestampIndex = index; break; }
+    }
+  }
+  return items.map((item, index) => {
+    if (item.kind !== 'question' || item.state === 'complete') return item;
+    const superseded = item.timestamp && latestTimestamp
+      ? latestTimestamp > item.timestamp
+        || (latestTimestamp === item.timestamp && latestTimestampIndex > index && items[latestTimestampIndex].id !== item.id)
+      : items.slice(index + 1).some((later) => later.id !== item.id);
+    return superseded ? {
+      ...item, title: 'No longer active', state: 'complete', completedAt: latestTimestamp
+    } : item;
+  });
+}
+
+export function activePendingAction(items: ConversationItem[]): ConversationItem | undefined {
+  return [...retireSupersededQuestions(items)].reverse().find((item) =>
+    ['question', 'approval'].includes(item.kind) && item.state !== 'complete'
+  );
 }
 
 function mergeTasks(current: ConversationTask[], incoming: ConversationTask[]): ConversationTask[] {

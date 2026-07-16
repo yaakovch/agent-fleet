@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mergeConversationItems, resolveConversationScroll, type ConversationItem } from '../src/shared/conversation';
+import {
+  activePendingAction, mergeConversationItems, resolveConversationScroll, type ConversationItem
+} from '../src/shared/conversation';
 
 function item(value: Partial<ConversationItem>): ConversationItem {
   return {
@@ -42,6 +44,41 @@ describe('conversation lifecycle model', () => {
     }], answers: [{ questionId: 'q1', choiceIds: ['safe'], text: '' }] });
     const updated = item({ kind: 'question', revision: 'revision-2', questions: [] });
     expect(mergeConversationItems([pending], [updated])[0].answers).toEqual(pending.answers);
+  });
+
+  it('retires an abandoned question after newer conversation activity', () => {
+    const question = item({
+      id: 'question-1', kind: 'question', state: 'pending', timestamp: '2026-07-16T01:00:00Z'
+    });
+    const later = item({
+      id: 'message-2', kind: 'message', state: 'complete', timestamp: '2026-07-16T01:01:00Z'
+    });
+    const merged = mergeConversationItems([], [question, later]);
+    expect(merged[0]).toMatchObject({ state: 'complete', title: 'No longer active' });
+    expect(activePendingAction(merged)).toBeUndefined();
+  });
+
+  it('ignores a stale question appended after newer snapshot items', () => {
+    const later = item({
+      id: 'tool-2', kind: 'tool', state: 'complete', timestamp: '2026-07-16T01:01:00Z'
+    });
+    const stale = item({
+      id: 'question-1', kind: 'question', state: 'pending', timestamp: '2026-07-16T01:00:00Z'
+    });
+    const merged = mergeConversationItems([], [later, stale]);
+    expect(merged[1].state).toBe('complete');
+    expect(activePendingAction(merged)).toBeUndefined();
+  });
+
+  it('keeps the newest unanswered question actionable', () => {
+    const earlier = item({
+      id: 'message-1', kind: 'message', state: 'complete', timestamp: '2026-07-16T01:00:00Z'
+    });
+    const question = item({
+      id: 'question-1', kind: 'question', state: 'pending', timestamp: '2026-07-16T01:01:00Z'
+    });
+    const merged = mergeConversationItems([], [earlier, question]);
+    expect(activePendingAction(merged)?.id).toBe('question-1');
   });
 
   it('anchors prepended history and follows appends only from the bottom', () => {
