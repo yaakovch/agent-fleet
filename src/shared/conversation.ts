@@ -1,3 +1,5 @@
+import type { PaneScrollbackSnapshot } from './terminal';
+
 export interface ConversationChoice { id: string; label: string }
 export interface ConversationQuestionOption { id: string; label: string; description: string }
 export interface ConversationQuestion {
@@ -29,7 +31,7 @@ export interface ConversationFrame {
   hasMore?: boolean; status?: string; error?: { code: string; message: string };
 }
 export interface ConversationEvent { tabId: string; frame: ConversationFrame }
-export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame }
+export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame; pane?: PaneScrollbackSnapshot }
 export interface StagedAttachment { id: string; name: string; mime: string; bytes: number; thumbnail: string }
 
 export function mergeConversationItems(current: ConversationItem[], incoming: ConversationItem[]): ConversationItem[] {

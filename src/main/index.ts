@@ -7,6 +7,8 @@ import {
   Menu,
   nativeImage,
   Notification,
+  powerSaveBlocker,
+  safeStorage,
   screen,
   session,
   shell,
@@ -51,13 +53,19 @@ import { TerminalManager } from './terminal-manager';
 import { runPackagedTerminalSmoke } from './terminal-smoke';
 import { ConversationManager } from './conversation-manager';
 import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
+import type { WorkspaceCommand, WorkspaceOpenRequest } from '../shared/workspace-layout';
 import type { StagedAttachment } from '../shared/conversation';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { FleetDownloadManager } from './fleet-download';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
-import { loadWindowPosition, saveWindowPosition } from './window-state';
+import { loadWindowBounds, loadWindowPosition, saveWindowBounds, saveWindowPosition } from './window-state';
 import { discoverWslProfiles } from './wsl-discovery';
+import { DownloadPowerPolicy } from './download-power-policy';
+import { isFleetSessionAvailable } from '../shared/fleet';
+import type { LocalSuggestionSettingsInput } from '../shared/local-suggestions';
+import { LocalSuggestionStore } from './local-suggestion-store';
+import { LocalSuggestionManager } from './local-suggestion-manager';
 
 const APP_ID = 'com.yaakovch.ailimitswidget';
 const PRODUCT_NAME = 'Agent Fleet';
@@ -69,6 +77,7 @@ app.setAppUserModelId(APP_ID);
 app.setPath('userData', dataDirectory);
 
 const isUninstallCleanup = process.argv.includes('--uninstall-cleanup');
+const isCpuSmoke = process.env.AGENT_FLEET_ENABLE_CPU_SMOKE === '1' && process.argv.includes('--agent-fleet-cpu-smoke');
 const terminalSmokeCandidate = process.env.AGENT_FLEET_ENABLE_TERMINAL_SMOKE === '1'
   ? process.argv.find((value) => value.startsWith('--agent-fleet-terminal-smoke='))?.slice('--agent-fleet-terminal-smoke='.length)
   : undefined;
@@ -76,7 +85,14 @@ const terminalSmokePath = terminalSmokeCandidate
   && basename(terminalSmokeCandidate) === 'terminal-smoke.json'
   && resolve(dirname(terminalSmokeCandidate)) === resolve(dataDirectory)
   ? terminalSmokeCandidate : undefined;
-const hasSingleInstanceLock = isUninstallCleanup || Boolean(terminalSmokePath) || app.requestSingleInstanceLock();
+const powerSmokeCandidate = process.env.AGENT_FLEET_ENABLE_POWER_SMOKE === '1'
+  ? process.argv.find((value) => value.startsWith('--agent-fleet-power-smoke='))?.slice('--agent-fleet-power-smoke='.length)
+  : undefined;
+const powerSmokePath = powerSmokeCandidate
+  && basename(powerSmokeCandidate) === 'power-smoke.json'
+  && resolve(dirname(powerSmokeCandidate)) === resolve(dataDirectory)
+  ? powerSmokeCandidate : undefined;
+const hasSingleInstanceLock = isUninstallCleanup || isCpuSmoke || Boolean(terminalSmokePath) || Boolean(powerSmokePath) || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
 const migrationResult = migrateLegacyData(dataDirectory);
@@ -90,13 +106,20 @@ const stateManager = new LimitStateManager({
 let fleetBridge = createFleetBridge();
 let terminalRestored = false;
 const terminalManager = new TerminalManager({
-  statePath: join(dataDirectory, 'terminal-workspace-v1.json'),
+  statePath: join(dataDirectory, 'terminal-workspace-v2.json'),
+  legacyStatePath: join(dataDirectory, 'terminal-workspace-v1.json'),
   logger,
   getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
   resolveSession: (sessionId) => getFleetView().snapshot.sessions.find((session) => session.id === sessionId),
+  isHostAvailable: (hostId) => {
+    const snapshot = getFleetView().snapshot;
+    return snapshot.controller.status === 'healthy'
+      && snapshot.hosts.some((host) => host.id === hostId && host.status === 'healthy');
+  },
   onData: (event) => broadcast(IPC_CHANNELS.terminalData, event),
   onStatus: (event) => broadcast(IPC_CHANNELS.terminalStatus, event),
-  onClosed: (event) => broadcast(IPC_CHANNELS.terminalClosed, event)
+  onClosed: (event) => broadcast(IPC_CHANNELS.terminalClosed, event),
+  onWorkspace: (state) => broadcast(IPC_CHANNELS.terminalWorkspaceUpdated, state)
 });
 const conversationManager = new ConversationManager({
   tempPath: join(app.getPath('temp'), 'agent-fleet-attachments'),
@@ -106,10 +129,28 @@ const conversationManager = new ConversationManager({
   sendTerminalInput: (tabId, data) => terminalManager.input(tabId, data),
   onEvent: (event) => broadcast(IPC_CHANNELS.conversationEvent, event)
 });
+const localSuggestionStore = new LocalSuggestionStore(
+  join(dataDirectory, 'local-suggestions-v1.json'),
+  {
+    encrypt: (value) => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential encryption is unavailable; leave the bearer token empty.');
+      return safeStorage.encryptString(value).toString('base64');
+    },
+    decrypt: (value) => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential encryption is unavailable.');
+      return safeStorage.decryptString(Buffer.from(value, 'base64'));
+    }
+  }
+);
+const localSuggestionManager = new LocalSuggestionManager(localSuggestionStore);
+const downloadPowerPolicy = new DownloadPowerPolicy(powerSaveBlocker);
 const fleetDownloadManager = new FleetDownloadManager({
   distro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
   downloadsDirectory: () => app.getPath('downloads'),
-  onUpdate: (job) => broadcast(IPC_CHANNELS.fleetDownloadUpdated, job),
+  onUpdate: (job) => {
+    downloadPowerPolicy.update(job);
+    broadcast(IPC_CHANNELS.fleetDownloadUpdated, job);
+  },
   onComplete: (job) => {
     if (Notification.isSupported()) showFleetNotification('Download complete', job.name);
   }
@@ -117,6 +158,7 @@ const fleetDownloadManager = new FleetDownloadManager({
 
 let mainWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
+let dashboardSaveTimer: NodeJS.Timeout | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let settingsWindowView: 'settings' | 'onboarding' = 'settings';
 let tray: Tray | null = null;
@@ -140,7 +182,16 @@ function createFleetBridge(): FleetBridgeSupervisor {
     const view = getFleetView();
     if (!terminalRestored && view.status === 'live') {
       terminalRestored = true;
-      terminalManager.restore();
+      try {
+        const restored = terminalManager.restore();
+        logger.info('Embedded workspace restored', restored.length, 'pane(s)');
+      } catch (error) {
+        terminalRestored = false;
+        logger.error('Embedded workspace restore failed; retrying on the next fleet update', error);
+      }
+    } else if (terminalRestored) {
+      const reconnected = terminalManager.reconcileSessions();
+      if (reconnected) logger.info('Reconnected restored workspace sessions', reconnected);
     }
     broadcast(IPC_CHANNELS.fleetStateUpdated, view);
     processFleetNotifications(view);
@@ -243,7 +294,7 @@ function createWindow(): void {
     webPreferences: secureWebPreferences()
   });
   secureWindow(mainWindow);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.setAlwaysOnTop(true, 'floating');
   mainWindow.on('moved', () => {
     if (mainWindow) saveWindowPosition(join(dataDirectory, 'window-state.json'), mainWindow);
   });
@@ -266,11 +317,13 @@ function showDashboard(): void {
     dashboardWindow.focus();
     return;
   }
+  const dashboardStatePath = join(dataDirectory, 'dashboard-window-state.json');
+  const saved = loadWindowBounds(dashboardStatePath);
+  const bounds = saved ? clampDashboardBounds(saved) : { width: 1440, height: 900 };
   dashboardWindow = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 920,
-    minHeight: 640,
+    ...bounds,
+    minWidth: 1200,
+    minHeight: 720,
     title: PRODUCT_NAME,
     backgroundColor: '#0b0f14',
     autoHideMenuBar: true,
@@ -278,18 +331,45 @@ function showDashboard(): void {
     webPreferences: secureWebPreferences()
   });
   secureWindow(dashboardWindow);
+  const scheduleSave = (): void => {
+    if (dashboardSaveTimer) clearTimeout(dashboardSaveTimer);
+    dashboardSaveTimer = setTimeout(() => {
+      dashboardSaveTimer = null;
+      if (dashboardWindow && !dashboardWindow.isDestroyed()) saveWindowBounds(dashboardStatePath, dashboardWindow);
+    }, 250);
+  };
+  dashboardWindow.on('move', scheduleSave);
+  dashboardWindow.on('resize', scheduleSave);
+  dashboardWindow.on('maximize', scheduleSave);
+  dashboardWindow.on('unmaximize', scheduleSave);
   dashboardWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
+      if (dashboardWindow) saveWindowBounds(dashboardStatePath, dashboardWindow);
       dashboardWindow?.hide();
     }
   });
-  dashboardWindow.on('closed', () => (dashboardWindow = null));
+  dashboardWindow.on('closed', () => {
+    if (dashboardSaveTimer) clearTimeout(dashboardSaveTimer);
+    dashboardSaveTimer = null;
+    dashboardWindow = null;
+  });
   dashboardWindow.once('ready-to-show', () => {
+    if (saved?.maximized) dashboardWindow?.maximize();
     dashboardWindow?.show();
     dashboardWindow?.focus();
   });
   loadRenderer(dashboardWindow, 'dashboard');
+}
+
+function clampDashboardBounds(saved: { x: number; y: number; width: number; height: number }): Rectangle {
+  const display = screen.getDisplayMatching(saved);
+  const area = display.workArea;
+  const width = Math.min(Math.max(saved.width, 1200), area.width);
+  const height = Math.min(Math.max(saved.height, 720), area.height);
+  const x = Math.min(Math.max(saved.x, area.x), area.x + Math.max(0, area.width - width));
+  const y = Math.min(Math.max(saved.y, area.y), area.y + Math.max(0, area.height - height));
+  return { x, y, width, height };
 }
 
 function createSettingsWindow(view: 'settings' | 'onboarding' = 'settings'): void {
@@ -530,7 +610,8 @@ function getAppInfo(): AppInfo {
     packaged: app.isPackaged,
     portable: isPortableBuild(),
     dataDirectory,
-    releaseUrl: RELEASE_URL
+    releaseUrl: RELEASE_URL,
+    powerPolicy: downloadPowerPolicy.status()
   };
 }
 
@@ -566,9 +647,9 @@ handle(IPC_CHANNELS.refreshFleet, () => {
   fleetBridge.refresh();
   return getFleetView();
 });
-handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId) => {
+handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId, request) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
-  return openFleetSessionById(sessionId);
+  return openFleetSessionById(sessionId, parseWorkspaceOpenRequest(request));
 });
 handle(IPC_CHANNELS.openFleetSessionExternal, async (_event, sessionId, target) => {
   if (typeof sessionId !== 'string' || (target !== 'vscode' && target !== 'windowsTerminal')) {
@@ -578,14 +659,30 @@ handle(IPC_CHANNELS.openFleetSessionExternal, async (_event, sessionId, target) 
 });
 handle(IPC_CHANNELS.terminalList, () => {
   terminalManager.unbindAll();
-  return {
-    version: 1 as const,
-    selectedTabId: terminalManager.getSelectedTabId(),
-    tabs: terminalManager.list()
-  };
+  conversationManager.sync([]);
+  return terminalManager.getWorkspaceState();
 });
 handle(IPC_CHANNELS.terminalBind, (_event, tabId) =>
   typeof tabId === 'string' ? terminalManager.bind(tabId) : null);
+handle(IPC_CHANNELS.terminalSyncBindings, (_event, tabIds) => {
+  const values: unknown = tabIds;
+  return Array.isArray(values) && values.every((id) => typeof id === 'string') ? terminalManager.syncBindings(values) : [];
+});
+handle(IPC_CHANNELS.terminalWorkspaceCommand, (_event, command) => {
+  const value: unknown = command;
+  if (!isWorkspaceCommand(value)) return terminalManager.getWorkspaceState();
+  const parsed = value;
+  const before = new Set(terminalManager.list().map((tab) => tab.id));
+  if (parsed.type === 'assign') {
+    const snapshot = getFleetView().snapshot;
+    const session = snapshot.sessions.find((item) => item.id === parsed.sessionId);
+    if (session?.internalName && isFleetSessionAvailable(snapshot, session)) {
+      terminalManager.open(session, { paneId: parsed.paneId, placement: 'replace' });
+    }
+  } else terminalManager.applyWorkspaceCommand(parsed);
+  for (const tabId of before) if (!terminalManager.list().some((tab) => tab.id === tabId)) conversationManager.close(tabId);
+  return terminalManager.getWorkspaceState();
+});
 handle(IPC_CHANNELS.terminalInput, (_event, tabId, data) =>
   typeof tabId === 'string' && typeof data === 'string' && terminalManager.input(tabId, data));
 handle(IPC_CHANNELS.terminalResize, (_event, tabId, columns, rows) =>
@@ -605,6 +702,37 @@ handle(IPC_CHANNELS.conversationStart, (_event, tabId) =>
 handle(IPC_CHANNELS.conversationStop, (_event, tabId) => {
   if (typeof tabId === 'string') conversationManager.stop(tabId);
 });
+handle(IPC_CHANNELS.localSuggestionsGetSettings, () => localSuggestionManager.settings());
+handle(IPC_CHANNELS.localSuggestionsSaveSettings, async (_event, input) => {
+  if (!input || typeof input !== 'object') throw new Error('Local suggestion settings are invalid.');
+  const result = await localSuggestionManager.save(input as LocalSuggestionSettingsInput);
+  broadcast(IPC_CHANNELS.localSuggestionsSettingsUpdated, result.settings);
+  return result;
+});
+handle(IPC_CHANNELS.localSuggestionsTest, () => localSuggestionManager.test());
+handle(IPC_CHANNELS.localSuggestionsChooseFile, async (_event, kind) => {
+  if (kind !== 'executable' && kind !== 'model') return null;
+  const result = await dialog.showOpenDialog(getDialogOwner(), {
+    title: kind === 'executable' ? 'Choose llama-server executable' : 'Choose GGUF model',
+    properties: ['openFile'],
+    filters: kind === 'executable'
+      ? [{ name: 'llama.cpp server', extensions: ['exe'] }]
+      : [{ name: 'GGUF model', extensions: ['gguf'] }]
+  });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+handle(IPC_CHANNELS.localSuggestionsSuggest, (_event, input) => localSuggestionManager.suggest(input));
+handle(IPC_CHANNELS.localSuggestionsCancel, (_event, requestId) => {
+  localSuggestionManager.cancel(typeof requestId === 'string' ? requestId : undefined);
+});
+handle(IPC_CHANNELS.conversationSync, (_event, tabIds) => {
+  const values: unknown = tabIds;
+  return Array.isArray(values) && values.every((id) => typeof id === 'string') ? conversationManager.sync(values) : [];
+});
+handle(IPC_CHANNELS.conversationHistory, (_event, tabId) =>
+  typeof tabId === 'string'
+    ? conversationManager.history(tabId)
+    : { ok: false, message: 'Terminal history request is invalid' });
 handle(IPC_CHANNELS.conversationPage, (_event, tabId, cursor) =>
   typeof tabId === 'string' && typeof cursor === 'string'
     ? conversationManager.page(tabId, cursor) : { ok: false, message: 'History request is invalid' });
@@ -659,14 +787,35 @@ handle(IPC_CHANNELS.conversationCopyText, (_event, text) => {
 });
 handle(IPC_CHANNELS.killFleetSession, async (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  let snapshot = getFleetView().snapshot;
+  let session = snapshot.sessions.find((item) => item.id === sessionId);
   if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) {
+    return { ok: false, message: `${session.name}'s host is offline; no changes were made`, retryable: true };
+  }
+  const idempotencyKey = randomUUID();
   try {
-    const result = await fleetBridge.mutate('session.kill', {
+    let result;
+    try {
+      result = await fleetBridge.mutate('session.kill', {
+        hostId: session.hostId,
+        sessionId: session.id,
+        idempotencyKey
+      });
+    } catch (error) {
+      if (!(error instanceof FleetMutationError) || error.code !== 'stale_revision') throw error;
+      snapshot = (await fleetBridge.refreshAndWait()).snapshot;
+      session = snapshot.sessions.find((item) => item.id === sessionId);
+      if (!session) return { ok: true, message: 'Session was already closed' };
+      if (!isFleetSessionAvailable(snapshot, session)) {
+        return { ok: false, message: `${session.name}'s host is offline; no changes were made`, retryable: true };
+      }
+      result = await fleetBridge.mutate('session.kill', {
       hostId: session.hostId,
       sessionId: session.id,
-      idempotencyKey: randomUUID()
-    });
+        idempotencyKey
+      });
+    }
     return { ok: true, message: result.status === 'already-absent' ? 'Session was already closed' : `${session.name} was killed` };
   } catch (error) {
     return fleetMutationFailure(error);
@@ -676,8 +825,10 @@ handle(IPC_CHANNELS.renameFleetSession, async (_event, sessionId, name) => {
   if (typeof sessionId !== 'string' || typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/u.test(name)) {
     return { ok: false, message: 'Choose a short session name using letters, numbers, spaces, dots, dashes, or underscores' };
   }
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
   if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   try {
     await fleetBridge.mutate('session.rename', {
       hostId: session.hostId, sessionId: session.id, name, idempotencyKey: randomUUID()
@@ -689,7 +840,8 @@ handle(IPC_CHANNELS.renameFleetSession, async (_event, sessionId, name) => {
 });
 handle(IPC_CHANNELS.copyFleetAttachCommand, (_event, sessionId) => {
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
   if (!session?.internalName) return { ok: false, message: 'Session is no longer available' };
   const command = [
     'wtmux', '--host', shellWord(session.hostId), '--project', shellWord(session.project),
@@ -703,6 +855,7 @@ handle(IPC_CHANNELS.toggleFleetFavorite, async (_event, sessionId) => {
   const fleet = getFleetView().snapshot;
   const session = fleet.sessions.find((item) => item.id === sessionId);
   if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(fleet, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   const existing = fleet.favorites.find((item) => item.hostId === session.hostId && item.project === session.project
     && item.backend === session.backend && item.tool === session.tool);
   try {
@@ -767,9 +920,11 @@ handle(IPC_CHANNELS.createFleetContinueSchedule, async (_event, sessionId, deliv
   if (typeof sessionId !== 'string' || typeof deliverAt !== 'string') {
     return { ok: false, message: 'Schedule target or time is invalid' };
   }
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
   const instant = Date.parse(deliverAt);
   if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   const attention = typeof attentionId === 'string'
     ? getFleetView().snapshot.attention.find((item) => item.id === attentionId) : undefined;
   if (attentionId !== undefined && (!attention || attention.targetSessionId !== session.id || attention.hostId !== session.hostId)) {
@@ -892,9 +1047,9 @@ handle(IPC_CHANNELS.listFleetRepository, async (_event, sessionId, relativePath,
     || typeof cursor !== 'string' || !validRepositoryPath(relativePath, true) || !validRepositoryCursor(cursor)) {
     return { ok: false, message: 'Repository request is invalid' };
   }
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
-  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId);
-  if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session || !isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline or no longer available' };
   try {
     const page = await fleetBridge.mutate('repository.list', {
       hostId: session.hostId, sessionId, relativePath, includeHidden, cursor, idempotencyKey: randomUUID()
@@ -910,9 +1065,9 @@ handle(IPC_CHANNELS.searchFleetRepository, async (_event, sessionId, query, incl
     || queryValue.trim().length < 2 || queryValue.length > 160 || /[\u0000-\u001f\u007f]/u.test(queryValue)) {
     return { ok: false, message: 'Search needs at least two characters' };
   }
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
-  const host = session && getFleetView().snapshot.hosts.find((item) => item.id === session.hostId);
-  if (!session || !host) return { ok: false, message: 'Session host is offline or no longer available' };
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session || !isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline or no longer available' };
   try {
     const page = await fleetBridge.mutate('repository.search', {
       hostId: session.hostId, sessionId, query: queryValue.trim(), includeHidden, idempotencyKey: randomUUID()
@@ -956,7 +1111,7 @@ handle(IPC_CHANNELS.openFleetDownloadFolder, (_event, jobId) => {
   shell.showItemInFolder(job.path);
   return { ok: true, message: 'Opened Downloads', job };
 });
-handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool, path, locationKind) => {
+handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool, path, locationKind, request) => {
   if (![hostId, project, backend, tool, path, locationKind].every((value) => typeof value === 'string')) {
     return { ok: false, message: 'Launcher selection is invalid' };
   }
@@ -982,7 +1137,7 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
       idempotencyKey: randomUUID()
     });
     if (result.sessionId) {
-      const opened = await openFleetSessionById(result.sessionId);
+    const opened = await openFleetSessionById(result.sessionId, parseWorkspaceOpenRequest(request));
       return { ok: opened.ok, message: opened.ok ? `Created and opened ${project}` : `Created ${project}; ${opened.message}` };
     }
     return { ok: true, message: `Created ${project}` };
@@ -1064,9 +1219,11 @@ function fleetMutationFailure(error: unknown): { ok: false; message: string; ret
   return { ok: false, message: 'Action failed safely; refresh before retrying', retryable: false };
 }
 
-async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResult> {
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+async function openFleetSessionById(sessionId: string, request: WorkspaceOpenRequest = {}): Promise<TerminalOpenResult> {
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
   if (!session || !session.internalName) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   try {
     const target = {
       id: session.id,
@@ -1077,7 +1234,7 @@ async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResu
     };
     const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
     if (appSettings.fleetOpenTarget === 'agentFleet') {
-      const tab = terminalManager.open(session);
+      const tab = terminalManager.open(session, request);
       showDashboard();
       broadcast(IPC_CHANNELS.terminalOpened, tab);
       return { ok: true, message: `Opened ${session.name}`, tab };
@@ -1100,12 +1257,37 @@ async function openFleetSessionById(sessionId: string): Promise<TerminalOpenResu
   }
 }
 
+function parseWorkspaceOpenRequest(value: unknown): WorkspaceOpenRequest {
+  if (!value || typeof value !== 'object') return {};
+  const input = value as Record<string, unknown>;
+  const paneId = typeof input.paneId === 'string' ? input.paneId : undefined;
+  const placement = ['replace', 'split-right', 'split-down'].includes(String(input.placement))
+    ? input.placement as WorkspaceOpenRequest['placement'] : undefined;
+  return { ...(paneId ? { paneId } : {}), ...(placement ? { placement } : {}) };
+}
+
+function isWorkspaceCommand(value: unknown): value is WorkspaceCommand {
+  if (!value || typeof value !== 'object') return false;
+  const command = value as Record<string, unknown>;
+  if (command.type === 'assign') return typeof command.paneId === 'string' && typeof command.sessionId === 'string';
+  if (command.type === 'split') return typeof command.paneId === 'string' && ['row', 'column'].includes(String(command.direction));
+  if (command.type === 'close' || command.type === 'clear' || command.type === 'focus') return typeof command.paneId === 'string';
+  if (command.type === 'resize') return typeof command.splitId === 'string' && typeof command.ratio === 'number';
+  if (command.type === 'preset') return ['single', 'two-columns', 'two-rows', 'grid'].includes(String(command.preset));
+  if (command.type === 'swap') return typeof command.firstPaneId === 'string' && typeof command.secondPaneId === 'string';
+  if (command.type === 'view') return typeof command.paneId === 'string' && ['native', 'terminal'].includes(String(command.viewMode));
+  if (command.type === 'rail') return Boolean(command.rail && typeof command.rail === 'object');
+  return false;
+}
+
 async function openFleetSessionExternallyById(
   sessionId: string,
   target: 'vscode' | 'windowsTerminal'
 ): Promise<TerminalOpenResult> {
-  const session = getFleetView().snapshot.sessions.find((item) => item.id === sessionId);
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
   if (!session?.internalName) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   const value = {
     id: session.id,
     hostId: session.hostId,
@@ -1231,6 +1413,20 @@ if (terminalSmokePath) {
     const ok = await runPackagedTerminalSmoke(terminalSmokePath);
     app.exit(ok ? 0 : 1);
   });
+} else if (powerSmokePath) {
+  app.whenReady().then(() => {
+    const writePhase = (phase: string): void => writeFileSync(powerSmokePath, `${JSON.stringify({ phase, pid: process.pid })}\n`, 'utf8');
+    writePhase('idle');
+    setTimeout(() => {
+      downloadPowerPolicy.update({ id: 'power-smoke-download', state: 'running' });
+      writePhase('active-download');
+      setTimeout(() => {
+        downloadPowerPolicy.update({ id: 'power-smoke-download', state: 'completed' });
+        writePhase('released');
+        setTimeout(() => app.exit(0), 4_000).unref();
+      }, 7_000).unref();
+    }, 7_000).unref();
+  });
 } else if (isUninstallCleanup) {
   app.whenReady().then(() => {
     try {
@@ -1292,8 +1488,10 @@ app.on('before-quit', () => {
   stateManager.stop();
   fleetBridge.stop();
   fleetDownloadManager.stop();
+  downloadPowerPolicy.dispose();
   terminalManager.dispose();
   conversationManager.dispose();
+  localSuggestionManager.dispose();
 });
 
 app.on('window-all-closed', () => {

@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TerminalManager, type PtyProcess } from '../src/main/terminal-manager';
+import { readWorkspaceState, TerminalManager, type PtyProcess } from '../src/main/terminal-manager';
 import type { FleetSession } from '../src/shared/fleet';
 
 const roots: string[] = [];
@@ -64,7 +64,70 @@ describe('embedded terminal manager', () => {
     second.manager.dispose();
   });
 
-  it('emits output only for the currently bound terminal', () => {
+  it('reconciles a restored ended pane when a later fleet snapshot discovers the session', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    const first = makeManager(statePath); first.manager.open(session); first.manager.dispose();
+    let discovered: FleetSession | undefined;
+    const spawn = vi.fn(() => new FakePty());
+    const manager = new TerminalManager({
+      statePath, logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: () => discovered, onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(),
+      spawnPty: spawn, resolveWslExecutable: () => WINDOWS_WSL
+    });
+    expect(manager.restore()[0]).toMatchObject({ status: 'ended' });
+    expect(spawn).not.toHaveBeenCalled();
+    discovered = session;
+    expect(manager.reconcileSessions()).toBe(1);
+    expect(manager.list()[0]).toMatchObject({ status: 'live' });
+    expect(spawn).toHaveBeenCalledOnce();
+    manager.dispose();
+  });
+
+  it('keeps a cached session assigned while its host is offline, then reconnects or ends authoritatively', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    const first = makeManager(statePath); first.manager.open(session); first.manager.dispose();
+    let available = false;
+    let discovered: FleetSession | undefined = session;
+    const spawn = vi.fn(() => new FakePty());
+    const manager = new TerminalManager({
+      statePath, logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: () => discovered, isHostAvailable: () => available,
+      onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn,
+      resolveWslExecutable: () => WINDOWS_WSL
+    });
+    expect(manager.restore()[0]).toMatchObject({ status: 'offline' });
+    expect(manager.getWorkspaceState().layout.root).toMatchObject({ kind: 'pane', sessionId: session.id });
+    expect(spawn).not.toHaveBeenCalled();
+    available = true;
+    expect(manager.reconcileSessions()).toBe(1);
+    expect(manager.list()[0]).toMatchObject({ status: 'live' });
+    expect(spawn).toHaveBeenCalledOnce();
+    discovered = undefined;
+    expect(manager.reconcileSessions()).toBe(0);
+    expect(manager.list()[0]).toMatchObject({ status: 'ended' });
+    manager.dispose();
+  });
+
+  it('migrates a legacy single-tab workspace into the focused v2 pane', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const legacyPath = join(root, 'terminal-workspace-v1.json');
+    writeFileSync(legacyPath, JSON.stringify({ version: 1, selectedTabId: 'tab-one', tabs: [{
+      id: 'tab-one', sessionId: session.id, hostId: session.hostId, project: session.project,
+      internalName: session.internalName, label: session.name, tool: session.tool, backend: session.backend,
+      viewMode: 'terminal', status: 'live', statusMessage: 'Live'
+    }] }));
+    const state = readWorkspaceState(join(root, 'terminal-workspace-v2.json'), legacyPath, {
+      pane: () => 'migrated-pane', split: () => 'unused-split'
+    });
+    expect(state.version).toBe(2);
+    expect(state.tabs).toHaveLength(1);
+    expect(state.layout.root).toMatchObject({ kind: 'pane', id: 'migrated-pane', sessionId: session.id, viewMode: 'terminal' });
+    expect(state.layout.focusedPaneId).toBe('migrated-pane');
+  });
+
+  it('emits output for every visible terminal and buffers hidden terminals', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const firstProcess = new FakePty();
     const secondProcess = new FakePty();
@@ -77,16 +140,50 @@ describe('embedded terminal manager', () => {
       resolveWslExecutable: () => WINDOWS_WSL
     });
     const first = manager.open(session);
-    const second = manager.open(secondSession);
-    manager.bind(first.id);
+    const second = manager.open(secondSession, { placement: 'split-right' });
+    manager.syncBindings([first.id, second.id]);
     firstProcess.data?.('first live');
-    secondProcess.data?.('second buffered');
-    expect(data).toHaveBeenLastCalledWith({ tabId: first.id, data: 'first live' });
-    manager.bind(second.id);
-    expect(data).toHaveBeenLastCalledWith({ tabId: second.id, data: 'second buffered' });
-    firstProcess.data?.('first buffered');
     secondProcess.data?.('second live');
+    expect(data).toHaveBeenCalledWith({ tabId: first.id, data: 'first live' });
     expect(data).toHaveBeenLastCalledWith({ tabId: second.id, data: 'second live' });
+    manager.syncBindings([second.id]);
+    firstProcess.data?.('first buffered');
+    manager.syncBindings([first.id, second.id]);
+    expect(data).toHaveBeenLastCalledWith({ tabId: first.id, data: 'first buffered' });
+    manager.dispose();
+  });
+
+  it('keeps rail-only sessions connection-free and enforces four assigned panes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const sessions = Array.from({ length: 5 }, (_, index) => ({
+      ...session, id: `gaming:wtmux-${index}`, internalName: `wtmux-${index}`, name: `Session ${index}`
+    }));
+    const spawn = vi.fn(() => new FakePty());
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'), logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: (id) => sessions.find((item) => item.id === id), onData: vi.fn(), onStatus: vi.fn(),
+      onClosed: vi.fn(), spawnPty: spawn, resolveWslExecutable: () => WINDOWS_WSL
+    });
+    manager.open(sessions[0]);
+    manager.open(sessions[1], { placement: 'split-right' });
+    manager.open(sessions[2], { placement: 'split-down' });
+    manager.open(sessions[3], { placement: 'split-right' });
+    expect(manager.getWorkspaceState().tabs).toHaveLength(4);
+    expect(spawn).toHaveBeenCalledTimes(4);
+    expect(() => manager.open(sessions[4], { placement: 'split-down' })).toThrow(/four sessions/i);
+    expect(spawn).toHaveBeenCalledTimes(4);
+    manager.dispose();
+  });
+
+  it('clears a killed session while preserving the pane leaf', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const manager = makeManager(join(root, 'workspace.json')).manager;
+    manager.open(session);
+    const pane = manager.getWorkspaceState().layout.root;
+    expect(pane.kind).toBe('pane');
+    manager.applyWorkspaceCommand({ type: 'clear', paneId: pane.id });
+    expect(manager.getWorkspaceState().layout.root).toMatchObject({ kind: 'pane', id: pane.id, sessionId: null });
+    expect(manager.list()).toHaveLength(0);
     manager.dispose();
   });
 

@@ -263,3 +263,216 @@ Python/Bats/smoke suites and Android debug unit suite also passed.
 - Retain the cold-controller readiness wait, cover permanent error correlation
   and retry classification, run lint plus the full Windows suite, and release
   `0.11.0-beta.9` with beta.8 available for rollback.
+
+## 20. Four-Pane Session Workspace
+
+- Consume the shared workspace-layout-v1 fixture and introduce a pure validated
+  split-tree state manager plus atomic version-2 migration and window/rail
+  persistence.
+- Replace selected-tab-only binding with up to four assigned PTYs and
+  differential visible Terminal/Native synchronization. Detach on close or
+  replacement, keep assigned PTYs across tray/page transitions, and retain
+  bounded output for later renderer binding.
+- Build one Session Workspace with the vertical live-session rail, filters,
+  launcher drawer, placement actions, split controls and presets, dividers,
+  pane swapping, independent view modes, draft guards, explicit Kill, and
+  foreground-only keyboard shortcuts.
+- Refactor dashboard updates to preserve keyed terminal and composer DOM nodes.
+  Add download-only suspension leasing, restored window bounds, and diagnostics
+  proving no DISPLAY power request.
+- Gate `0.11.0-beta.10` on layout/migration/manager/renderer tests, four
+  disposable live sessions, typing through repeated updates, below-2-percent
+  idle CPU, packaged smoke, and the elevated power matrix. Validate and install
+  on gaming-desktop before promoting the identical artifact to work-m.
+
+Acceptance record (2026-07-15): beta.10 passed 99 Windows tests, production
+build/package, packaged ConPTY/WSL smoke, four disposable live PTY restores,
+and a 60-sample hidden idle CPU gate at 0.000% average. Elevated
+`powercfg /requests` showed no DISPLAY or SYSTEM request in any phase, one
+download-only EXECUTION request, and complete release afterward. The shared
+wtmux suite passed 146 Python tests, smoke, and 73 Bats cases; the Android API
+36 full emulator suite passed. The same unsigned installer (SHA-256
+`94593de03e9d03a1ea47bd59acce152548d2bfc7b0646f0f81cdd7f32a60ee94`)
+was installed on gaming-desktop and work-m.
+
+## 21. Stale-Session Safety Parity
+
+- Derive session availability from the owning host, render non-healthy records
+  as unavailable, disable their remote actions, and add a bounded persisted
+  Hide list that clears when a healthy authoritative snapshot arrives.
+- Keep assigned panes reconnecting while a host is unavailable and convert
+  them to ended placeholders if the recovered snapshot omits the session.
+  Report host-offline races plainly and retry one stale-revision Kill with the
+  same idempotency key, treating an absent session as already stopped.
+- Cover offline rail rendering, Hide/reappearance, assigned-pane recovery, and
+  mutation races in the full suite. Package `0.11.0-beta.11`, validate gaming
+  first, then install the identical artifact on work-m.
+
+Acceptance record (2026-07-15): beta.11 passed lint, 103 tests, production
+build/package, release validation, and packaged smoke. The checksum-verified
+unsigned installer
+(`23bee4d75a23a8ecc1778228ac20051a8f92983e7ed2724a0c6af3e095ef537f`)
+was installed on gaming-desktop first and then reconstructed byte-identically,
+installed, and launched on work-m. Host-offline availability, bounded local
+Hide, restored-pane recovery, and one-retry stale Kill behavior are covered by
+the shared and manager tests.
+
+## 22. Windows Single-Pane Rendering Hotfix
+
+- Include assigned-tab presence and structural descriptor state in the
+  renderer signature. Show Opening session while the descriptor is pending,
+  remount on descriptor identity/view/failure transitions, and retain keyed
+  patching for ordinary status and heartbeat changes.
+- Stretch a direct pane root and split root to the complete pane-tree area and
+  refit visible xterm instances after structural or container resizing.
+- Add pure renderer-state coverage for empty-to-Native, empty-to-Terminal,
+  descriptor waiting/arrival/removal, status-only updates, mode changes, and
+  terminal failure transitions, plus a stylesheet sizing contract.
+- Gate `0.11.0-beta.12` on lint, the full Windows suite, production build and
+  package, packaged ConPTY/WSL smoke, and live single/split-pane checks on
+  gaming-desktop. Retain beta.11 and promote the identical checksum-verified
+  installer to work-m only after the gaming gate.
+
+Acceptance record (2026-07-16): beta.12 passed lint, 114 Windows tests,
+production build/package, release validation, and packaged ConPTY/WSL smoke.
+An isolated live gaming workspace verified full-size single Native and Terminal
+roots, xterm refit across two window sizes and rail resizing, renderer reload/reconnect, two
+columns, two rows, and 2x2; the original four-pane workspace was restored
+unchanged. The beta.11 artifacts remain available for rollback. Installer
+SHA-256 `a6b797ff8485475ee7ee18ea577f6b97732b058d76e805465730d2086c5fc750`
+was verified before installation on gaming-desktop and again after transfer to
+work-m; both installed binaries report `0.11.0-beta.12` and run in the logged-in
+desktop session.
+
+## 23. Windows Full-Viewport Workspace Follow-up
+
+- Remove the dashboard overlay host from CSS Grid sizing so it cannot create an
+  empty implicit row below the workspace.
+- Extend the stylesheet contract and live packaged renderer check beyond the
+  pane tree: the dashboard workspace column must equal the viewport height, the
+  workspace mount must equal the padded content box, and the Native or Terminal
+  panel must still equal its pane stage after real window resizing.
+- Release as `0.11.0-beta.13`, retaining beta.11 and beta.12 for rollback. Gate
+  promotion on lint, the complete Windows suite, production packaging,
+  packaged ConPTY/WSL smoke, and live gaming verification before installing the
+  identical checksum-verified artifact on work-m.
+
+Acceptance record (2026-07-16): beta.13 passed lint, all 114 Windows tests,
+production build/package, release validation, packaged sandbox and ConPTY/WSL
+smoke, and the strengthened live gaming renderer gate. The packaged and
+installed builds verified the dashboard workspace against the full viewport in
+single Native, single Terminal, compact and expanded sizes, collapsed rail,
+reload/reconnect, two columns, two rows, and 2x2 layouts. A real outer-window
+resize from 1877x970 to 1600x900 and restoration also passed. Installer SHA-256
+`8daf3bf6ef0b20019135d66107624df2ecc8ccfd78ff1ce84bb03cb66e4f20be`
+was verified before gaming installation and again after transfer to work-m.
+Both installations contain byte-identical beta.13 app archives (SHA-256
+`ef869712003ecd5bc1ac7b972b1c1876c104624cc85db4c9d80e06a48c169671`);
+work-m is running in interactive Session 1, and beta.11/beta.12 remain available
+for rollback.
+
+## 24. Focused-Pane Chrome And Compact Titles
+
+- Replace every full pane header with a compact draggable number/status/title/
+  mode chip and keep the focused border as the primary active-pane cue.
+- Move Native/Terminal, conditional Retry, and More to one shared toolbar group.
+  Resolve actions from the current focused pane and put Detach/Close in More.
+- Patch focus and status chrome without remounting Native or Terminal content;
+  retain minimal terminal chip clearance and reuse Native's existing top row.
+- Cover empty, opening, ready, failed, unavailable, shell, focus, and drag-swap
+  states. Gate `0.11.0-beta.14` on lint, the complete Windows suite, production
+  packaging, packaged ConPTY/WSL smoke, and gaming live layout/resize checks
+  before promoting the identical checksum-verified installer to work-m.
+
+Acceptance record (2026-07-16): beta.14 passed lint, all 118 Windows tests,
+production build/package, release validation, packaged sandbox and ConPTY/WSL
+smoke, and an isolated live packaged renderer gate on gaming. Single Native,
+single Terminal, compact/expanded window sizes, rail collapse, reload/reconnect,
+two columns, two rows, and 2x2 layouts each retained one shared control group,
+one compact chip per pane, full-height pane content, and xterm refitting. The
+installer SHA-256 is
+`deb5f3073495dff081a4c95d7f2f1dbd25ca5468e97e9a21f5aaf02782abcab3`;
+it was verified before installation on gaming and again after transfer to
+work-m. Both installations contain the byte-identical app archive (SHA-256
+`14609043e81bc856bff100c7d07a01496dcdf086d10e1fe61f26a263fa1bd2ed`)
+and are running beta.14 in their logged-in desktop sessions. Prior beta.11-
+beta.13 artifacts remain available for rollback.
+
+## 25. Instant Local Terminal History
+
+- Add a bounded one-shot history action over the existing conversation stream
+  contract and expose it only to renderer-owned Codex, Claude, and Copilot
+  terminal tabs. Keep all cached items renderer-memory-only.
+- Prefetch after two quiet seconds, serialize requests with focused-pane
+  priority, load 100-item pages near the top up to 2,000 items, and require an
+  explicit Retry after errors or cursor expiry.
+- Intercept alternate-buffer wheel and Shift+PageUp only in History mode. Render
+  a terminal-styled structured overlay without replacing xterm; leave keyboard
+  input live, provide an explicit Remote mode, and return to current output only
+  after the reader moves back to the bottom or selects Live.
+- Cover capture policy, snapshot transitions, status-only output, paging, and
+  failure states. Run lint, the full Windows suite, production package, release
+  validation, and packaged ConPTY/WSL smoke for `0.11.0-beta.15`.
+- Retain beta.14 for rollback. Verify single and split layouts on gaming first,
+  then install the identical checksum-verified artifact on work-m.
+
+Acceptance record (2026-07-17): beta.15 passed TypeScript lint, all 124 Windows
+tests, production NSIS/portable packaging, release validation, and packaged
+ConPTY/WSL smoke. The live gaming renderer gate covered single Native and
+Terminal, History/Remote/Live with the same xterm instance, compact/expanded
+resize, rail resize, reload/reconnect, two columns, two rows, and 2x2; the
+pre-test four-pane workspace was restored byte-for-byte. Installer SHA-256
+`67d7c05641ca2999dac4e455fbda5babf03264c1bd3f3003106e750da3638d90`
+was verified before gaming installation and again after resumable transfer to
+work-m. Both interactive Session 1 installations report beta.15 and contain
+the identical app archive SHA-256
+`ceda34f53a4919011ae104876fc47ac8426f74c9e76e66664281b230a206fa62`.
+Beta.14 remains available for rollback.
+
+## 26. Seamless Prefetched Tmux Scrollback Correction
+
+- Replace beta.15's structured History overlay and History/Remote/Live controls
+  with the shared bounded `wtmux pane scrollback` contract.
+- Prefetch 2,000 ANSI rows after 900 quiet milliseconds, validate the frame in
+  the main process, and render it through an in-pane xterm sidecar only when its
+  dimensions match the live terminal.
+- Intercept upward wheel and Shift+PageUp only for a ready eligible alternate-
+  screen cache. Keep live PTY/xterm input and output attached, return to Live on
+  typing or cached-bottom reach, and invalidate on resize or structural change.
+- Cover cache eligibility, state transitions, dimension matching, integrity
+  rejection, and the no-overlay stylesheet contract. Gate on TypeScript lint,
+  all Windows tests, and a production Electron build; packaging and deployment
+  remain a separate release decision.
+
+Implementation record (2026-07-17): TypeScript lint, all 124 Windows tests,
+the stylesheet contract, integrity-rejection coverage, and the production
+Electron main/preload/renderer build passed. No Windows package was published
+or installed as part of the Android `.52` correction.
+
+## 27. Local Reply Suggestions
+
+1. Add pure shared eligibility, 12-message/12-KiB context, prompt, parser,
+   deduplication, and stale-revision contracts with deterministic unit tests.
+2. Add a machine-local configuration/secret store and main-process manager for
+   app-owned llama.cpp and loopback OpenAI-compatible servers. Enforce loopback
+   URLs, fixed managed arguments, health/model checks, timeouts, cancellation,
+   one active request, idle unload, and process cleanup.
+3. Expose narrow typed IPC and integrate Suggest/results into Native composers
+   and free-text questions without reconstructing sessions or disturbing draft,
+   focus, scrolling, tools, terminal panes, approvals, or choice controls.
+4. Exercise fake HTTP and fake managed-process paths, renderer contracts, and
+   disable/quit cleanup. Run lint, all Windows tests, production build/package,
+   release validation, and packaged smoke.
+5. If no intervening bump exists, release `0.11.0-beta.16`, retain beta.15,
+   and record installer/app checksums before Android parity begins.
+
+Implementation record (2026-07-17): TypeScript lint and all 135 tests passed,
+including bounded-context, stale-result, encrypted-store, fake managed process,
+and real loopback HTTP coverage. The production Windows package and packaged
+ConPTY/WSL smoke passed. The final installer SHA-256 is
+`e4016480aa95c654109bbd812a2768e3eb140643973d952870e7c5ea743c67a9`;
+the portable SHA-256 is
+`c8ae8f55f78b5c2e013dc71507a74bf916eacb247caadb62745878d2ae45e421`.
+No local llama.cpp installation was available, so managed-backend validation
+uses its exact fixed arguments/lifecycle fake while the external adapter uses
+a real loopback server.

@@ -345,3 +345,131 @@ areas.
   genuine failures restore the card and explain the failure.
 - Recovery authority remains on the wtmux host. Windows never infers recovery
   from rendered terminal text or conversation UI state.
+
+## Four-Pane Session Workspace
+
+- One Sessions navigation entry opens Session Workspace, replacing the separate
+  Sessions, Workspace, and Launcher pages while preserving their search,
+  favorite, details, rename, attach-command, repository, external-open, session
+  creation, and guarded Kill capabilities.
+- A 180-360 px resizable vertical rail lists every live or reconnectable fleet
+  session. Favorites appear first; local focus MRU orders each section and
+  remote update time orders sessions never focused locally. Rail-only sessions
+  do not own a local connection.
+- Sessions whose host is connecting or offline remain visible as last-known,
+  unavailable records. Remote actions are disabled and Hide removes only the
+  local cached record. A hidden session returns only when a healthy
+  authoritative snapshot confirms it; an assigned pane remains reconnecting
+  and becomes ended if the host returns without the session.
+- The workspace starts as one pane and supports Split Right, Split Down, Single,
+  Two Columns, Two Rows, and 2x2 layouts up to four panes. Dividers resize by
+  pointer or keyboard, compact pane title chips swap assignments by drag, and
+  each pane independently displays Native or Terminal.
+- Closing or replacing a pane detaches Agent Fleet without ending tmux. Kill is
+  always explicit and guarded. Replacements warn only for a Native draft or
+  staged attachment; ended remote sessions retain their pane and an ended banner.
+- A host-offline race reports that no change was made, with diagnostic metadata
+  secondary. Kill refreshes and retries one stale fleet revision with the same
+  idempotency key, and an absent session is reported as already stopped.
+- Layout tree, ratios, assignments, focused pane, per-pane mode, rail state,
+  MRU, and window bounds persist atomically. Version-1 state migrates its
+  selected tab to one pane; content, drafts, attachments, and transcripts remain
+  memory-only.
+- Assigned PTYs remain attached while the app is hidden or another page is
+  shown. Only visible Terminal panes bind output and only visible Native panes
+  stream conversation data. Snapshot and heartbeat updates patch keyed metadata
+  without remounting xterm, replacing composer elements, or stealing focus.
+- Agent Fleet never owns a display/screen-saver power request. An explicit
+  repository download may temporarily prevent system suspension while allowing
+  display sleep, and releases that lease on every terminal state.
+
+## Windows Single-Pane Renderer Reliability
+
+- An assigned pane without its terminal descriptor renders an explicit
+  Opening session state. Descriptor arrival, disappearance, identity changes,
+  Native/Terminal switches, and terminal failure transitions remount the pane
+  structure; ordinary status and heartbeat text remains a keyed patch.
+- The pane-tree root stretches either a direct pane or a split root across the
+  complete workspace area beneath the existing app header and workspace
+  toolbar. Visible xterm instances refit after structural rendering, split
+  resizing, rail resizing, and window resizing.
+- The dashboard overlay host does not participate in the dashboard grid, so the
+  workspace column, mount, pane tree, and Native or Terminal surface extend to
+  the bottom of the viewport at every supported window size.
+- This is a Windows renderer-only beta.12/beta.13 correction. It changes no wtmux
+  protocol, persisted workspace schema, IPC contract, or Android behavior; the
+  Android wide-workspace implementation already owns independent Compose
+  sizing and renderer lifecycles.
+
+## Focused-Pane Workspace Chrome
+
+- Every pane has a compact overlay chip containing pane number, connection
+  status, truncated title, and an N/T mode badge. The focused border and chip
+  identify the active pane; clicking pane content focuses it and dragging the
+  chip swaps assignments.
+- The workspace toolbar owns exactly one Native/Terminal switch, conditional
+  Retry, and More menu. These controls resolve the focused pane at action time;
+  Detach and Close are no longer repeated in pane headers.
+- Empty, opening, unavailable, and ended panes keep the same toolbar positions,
+  disable invalid actions, and retain Close in More. Assigned panes without a
+  descriptor show Opening session rather than blank content.
+- Focus, status, and heartbeat changes patch only chips and toolbar chrome.
+  Native scroll and drafts, terminal focus, and xterm instances stay mounted.
+
+## Instant Local Terminal History
+
+- In alternate-screen Codex, Claude, and Copilot terminals, a History/Remote
+  control makes ordinary scrolling open a terminal-styled structured history
+  overlay. Shells, normal-screen programs, and unsupported adapters retain
+  their existing terminal scrolling and mouse behavior.
+- After two quiet seconds, each visible eligible terminal may prefetch one
+  bounded 100-item snapshot through the existing no-follow conversation API.
+  Requests are serialized and the focused pane is prioritized. Older pages load
+  near the top up to 2,000 items; errors never auto-retry.
+- History is memory-only. It is cleared with the tab/app lifecycle and never
+  written to workspace state, logs, diagnostics, or terminal scrollback.
+- Keyboard input continues to target the hidden live PTY while History is open.
+  Remote mode explicitly returns wheel input to the remote application. Closing
+  at the bottom returns to Live; new terminal output marks a cached view Updated
+  and refreshes only after returning Live.
+- Paging, status, and overlay changes do not reconstruct the xterm instance,
+  Native view, draft, focus, or workspace tree. Copy is explicit and clipboard
+  contents remain local and unlogged.
+
+## Seamless Prefetched Tmux Scrollback Correction
+
+- Retire the structured History/Remote/Live overlay and controls. Upward
+  scrolling in an eligible alternate-screen terminal must continue to look and
+  behave like xterm, with no conversation cards or separate history mode.
+- After 900 quiet milliseconds, fetch up to 2,000 rows of bounded
+  `pane.scrollback` ANSI through wtmux, validate its session, dimensions,
+  base64 payload, size, and SHA-256 revision, and retain it in renderer memory
+  only.
+- Render cached ANSI in a read-only xterm sidecar with the live terminal's
+  theme, font, geometry, and pane bounds. The live xterm and PTY remain mounted;
+  typing or scrolling to the cached bottom removes the sidecar and focuses Live.
+- Resize, detach, failure, view changes, and dimension mismatches invalidate the
+  cache. A failed prefetch retries only after later terminal activity; there is
+  no background retry loop or visible history error surface.
+
+## Local Reply Suggestions
+
+- Native conversations expose an opt-in Suggest action only after completed
+  assistant messages and in structured free-text answer fields. It is hidden
+  for a nonempty draft and for approvals or choice questions. Generation is
+  always user-triggered; selecting a result fills the draft and never sends it.
+- Each request contains only the newest 12 visible user/assistant text messages,
+  newest-first bounded to 12 KiB UTF-8. Tool activity, terminal output,
+  attachments, hidden content, approvals, and choices are excluded. Results are
+  one to three concise, conservative, distinct first-person reply drafts.
+- Managed mode launches a user-selected `llama-server.exe` and GGUF with fixed
+  safe arguments: loopback ephemeral port, random API key, 4,096 context,
+  automatic fitting GPU layers, and 60-second idle sleep. Agent Fleet owns and
+  terminates the process on disable, replacement, and quit.
+- External mode accepts only a loopback OpenAI-compatible server implementing
+  `/v1/models` and `/v1/chat/completions`. An optional bearer token is
+  encrypted locally. Backend settings are machine-local and excluded from
+  exported settings, diagnostics, logs, and workspace data.
+- The feature is off by default. One request may run at a time, cancellation and
+  stale results are safe, and setup/test/failure states are actionable. External
+  processes own their RAM; the UI states this explicitly.

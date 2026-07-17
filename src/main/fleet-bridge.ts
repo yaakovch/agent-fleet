@@ -118,6 +118,30 @@ export class FleetBridgeSupervisor extends EventEmitter {
     else if (!this.stopped && !this.retryTimer) this.startChild();
   }
 
+  refreshAndWait(timeoutMs = 5_000): Promise<FleetBridgeView> {
+    const revision = this.snapshot?.revision ?? '';
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: FleetMutationError) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        this.off('changed', changed);
+        if (error) reject(error); else resolve(this.getView());
+      };
+      const changed = () => {
+        const view = this.getView();
+        if (view.status === 'live' && view.snapshot.revision !== revision) finish();
+        else if (view.status === 'error' || this.stopped) finish(new FleetMutationError('host_offline', 'Fleet controller is not live'));
+      };
+      const timeout = setTimeout(() => finish(new FleetMutationError('timeout', 'Fleet refresh timed out')), timeoutMs);
+      timeout.unref();
+      this.on('changed', changed);
+      this.refresh();
+      changed();
+    });
+  }
+
   getView(): FleetBridgeView {
     const snapshot = this.snapshot
       ? toFleetSnapshot(this.snapshot, this.options.launch.distro)

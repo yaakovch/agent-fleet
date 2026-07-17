@@ -56,6 +56,7 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
+import { isFleetSessionAvailable } from '../../shared/fleet';
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
 import type { FleetDownloadJob } from '../../shared/app';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
@@ -127,9 +128,7 @@ const dashboardIcons = {
 
 const NAV_ITEMS: ReadonlyArray<{ view: DashboardView; label: string; icon: string }> = [
   { view: 'overview', label: 'Overview', icon: 'layout-dashboard' },
-  { view: 'workspace', label: 'Workspace', icon: 'terminal' },
-  { view: 'sessions', label: 'Sessions', icon: 'square-terminal' },
-  { view: 'launcher', label: 'Launcher', icon: 'rocket' },
+  { view: 'workspace', label: 'Sessions', icon: 'square-terminal' },
   { view: 'schedules', label: 'Schedules', icon: 'calendar-clock' },
   { view: 'fleet', label: 'Fleet', icon: 'network' },
   { view: 'settings', label: 'Settings', icon: 'settings' }
@@ -165,9 +164,14 @@ export class DashboardPrototype {
   private launcherSelectedPath = '';
   private launcherLabel = '';
   private launcherTool: FleetTool = 'codex';
+  private launcherDrawer = false;
   private settings: WidgetSettings = createDefaultSettings();
   private settingsDraft: WidgetSettings = createDefaultSettings();
-  private readonly workspace = new SessionWorkspace(this.settings, (sessionId) => this.openRepository(sessionId));
+  private readonly workspace = new SessionWorkspace(
+    this.settings,
+    (sessionId) => this.openRepository(sessionId),
+    (sessionId) => { this.sessionMenuId = sessionId; this.render(); }
+  );
 
   constructor(
     private readonly root: HTMLElement,
@@ -251,9 +255,21 @@ export class DashboardPrototype {
   }
 
   render(): void {
+    const stableWorkspace = this.view === 'workspace' && this.workspace.element.isConnected
+      && Boolean(this.root.querySelector('[data-workspace-mount]'));
+    if (stableWorkspace) {
+      const sidebar = this.root.querySelector<HTMLElement>('.fleet-sidebar');
+      const header = this.root.querySelector<HTMLElement>('.fleet-header');
+      const overlays = this.root.querySelector<HTMLElement>('[data-dashboard-overlays]');
+      if (sidebar) sidebar.outerHTML = this.renderSidebar();
+      if (header) header.outerHTML = this.renderHeader();
+      if (overlays) overlays.innerHTML = this.renderOverlays();
+      createIcons({ icons: dashboardIcons });
+      return;
+    }
     this.workspace.detach();
     this.root.innerHTML = `
-      <main class="fleet-shell">
+      <main class="fleet-shell ${this.view === 'workspace' ? 'session-workspace-shell' : ''}">
         ${this.renderSidebar()}
         <section class="fleet-workspace">
           ${this.renderHeader()}
@@ -262,13 +278,18 @@ export class DashboardPrototype {
             ${this.renderCurrentView()}
           </div>
         </section>
-        ${this.modal ? this.renderModal(this.modal) : ''}
-        ${this.sessionMenuId ? this.renderSessionMenu() : ''}
-        ${this.repositorySessionId ? this.renderRepositoryBrowser() : ''}
-        ${this.toast ? `<div class="fleet-toast">${icon('circle-check')}<span>${escapeHtml(this.toast)}</span></div>` : ''}
+        <div data-dashboard-overlays>${this.renderOverlays()}</div>
       </main>`;
     createIcons({ icons: dashboardIcons });
     if (this.view === 'workspace') this.workspace.mount(this.root.querySelector('[data-workspace-mount]'));
+  }
+
+  private renderOverlays(): string {
+    return `${this.modal ? this.renderModal(this.modal) : ''}
+      ${this.sessionMenuId ? this.renderSessionMenu() : ''}
+      ${this.repositorySessionId ? this.renderRepositoryBrowser() : ''}
+      ${this.launcherDrawer ? `<div class="launcher-drawer-backdrop"><aside class="launcher-drawer"><header><span><strong>New session</strong><small>Choose where the session opens</small></span><button class="quiet-button" data-action="launcher-close">×</button></header>${this.renderLauncher()}</aside></div>` : ''}
+      ${this.toast ? `<div class="fleet-toast">${icon('circle-check')}<span>${escapeHtml(this.toast)}</span></div>` : ''}`;
   }
 
   openWorkspaceTab(tab: TerminalTabDescriptor): void {
@@ -280,9 +301,21 @@ export class DashboardPrototype {
   handleAction(action: string, target: HTMLElement): boolean {
     if (this.workspace.handleAction(action, target)) return true;
     const control = target.closest<HTMLElement>('[data-action]') ?? target;
+    if (action === 'workspace-new-session') {
+      this.launcherDrawer = true;
+      this.render();
+      return true;
+    }
+    if (action === 'launcher-close') {
+      this.launcherDrawer = false;
+      this.render();
+      return true;
+    }
     if (action === 'dashboard-nav') {
       const view = control.dataset.view;
-      if (isDashboardView(view)) this.view = view;
+      if (view === 'launcher') { this.view = 'workspace'; this.launcherDrawer = true; }
+      else if (view === 'sessions') this.view = 'workspace';
+      else if (isDashboardView(view)) this.view = view;
       this.search = '';
       this.render();
       return true;
@@ -298,7 +331,8 @@ export class DashboardPrototype {
     }
     if (action === 'dashboard-kill-session') {
       const session = this.sessionFromControl(control);
-      if (session) { this.sessionMenuId = ''; this.confirmKill(session); }
+      if (session && this.sessionAvailable(session)) { this.sessionMenuId = ''; this.confirmKill(session); }
+      else if (session) this.showToast(`${session.name}'s host is offline; no changes were made`);
       return true;
     }
     if (action === 'dashboard-cancel-schedule') {
@@ -352,11 +386,11 @@ export class DashboardPrototype {
     if (action === 'dashboard-open-session') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      if (!this.sessionAvailable(session)) return this.showToast(`${session.name}'s host is offline; no changes were made`);
       this.sessionMenuId = '';
-      void window.limitsWidget.openFleetSession(session.id).then((result) => {
-        if (result.tab) this.openWorkspaceTab(result.tab);
-        else this.showToast(result.message);
-      });
+      this.view = 'workspace';
+      this.render();
+      void this.workspace.openSession(session.id);
       return true;
     }
     if (action === 'dashboard-copy') {
@@ -369,6 +403,7 @@ export class DashboardPrototype {
     if (action === 'dashboard-rename-session') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      if (!this.sessionAvailable(session)) return this.showToast(`${session.name}'s host is offline; no changes were made`);
       this.sessionMenuId = '';
       this.modal = {
         title: `Rename ${session.name}`,
@@ -407,9 +442,17 @@ export class DashboardPrototype {
     if (action === 'dashboard-download-file') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      if (!this.sessionAvailable(session)) return this.showToast(`${session.name}'s host is offline; no changes were made`);
       this.sessionMenuId = '';
       this.openRepository(session.id);
       return true;
+    }
+    if (action === 'dashboard-hide-session') {
+      const session = this.sessionFromControl(control);
+      this.sessionMenuId = '';
+      const hidden = session ? this.workspace.hideUnavailableSession(session.id) : false;
+      this.render();
+      return this.showToast(hidden ? 'Unavailable session hidden on this device' : 'Only unavailable sessions can be hidden');
     }
     if (action === 'repository-close') {
       this.repositorySessionId = '';
@@ -527,11 +570,18 @@ export class DashboardPrototype {
       if (!this.launcherHostId || !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(label)) {
         return this.showToast('Use a folder and enter a valid session label');
       }
+      const placement = control.dataset.placement === 'split-right' || control.dataset.placement === 'split-down'
+        ? control.dataset.placement : 'replace';
+      if (!this.workspace.confirmPlacement(placement)) {
+        return this.showToast(placement === 'replace' ? 'Current draft was kept' : 'Up to four sessions can be visible at once');
+      }
       void window.limitsWidget.createFleetSession(
         this.launcherHostId, label, this.launcherBackend, this.launcherTool,
-        this.launcherSelectedPath, this.launcherLocation
+        this.launcherSelectedPath, this.launcherLocation,
+        { placement }
       ).then((result) => {
         if (result.ok) this.rememberLauncherPath(this.launcherSelectedPath);
+        if (result.ok) this.launcherDrawer = false;
         this.showToast(result.message);
       });
       return true;
@@ -600,6 +650,7 @@ export class DashboardPrototype {
       }
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
+      if (!this.sessionAvailable(session)) return this.showToast(`${session.name}'s host is offline; no changes were made`);
       void window.limitsWidget.toggleFleetFavorite(session.id).then((result) => this.showToast(result.message));
       return true;
     }
@@ -620,7 +671,10 @@ export class DashboardPrototype {
   ): Promise<void> {
     if (!action) return;
     let result: { ok: boolean; message: string };
-    if (action.kind === 'kill-session') result = await window.limitsWidget.killFleetSession(action.id);
+    if (action.kind === 'kill-session') {
+      result = await window.limitsWidget.killFleetSession(action.id);
+      if (result.ok) await this.workspace.clearSession(action.id);
+    }
     else if (action.kind === 'cancel-schedule') result = await window.limitsWidget.cancelFleetSchedule(action.id);
     else if (action.kind === 'update-host') result = await window.limitsWidget.updateFleetHost(action.id);
     else if (action.kind === 'update-schedule' && localTime) {
@@ -643,15 +697,17 @@ export class DashboardPrototype {
   }
 
   private openScheduleModal(defaultSessionId = '', suggestedAt?: string, attentionId?: string): void {
-    if (!this.snapshot.sessions.length) {
+    const sessions = this.visibleSessions().filter((session) => this.sessionAvailable(session));
+    if (!sessions.length) {
       this.showToast('No live session is available');
       return;
     }
+    const selectedId = sessions.some((session) => session.id === defaultSessionId) ? defaultSessionId : sessions[0].id;
     this.modal = {
       title: 'Schedule continue',
       body: 'Agent Fleet will send the standard continue action once at the selected time. Custom prompt text never crosses the desktop bridge.',
       confirm: 'Schedule continue',
-      action: { kind: 'create-schedule', id: defaultSessionId, ...(attentionId ? { attentionId } : {}) },
+      action: { kind: 'create-schedule', id: selectedId, ...(attentionId ? { attentionId } : {}) },
       deliverAt: suggestedAt
     };
     this.render();
@@ -730,14 +786,15 @@ export class DashboardPrototype {
   private renderSessionMenu(): string {
     const session = this.snapshot.sessions.find((item) => item.id === this.sessionMenuId);
     if (!session) return '';
+    const unavailable = !this.sessionAvailable(session);
     return `<div class="fleet-modal-backdrop"><section class="fleet-modal session-more-modal" role="dialog" aria-modal="true" data-session-id="${escapeAttr(session.id)}">
       <div class="repository-heading"><div><small>Session actions</small><h2>${escapeHtml(session.name)}</h2><p>${escapeHtml(session.project)} · ${escapeHtml(session.hostId)}</p></div><button class="quiet-button icon-only" data-action="session-more-close" aria-label="Close">${icon('x')}</button></div>
       <div class="session-more-actions">
-        <button data-action="dashboard-download-file">${icon('download')}<span><strong>Download a file</strong><small>Browse this session’s repository</small></span>${icon('chevron-right')}</button>
+        <button data-action="dashboard-download-file" ${unavailable ? 'disabled' : ''}>${icon('download')}<span><strong>Download a file</strong><small>${unavailable ? 'Host unavailable' : 'Browse this session’s repository'}</small></span>${icon('chevron-right')}</button>
         <button data-action="dashboard-session-details">${icon('eye')}<span><strong>Session details</strong><small>Host, backend, tool, and path</small></span>${icon('chevron-right')}</button>
         <button data-action="dashboard-copy">${icon('copy')}<span><strong>Copy attach command</strong><small>Use from another terminal</small></span>${icon('chevron-right')}</button>
-        <button data-action="dashboard-rename-session">${icon('sliders-horizontal')}<span><strong>Rename session</strong><small>Keep its internal tmux identity</small></span>${icon('chevron-right')}</button>
-        <button class="danger-action" data-action="dashboard-kill-session">${icon('trash-2')}<span><strong>Kill session</strong><small>Stops it and cancels pending schedules</small></span>${icon('chevron-right')}</button>
+        <button data-action="dashboard-rename-session" ${unavailable ? 'disabled' : ''}>${icon('sliders-horizontal')}<span><strong>Rename session</strong><small>Keep its internal tmux identity</small></span>${icon('chevron-right')}</button>
+        ${unavailable ? `<button data-action="dashboard-hide-session">${icon('x')}<span><strong>Remove from this device</strong><small>Hide this last-known record until the host reconnects</small></span>${icon('chevron-right')}</button>` : `<button class="danger-action" data-action="dashboard-kill-session">${icon('trash-2')}<span><strong>Kill session</strong><small>Stops it and cancels pending schedules</small></span>${icon('chevron-right')}</button>`}
       </div>
     </section></div>`;
   }
@@ -791,7 +848,7 @@ export class DashboardPrototype {
 
   private renderSidebar(): string {
     const badges: Partial<Record<DashboardView, number>> = {
-      sessions: this.snapshot.sessions.length,
+      workspace: this.visibleSessions().length,
       schedules: this.snapshot.schedules.filter((item) => item.status === 'pending').length,
       fleet: this.snapshot.pairingRequests.filter((item) => item.status === 'awaiting-review').length
     };
@@ -811,7 +868,7 @@ export class DashboardPrototype {
   private renderHeader(): string {
     const titles: Record<DashboardView, [string, string]> = {
       overview: ['Overview', 'Your coding fleet at a glance'],
-      workspace: ['Workspace', 'Terminal power with an app-like conversation view'],
+      workspace: ['Session Workspace', 'Work across up to four Native or Terminal sessions'],
       sessions: ['Sessions', 'Open and manage tmux sessions on every host'],
       launcher: ['Launcher', 'Start a safe, explicit tool session'],
       schedules: ['Schedules', 'Pending messages and 30-day delivery history'],
@@ -823,7 +880,7 @@ export class DashboardPrototype {
       <div class="fleet-header-actions">
         <div class="header-quick-actions">
           <button class="quiet-button" data-action="dashboard-nav" data-view="schedules">${icon('calendar-clock')}Schedules</button>
-          <button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button>
+          <button class="primary-button" data-action="${this.view === 'workspace' ? 'workspace-new-session' : 'dashboard-nav'}" ${this.view === 'workspace' ? '' : 'data-view="launcher"'}>${icon('plus')}New session</button>
         </div>
         <button class="fleet-icon-button notification-button" data-action="dashboard-attention" title="Notifications">${icon('bell')}${this.snapshot.attention.length ? `<span>${this.snapshot.attention.length}</span>` : ''}</button>
         <button class="fleet-icon-button" data-action="dashboard-close" title="Close dashboard">${icon('x')}</button>
@@ -850,6 +907,7 @@ export class DashboardPrototype {
   }
 
   private renderOverview(): string {
+    const sessions = this.visibleSessions();
     const healthyHosts = this.snapshot.hosts.filter((host) => host.status === 'healthy').length;
     const pending = this.snapshot.schedules.filter((item) => item.status === 'pending').length;
     return `<div class="dashboard-stack">
@@ -859,13 +917,13 @@ export class DashboardPrototype {
       </section>` : ''}
       <section class="fleet-metrics">
         ${metric('network', 'Hosts online', `${healthyHosts} / ${this.snapshot.hosts.length}`, healthyHosts === this.snapshot.hosts.length ? 'All connected' : 'Some hosts are unavailable', healthyHosts === this.snapshot.hosts.length ? 'healthy' : 'offline')}
-        ${metric('square-terminal', 'Sessions', String(this.snapshot.sessions.length), `${this.snapshot.sessions.filter((item) => item.activity === 'active').length} active`, 'healthy')}
+        ${metric('square-terminal', 'Sessions', String(sessions.length), `${sessions.filter((item) => item.activity === 'active').length} active`, 'healthy')}
         ${metric('calendar-clock', 'Scheduled', String(pending), pending ? 'Pending delivery' : 'Nothing pending', 'healthy')}
       </section>
       <section class="overview-grid">
         <article class="fleet-card recent-sessions-card">
           ${cardHeader('Recent sessions', 'Jump back into active work', 'All sessions', 'sessions')}
-          <div class="session-list compact">${this.snapshot.sessions.slice(0, 3).map((session) => this.renderSessionRow(session, true)).join('')}</div>
+          <div class="session-list compact">${sessions.slice(0, 3).map((session) => this.renderSessionRow(session, true)).join('')}</div>
         </article>
         <article class="fleet-card favorites-card">
           <div class="card-heading"><div><h2>Quick launch</h2><p>Your favorite presets</p></div>${icon('star')}</div>
@@ -886,7 +944,7 @@ export class DashboardPrototype {
 
   private renderSessions(): string {
     const needle = this.search.trim().toLowerCase();
-    const sessions = this.snapshot.sessions.filter((session) => !needle || [session.name, session.title, session.project, session.hostId, session.tool].some((value) => value.toLowerCase().includes(needle)));
+    const sessions = this.visibleSessions().filter((session) => !needle || [session.name, session.title, session.project, session.hostId, session.tool].some((value) => value.toLowerCase().includes(needle)));
     const grouped = this.snapshot.hosts.map((host) => ({ host, sessions: sessions.filter((session) => session.hostId === host.id) })).filter((group) => group.sessions.length);
     return `<div class="dashboard-stack">
       <div class="view-toolbar"><label class="fleet-search">${icon('search')}<input data-dashboard-search value="${escapeAttr(this.search)}" placeholder="Search session, project, host, or tool"></label><div class="filter-pills"><button class="active">All hosts</button>${this.snapshot.hosts.map((host) => `<button>${escapeHtml(host.name)}</button>`).join('')}</div><button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button></div>
@@ -932,7 +990,7 @@ export class DashboardPrototype {
         </div>
         ${browser}
         <div class="launcher-final"><label>Session label<input data-launcher-label maxlength="64" value="${escapeAttr(this.launcherLabel)}" placeholder="Choose a folder first"></label><span>${this.launcherSelectedPath ? `${icon('check')}Folder selected` : 'Use a folder to continue'}</span></div>
-        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host validates the folder, label, and fixed tool before launch.</p></div><button class="primary-button" data-action="dashboard-launch" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Launch and open</button></div>
+        <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host validates the folder, label, and fixed tool before launch.</p></div><div class="launcher-placement-actions"><button class="primary-button" data-action="dashboard-launch" data-placement="replace" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Open here</button><button data-action="dashboard-launch" data-placement="split-right" ${canLaunch ? '' : 'disabled'}>Split right</button><button data-action="dashboard-launch" data-placement="split-down" ${canLaunch ? '' : 'disabled'}>Split down</button></div></div>
       </section>
       <aside class="dashboard-stack">
         <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite" data-preset-id="${escapeAttr(favorite.id)}"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>
@@ -1083,13 +1141,14 @@ export class DashboardPrototype {
 
   private renderSessionRow(session: FleetSession, compact: boolean): string {
     const host = this.snapshot.hosts.find((item) => item.id === session.hostId);
-    return `<div class="session-row ${compact ? 'is-compact' : ''}" data-session-id="${escapeAttr(session.id)}">
+    const unavailable = !this.sessionAvailable(session);
+    return `<div class="session-row ${compact ? 'is-compact' : ''} ${unavailable ? 'unavailable' : ''}" data-session-id="${escapeAttr(session.id)}">
       <span class="tool-icon tool-${session.tool}">${toolIcon(session.tool)}</span>
       <span class="session-primary"><strong>${escapeHtml(session.name)}</strong><small>${escapeHtml(session.title || 'Managed tmux session')}</small></span>
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
-      <span class="activity-label activity-${session.activity}"><i></i>${capitalize(session.activity)}</span>
+      <span class="activity-label ${unavailable ? 'activity-unavailable' : `activity-${session.activity}`}"><i></i>${unavailable ? 'Unavailable' : capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
-      <span class="session-actions"><button data-action="dashboard-open-session" title="Open session">${icon('panel-top-open')}<span>Open</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}">${icon('star')}</button><button class="quiet-button" data-action="dashboard-session-more" title="More session actions">${icon('more-horizontal')}</button>`}</span>
+      <span class="session-actions"><button data-action="dashboard-open-session" title="${unavailable ? 'Host unavailable' : 'Open session'}" ${unavailable ? 'disabled' : ''}>${icon('panel-top-open')}<span>${unavailable ? 'Offline' : 'Open'}</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}" ${unavailable ? 'disabled' : ''}>${icon('star')}</button><button class="quiet-button" data-action="dashboard-session-more" title="More session actions">${icon('more-horizontal')}</button>`}</span>
     </div>`;
   }
 
@@ -1133,6 +1192,14 @@ export class DashboardPrototype {
     this.render();
   }
 
+  private sessionAvailable(session: FleetSession): boolean {
+    return isFleetSessionAvailable(this.snapshot, session);
+  }
+
+  private visibleSessions(): FleetSession[] {
+    return this.snapshot.sessions.filter((session) => !this.workspace.isSessionHidden(session.id));
+  }
+
   private confirmCancelSchedule(schedule: FleetSchedule): void {
     const session = this.snapshot.sessions.find((item) => item.id === schedule.sessionId);
     this.modal = {
@@ -1156,8 +1223,9 @@ export class DashboardPrototype {
   }
 
   private renderModal(modal: NonNullable<ModalState>): string {
+    const schedulableSessions = this.visibleSessions().filter((session) => this.sessionAvailable(session));
     const scheduleForm = modal.action?.kind === 'create-schedule'
-      ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${this.snapshot.sessions.map((session) => `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(session.name)} · ${escapeHtml(session.hostId)}</option>`).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
+      ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${schedulableSessions.map((session) => `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(session.name)} · ${escapeHtml(session.hostId)}</option>`).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
       : modal.action?.kind === 'update-schedule'
         ? `<div class="dashboard-form-grid"><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
         : '';

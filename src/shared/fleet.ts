@@ -115,3 +115,16 @@ export interface FleetSnapshot {
   pairingRequests: PairingRequest[];
   limits: FleetUsageLimit[];
 }
+
+export function isFleetSessionAvailable(snapshot: FleetSnapshot, session: FleetSession): boolean {
+  if (snapshot.controller.status !== 'healthy') return false;
+  return snapshot.hosts.some((host) => host.id === session.hostId && host.status === 'healthy');
+}
+
+export function reconcileHiddenUnavailableSessions(snapshot: FleetSnapshot, hiddenSessionIds: string[]): string[] {
+  const hidden = new Set(hiddenSessionIds.slice(0, 64));
+  return snapshot.sessions
+    .filter((session) => hidden.has(session.id) && !isFleetSessionAvailable(snapshot, session))
+    .map((session) => session.id)
+    .slice(0, 64);
+}

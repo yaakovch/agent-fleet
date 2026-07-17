@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.0-beta.16 - 2026-07-17
+
+- Added opt-in, user-triggered local reply suggestions to Native composers and
+  structured free-text questions; choosing a suggestion fills but never sends.
+- Added app-managed llama.cpp and loopback-only OpenAI-compatible backends with
+  bounded private context, encrypted optional credentials, cancellation, and
+  stale-result protection.
+- Kept local inference off by default and outside settings exports, workspace
+  state, diagnostics, logs, terminal panes, and the wtmux protocol.
+
+## 0.11.0-beta.15 - 2026-07-17
+
+- Added instant, memory-only structured history over alternate-screen Codex,
+  Claude, and Copilot terminals, with quiet prefetch and bounded paging.
+- Kept keyboard input attached to the live terminal while History is visible,
+  and made Remote mode explicit for applications that consume wheel input.
+- Preserved the live xterm instance and returned to fresh terminal output when
+  closing history, including slow-link updated and retry states.
+
+## 0.11.0-beta.14 - 2026-07-16
+
+- Replaced full pane headers with compact draggable pane title chips.
+- Moved Native/Terminal, Retry, and More into one focused-pane toolbar control set.
+- Preserved xterm, Native scroll, drafts, and focus during pane-focus and status-only chrome updates.
+
 ## 0.11.0-beta.7 - 2026-07-15
 
 - Hide stale hard-limit cards immediately after Dismiss and keep them hidden

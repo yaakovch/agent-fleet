@@ -64,4 +64,13 @@ describe('native conversation presentation', () => {
     expect(html).not.toContain('type="radio"');
     expect(html).not.toContain('Submit answers');
   });
+
+  it('keeps local suggestion controls out of ordinary choice questions', () => {
+    const source = readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'session-workspace.ts'), 'utf8');
+    const stylesheet = readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'style.css'), 'utf8');
+    expect(source).toContain('canSuggestForQuestion');
+    expect(source).toContain('data-action="native-suggestion-use"');
+    expect(source).toContain('state.draft = value');
+    expect(stylesheet).toContain('textarea[data-native-message]:not(:placeholder-shown)');
+  });
 });

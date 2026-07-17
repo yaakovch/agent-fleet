@@ -42,6 +42,7 @@ import {
   type WidgetSettings
 } from '../../shared/settings';
 import { renderLimitCell } from './widget-view';
+import type { LocalSuggestionSettingsInput } from '../../shared/local-suggestions';
 
 const iconSet = {
   ArrowDown,
@@ -82,6 +83,8 @@ let latestState: CombinedLimitState | null = null;
 let interactionMode: InteractionMode = 'passive';
 let settingsDraft: WidgetSettings | null = null;
 let settingsMessage = '';
+let localSuggestionMessage = '';
+let localSuggestionDraft: LocalSuggestionSettingsInput | null = null;
 let appInfo: AppInfo | null = null;
 let updaterState: UpdaterState | null = null;
 let claudeIntegration: ClaudeIntegrationState | null = null;
@@ -174,6 +177,16 @@ async function handleAction(action: string, target: HTMLElement): Promise<void> 
   if (action === 'rollback-settings') await rollbackSettings();
   if (action === 'install-claude') await updateClaudeIntegration('install');
   if (action === 'remove-claude') await updateClaudeIntegration('remove');
+  if (action === 'local-suggestion-choose-executable') await chooseLocalSuggestionFile('executable');
+  if (action === 'local-suggestion-choose-model') await chooseLocalSuggestionFile('model');
+  if (action === 'local-suggestion-clear-token' && localSuggestionDraft) {
+    localSuggestionDraft.external.clearToken = true;
+    localSuggestionDraft.external.bearerToken = '';
+    localSuggestionDraft.external.tokenConfigured = false;
+    localSuggestionMessage = 'Stored bearer token will be removed when you save.';
+    renderConfigView();
+  }
+  if (action === 'local-suggestion-test') await testLocalSuggestions();
   if (action === 'check-updates') {
     updaterState = (await window.limitsWidget.checkForUpdates()) ?? updaterState;
     renderConfigView();
@@ -255,17 +268,19 @@ function renderDiagnostics(state: CombinedLimitState): string {
 }
 
 async function loadConfigView(): Promise<void> {
-  const [settingsResult, info, update, claude] = await Promise.all([
+  const [settingsResult, info, update, claude, localSuggestions] = await Promise.all([
     window.limitsWidget.getSettings(),
     window.limitsWidget.getAppInfo(),
     window.limitsWidget.getUpdaterState(),
-    window.limitsWidget.getClaudeIntegration()
+    window.limitsWidget.getClaudeIntegration(),
+    window.limitsWidget.getLocalSuggestionSettings()
   ]);
   settingsDraft = cloneSettings(settingsResult.settings);
   settingsMessage = settingsResult.message ?? '';
   appInfo = info;
   updaterState = update;
   claudeIntegration = claude;
+  localSuggestionDraft = { ...localSuggestions, managed: { ...localSuggestions.managed }, external: { ...localSuggestions.external } };
   renderConfigView();
 }
 
@@ -284,11 +299,34 @@ function renderSettings(): void {
       </header>
       ${renderTransferSection()}
       ${renderWidgetSettingsSection()}
+      ${renderLocalSuggestionSection()}
       ${renderClaudeSection()}
       ${renderProfilesSection()}
       ${renderSupportSection()}
     </main>`;
   refreshIcons();
+}
+
+function renderLocalSuggestionSection(): string {
+  const draft = localSuggestionDraft;
+  if (!draft) return '';
+  const managed = draft.backend === 'managedLlamaCpp';
+  const disabled = draft.enabled ? '' : 'disabled';
+  return `
+    <section class="settings-section local-suggestion-settings">
+      <div class="section-title-row"><div><h2>Local reply suggestions</h2><p class="section-note">Optional, user-triggered drafts for Native conversations. Conversation text stays on this PC.</p></div><button data-action="local-suggestion-test" ${disabled}>Test backend</button></div>
+      <label class="checkbox-row"><input data-local-setting="enabled" type="checkbox" ${draft.enabled ? 'checked' : ''}>Enable local reply suggestions</label>
+      <div class="settings-grid">
+        <label>Backend<select data-local-setting="backend" ${disabled}><option value="managedLlamaCpp" ${managed ? 'selected' : ''}>Managed llama.cpp</option><option value="openAICompatible" ${managed ? '' : 'selected'}>External OpenAI-compatible</option></select></label>
+        ${managed ? '<span></span>' : `<label>Model ID<input data-local-setting="external.modelId" value="${escapeAttr(draft.external.modelId)}" ${disabled} placeholder="Auto-detect from /v1/models"></label>`}
+        ${managed ? `<label>llama-server.exe<div class="path-picker"><input data-local-setting="managed.executablePath" value="${escapeAttr(draft.managed.executablePath)}" ${disabled}><button data-action="local-suggestion-choose-executable" ${disabled}>Choose</button></div></label>
+        <label>GGUF model<div class="path-picker"><input data-local-setting="managed.modelPath" value="${escapeAttr(draft.managed.modelPath)}" ${disabled}><button data-action="local-suggestion-choose-model" ${disabled}>Choose</button></div></label>`
+        : `<label>Loopback server URL<input data-local-setting="external.baseUrl" value="${escapeAttr(draft.external.baseUrl)}" ${disabled} placeholder="http://127.0.0.1:8080"></label>
+        <label>Bearer token<div class="path-picker"><input data-local-setting="external.bearerToken" type="password" value="" ${disabled} placeholder="${draft.external.tokenConfigured ? 'Stored securely; enter to replace' : 'Optional'}"><button data-action="local-suggestion-clear-token" ${disabled || !draft.external.tokenConfigured ? 'disabled' : ''}>Clear</button></div></label>`}
+      </div>
+      <p class="section-note">${managed ? 'Agent Fleet owns the server process, uses safe fixed arguments, and unloads model memory after 60 idle seconds.' : 'Only localhost/127.x/::1 is accepted. The external server owns its process and RAM.'}</p>
+      ${localSuggestionMessage ? `<p class="${/ready|enabled|disabled/iu.test(localSuggestionMessage) ? 'success-note' : 'section-note'}">${escapeHtml(localSuggestionMessage)}</p>` : ''}
+    </section>`;
 }
 
 function renderTransferSection(): string {
@@ -400,6 +438,17 @@ function updateSettingsFromInput(input: HTMLInputElement | HTMLSelectElement): v
   if (setting === 'launchOnLogin' || setting === 'claudeEnabled' || setting === 'automaticUpdates') {
     settingsDraft[setting] = (input as HTMLInputElement).checked;
   }
+  const localSetting = input.dataset.localSetting;
+  if (localSetting && localSuggestionDraft) {
+    if (localSetting === 'enabled') localSuggestionDraft.enabled = (input as HTMLInputElement).checked;
+    else if (localSetting === 'backend') localSuggestionDraft.backend = input.value === 'openAICompatible' ? 'openAICompatible' : 'managedLlamaCpp';
+    else if (localSetting === 'managed.executablePath') localSuggestionDraft.managed.executablePath = input.value;
+    else if (localSetting === 'managed.modelPath') localSuggestionDraft.managed.modelPath = input.value;
+    else if (localSetting === 'external.baseUrl') localSuggestionDraft.external.baseUrl = input.value;
+    else if (localSetting === 'external.modelId') localSuggestionDraft.external.modelId = input.value;
+    else if (localSetting === 'external.bearerToken') localSuggestionDraft.external.bearerToken = input.value;
+    if (localSetting === 'enabled' || localSetting === 'backend') renderConfigView();
+  }
   const field = input.dataset.profileField as keyof CodexProfileSettings | undefined;
   const profile = findProfileElement(input);
   if (!field || !profile) return;
@@ -410,9 +459,40 @@ function updateSettingsFromInput(input: HTMLInputElement | HTMLSelectElement): v
 async function saveSettings(): Promise<void> {
   if (!settingsDraft) return;
   normalizeProfileOrder(settingsDraft);
-  const result = await window.limitsWidget.saveSettings(settingsDraft);
+  const [result, localResult] = await Promise.all([
+    window.limitsWidget.saveSettings(settingsDraft),
+    localSuggestionDraft ? window.limitsWidget.saveLocalSuggestionSettings(localSuggestionDraft) : null
+  ]);
   settingsDraft = cloneSettings(result.settings);
+  if (localResult) {
+    localSuggestionDraft = { ...localResult.settings, managed: { ...localResult.settings.managed }, external: { ...localResult.settings.external } };
+    localSuggestionMessage = localResult.message;
+  }
   settingsMessage = result.message ?? 'Settings saved and refresh started.';
+  renderConfigView();
+}
+
+async function chooseLocalSuggestionFile(kind: 'executable' | 'model'): Promise<void> {
+  if (!localSuggestionDraft) return;
+  const path = await window.limitsWidget.chooseLocalSuggestionFile(kind);
+  if (!path) return;
+  if (kind === 'executable') localSuggestionDraft.managed.executablePath = path;
+  else localSuggestionDraft.managed.modelPath = path;
+  renderConfigView();
+}
+
+async function testLocalSuggestions(): Promise<void> {
+  if (!localSuggestionDraft) return;
+  localSuggestionMessage = 'Starting and checking the local backend…';
+  renderConfigView();
+  try {
+    const saved = await window.limitsWidget.saveLocalSuggestionSettings(localSuggestionDraft);
+    localSuggestionDraft = { ...saved.settings, managed: { ...saved.settings.managed }, external: { ...saved.settings.external } };
+    const result = await window.limitsWidget.testLocalSuggestions();
+    localSuggestionMessage = result.message;
+  } catch (error) {
+    localSuggestionMessage = error instanceof Error ? error.message : String(error);
+  }
   renderConfigView();
 }
 

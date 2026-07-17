@@ -14,7 +14,7 @@ cached. See [PRIVACY.md](PRIVACY.md) and [SPEC.md](SPEC.md).
 
 ## Status
 
-`0.11.0-beta.1` is under active development for a private multi-machine beta.
+`0.11.0-beta.16` is under active development for a private multi-machine beta.
 The existing unsigned `0.9.0-beta.1` release is retained as a legacy
 prerelease. Unsigned public builds are manual downloads only; automatic public
 updates require trusted signed artifacts.
@@ -32,7 +32,9 @@ private beta release feed are intentionally separate and private.
 
 ## Embedded Workspace
 
-Open any fleet session in Agent Fleet to keep it in a reconnecting tab. Native
+Open any fleet session in Agent Fleet's vertical Sessions workspace. Assign up
+to four sessions to resizable horizontal or vertical splits, switch each pane
+independently between Native and Terminal, and restore the layout on restart. Native
 view presents supported Codex and Claude conversations as an Android-style
 message surface with readable tool activity, approvals, planning questions,
 and image attachments. Terminal view exposes the same live tmux session through

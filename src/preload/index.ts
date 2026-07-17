@@ -20,22 +20,31 @@ import type {
   SessionViewMode, TerminalClosedEvent, TerminalDataEvent, TerminalOpenResult,
   TerminalStatusEvent, TerminalTabDescriptor, TerminalWorkspaceState
 } from '../shared/terminal';
+import type { WorkspaceCommand, WorkspaceOpenRequest } from '../shared/workspace-layout';
 import type {
   ConversationAnswer, ConversationEvent, NativeActionResult, StagedAttachment
 } from '../shared/conversation';
+import type {
+  LocalSuggestionOperationResult, LocalSuggestionRequest, LocalSuggestionResult,
+  LocalSuggestionSettingsInput, LocalSuggestionSettingsView
+} from '../shared/local-suggestions';
 
 const api = {
   getState: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.getState),
   refreshNow: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.refreshNow),
   getFleetState: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.getFleetState),
   refreshFleet: (): Promise<FleetBridgeView> => ipcRenderer.invoke(IPC_CHANNELS.refreshFleet),
-  openFleetSession: (sessionId: string): Promise<TerminalOpenResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.openFleetSession, sessionId),
+  openFleetSession: (sessionId: string, request?: WorkspaceOpenRequest): Promise<TerminalOpenResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.openFleetSession, sessionId, request),
   openFleetSessionExternal: (sessionId: string, target: 'vscode' | 'windowsTerminal'): Promise<TerminalOpenResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.openFleetSessionExternal, sessionId, target),
   listTerminalTabs: (): Promise<TerminalWorkspaceState> => ipcRenderer.invoke(IPC_CHANNELS.terminalList),
   bindTerminalTab: (tabId: string): Promise<TerminalTabDescriptor | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.terminalBind, tabId),
+  syncTerminalTabs: (tabIds: string[]): Promise<TerminalTabDescriptor[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalSyncBindings, tabIds),
+  applyWorkspaceCommand: (command: WorkspaceCommand): Promise<TerminalWorkspaceState> =>
+    ipcRenderer.invoke(IPC_CHANNELS.terminalWorkspaceCommand, command),
   terminalInput: (tabId: string, data: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.terminalInput, tabId, data),
   terminalResize: (tabId: string, columns: number, rows: number): Promise<boolean> =>
@@ -48,6 +57,9 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.terminalSetView, tabId, viewMode),
   startConversation: (tabId: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, tabId),
   stopConversation: (tabId: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.conversationStop, tabId),
+  syncConversations: (tabIds: string[]): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.conversationSync, tabIds),
+  loadTerminalHistory: (tabId: string): Promise<NativeActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.conversationHistory, tabId),
   pageConversation: (tabId: string, cursor: string): Promise<NativeActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.conversationPage, tabId, cursor),
   approveConversation: (tabId: string, approval: string, choice: string, revision: string): Promise<NativeActionResult> =>
@@ -66,6 +78,18 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.conversationSend, tabId, text),
   copyConversationText: (text: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.conversationCopyText, text),
+  getLocalSuggestionSettings: (): Promise<LocalSuggestionSettingsView> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsGetSettings),
+  saveLocalSuggestionSettings: (settings: LocalSuggestionSettingsInput): Promise<LocalSuggestionOperationResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsSaveSettings, settings),
+  testLocalSuggestions: (): Promise<LocalSuggestionOperationResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsTest),
+  chooseLocalSuggestionFile: (kind: 'executable' | 'model'): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsChooseFile, kind),
+  suggestLocalReplies: (request: LocalSuggestionRequest): Promise<LocalSuggestionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsSuggest, request),
+  cancelLocalSuggestions: (requestId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.localSuggestionsCancel, requestId),
   killFleetSession: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.killFleetSession, sessionId),
   renameFleetSession: (sessionId: string, name: string): Promise<{ ok: boolean; message: string }> =>
@@ -96,9 +120,10 @@ const api = {
     backend: 'linux' | 'windows',
     tool: 'shell' | 'codex' | 'claude' | 'copilot',
     path: string,
-    locationKind: 'project' | 'custom'
+    locationKind: 'project' | 'custom',
+    request?: WorkspaceOpenRequest
   ): Promise<{ ok: boolean; message: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.createFleetSession, hostId, label, backend, tool, path, locationKind),
+    ipcRenderer.invoke(IPC_CHANNELS.createFleetSession, hostId, label, backend, tool, path, locationKind, request),
   listFleetDirectory: (hostId: string, backend: 'linux' | 'windows', path: string): Promise<FleetDirectoryResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.listFleetDirectory, hostId, backend, path),
   createFleetDirectory: (hostId: string, backend: 'linux' | 'windows', parentPath: string, name: string): Promise<FleetDirectoryResult> =>
@@ -187,10 +212,20 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.terminalOpened, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.terminalOpened, listener);
   },
+  onWorkspaceUpdated: (callback: (state: TerminalWorkspaceState) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: TerminalWorkspaceState): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.terminalWorkspaceUpdated, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.terminalWorkspaceUpdated, listener);
+  },
   onConversationEvent: (callback: (event: ConversationEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: ConversationEvent): void => callback(value);
     ipcRenderer.on(IPC_CHANNELS.conversationEvent, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.conversationEvent, listener);
+  },
+  onLocalSuggestionSettingsUpdated: (callback: (settings: LocalSuggestionSettingsView) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: LocalSuggestionSettingsView): void => callback(value);
+    ipcRenderer.on(IPC_CHANNELS.localSuggestionsSettingsUpdated, listener);
+    return () => ipcRenderer.off(IPC_CHANNELS.localSuggestionsSettingsUpdated, listener);
   }
 };
 

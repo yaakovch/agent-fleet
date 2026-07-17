@@ -8,6 +8,7 @@ export interface AppInfo {
   portable: boolean;
   dataDirectory: string;
   releaseUrl: string;
+  powerPolicy?: { activeDownloads: number; suspensionBlocked: boolean; displayBlocked: false };
 }
 
 export type UpdateStatus =

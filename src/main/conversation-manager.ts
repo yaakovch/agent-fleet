@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { nativeImage } from 'electron';
 import type { ConversationAnswer, ConversationEvent, ConversationFrame, NativeActionResult, StagedAttachment } from '../shared/conversation';
-import type { TerminalTabDescriptor } from '../shared/terminal';
+import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
 
 const MAX_FRAME = 256 * 1024;
 const MAX_ACTION_OUTPUT = 512 * 1024;
@@ -21,6 +21,7 @@ export interface ConversationManagerOptions {
   sendTerminalInput(tabId: string, data: string): boolean;
   onEvent(event: ConversationEvent): void;
   logger: { info(...values: unknown[]): void; warn(...values: unknown[]): void };
+  spawnProcess?: typeof spawn;
 }
 
 export class ConversationManager {
@@ -33,13 +34,11 @@ export class ConversationManager {
   start(tabId: string): boolean {
     const tab = this.options.resolveTab(tabId);
     if (!tab || tab.tool === 'shell') return false;
-    for (const otherTabId of [...this.streams.keys()]) {
-      if (otherTabId !== tabId) this.stop(otherTabId);
-    }
+    if (this.streams.has(tabId)) return true;
     this.stop(tabId);
     const generation = (this.generations.get(tabId) ?? 0) + 1;
     this.generations.set(tabId, generation);
-    const process = spawn('wsl.exe', this.command(tab, 'stream', ['--limit', '20']), {
+    const process = (this.options.spawnProcess ?? spawn)('wsl.exe', this.command(tab, 'stream', ['--limit', '20']), {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
     const state: StreamState = { process, buffer: '', generation };
@@ -55,6 +54,14 @@ export class ConversationManager {
       }
     });
     return true;
+  }
+
+  sync(tabIds: string[]): string[] {
+    const desired = new Set(tabIds.filter((id, index, values) => values.indexOf(id) === index).slice(0, 4));
+    for (const tabId of [...this.streams.keys()]) if (!desired.has(tabId)) this.stop(tabId);
+    const started: string[] = [];
+    for (const tabId of desired) if (this.start(tabId)) started.push(tabId);
+    return started;
   }
 
   stop(tabId: string): void {
@@ -77,6 +84,19 @@ export class ConversationManager {
   async page(tabId: string, cursor: string): Promise<NativeActionResult> {
     if (!safeArg(cursor, 512)) return { ok: false, message: 'History cursor is invalid' };
     return this.frameAction(tabId, 'stream', ['--cursor', cursor, '--limit', '20', '--no-follow'], 15_000);
+  }
+
+  async history(tabId: string): Promise<NativeActionResult> {
+    const tab = this.options.resolveTab(tabId);
+    if (!tab || tab.tool === 'shell') return { ok: false, message: 'Terminal history is unavailable for this session' };
+    const result = await runBounded('wsl.exe', [
+      '-d', this.options.getDistro(), '--cd', '~', '--', '.local/bin/wtmux', 'pane', 'scrollback',
+      '--host', tab.hostId, '--session', tab.internalName, '--limit', '2000'
+    ], 20_000, this.options.spawnProcess ?? spawn);
+    const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
+    const pane = parsePaneScrollback(line, tab.internalName);
+    if (result.code === 0 && pane) return { ok: true, message: 'Pane scrollback ready', pane };
+    return { ok: false, message: result.stderr.trim().slice(0, 500) || 'Pane scrollback is unavailable' };
   }
 
   async approve(tabId: string, approval: string, choice: string, revision: string): Promise<NativeActionResult> {
@@ -162,7 +182,7 @@ export class ConversationManager {
   private async action(tabId: string, action: string, args: string[], timeout: number): Promise<NativeActionResult> {
     const tab = this.options.resolveTab(tabId);
     if (!tab) return { ok: false, message: 'Session is no longer open' };
-    const result = await runBounded('wsl.exe', this.command(tab, action, args), timeout);
+    const result = await runBounded('wsl.exe', this.command(tab, action, args), timeout, this.options.spawnProcess ?? spawn);
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
     const frame = parseFrame(line);
     if (result.code === 0) return { ok: true, message: 'Delivered', ...(frame ? { frame } : {}) };
@@ -202,6 +222,21 @@ function parseFrame(line: string): ConversationFrame | null {
   if (value?.protocolVersion !== 2 || !['conversation.snapshot', 'conversation.event', 'conversation.status', 'conversation.heartbeat', 'conversation.error'].includes(String(value.type))) return null;
   return value as unknown as ConversationFrame;
 }
+function parsePaneScrollback(line: string, session: string): PaneScrollbackSnapshot | null {
+  if (line.length < 2 || line.length > 6 * 1024 * 1024) return null;
+  const value = safeJson(line);
+  if (value?.protocolVersion !== 1 || value?.type !== 'pane.scrollback' || value?.session !== session
+      || !Number.isInteger(value.columns) || value.columns < 4 || value.columns > 1_000
+      || !Number.isInteger(value.rows) || value.rows < 4 || value.rows > 1_000
+      || !Number.isInteger(value.historyLines) || value.historyLines < 0
+      || !Number.isInteger(value.capturedLines) || value.capturedLines < 0
+      || typeof value.truncated !== 'boolean' || !/^[a-f0-9]{64}$/u.test(String(value.revision))
+      || typeof value.ansiBase64 !== 'string' || value.ansiBase64.length > 6 * 1024 * 1024) return null;
+  const ansi = Buffer.from(value.ansiBase64, 'base64');
+  if (!ansi.length || ansi.length > 4 * 1024 * 1024 || ansi.toString('base64') !== value.ansiBase64
+      || createHash('sha256').update(ansi).digest('hex') !== value.revision) return null;
+  return value as unknown as PaneScrollbackSnapshot;
+}
 function safeJson(value: string): Record<string, any> | null { try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' ? parsed : null; } catch { return null; } }
 function safeArg(value: string, max: number): boolean { return typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value); }
 function safeFileName(value: string): string { return value.replace(/[^A-Za-z0-9._-]/gu, '_').slice(-100) || 'image.png'; }
@@ -221,9 +256,14 @@ function windowsToWslPath(path: string): string {
   if (!match) throw new Error('Temporary image path is unavailable to WSL');
   return `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll('\\', '/')}`;
 }
-async function runBounded(command: string, args: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runBounded(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  spawnProcess: typeof spawn = spawn
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnProcess(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let timedOut = false;
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (data: string) => { if (stdout.length < MAX_ACTION_OUTPUT) stdout += data; });
