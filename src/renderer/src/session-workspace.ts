@@ -2096,7 +2096,8 @@ export function renderConversationRows(items: ConversationItem[], expanded = new
   let html = '';
   const hasTasks = items.some((item) => item.kind === 'task_list');
   for (let index = 0; index < items.length;) {
-    if (hasTasks && items[index].kind === 'status' && ['Working', 'Done'].includes(items[index].title)) { index += 1; continue; }
+    if (hasTasks && items[index].kind === 'status' && ['Working', 'Done'].includes(items[index].title)
+      && !providerWorkDuration(items[index])) { index += 1; continue; }
     if (items[index].kind === 'tool') {
       const tools: ConversationItem[] = [];
       while (items[index]?.kind === 'tool') tools.push(items[index++]);
@@ -2124,6 +2125,10 @@ function renderConversationItem(item: ConversationItem, expanded = new Set<strin
   if (item.kind === 'approval') return `<article class="native-card approval-card state-${escapeAttr(item.state)}" data-conversation-item="${escapeAttr(item.id)}"><small>Approval</small><h3>${escapeHtml(item.title || 'Approval needed')}</h3>${markdown(item.text || item.detail)}<div class="native-choice-actions">${item.state === 'complete' ? '<b>Answered</b>' : item.choices.map((choice) => `<button class="${/deny|reject|cancel/iu.test(choice.id) ? 'quiet-button' : 'primary-button'}" data-action="native-approve" data-workspace-action data-choice="${escapeAttr(choice.id)}">${escapeHtml(choice.label)}</button>`).join('')}</div></article>`;
   if (item.kind === 'change') return `<article class="native-card change-card"><small>Files changed</small><h3>${escapeHtml(item.title || item.target || 'Change')}</h3>${markdown(item.text || item.detail)}</article>`;
   if (item.kind === 'error') return `<article class="native-card native-error"><strong>${escapeHtml(item.title || 'Error')}</strong>${markdown(item.text || item.detail)}</article>`;
+  if (item.kind === 'status' && ['Done', 'Turn Duration'].includes(item.title)) {
+    const duration = providerWorkDuration(item);
+    if (duration) return `<article class="native-message activity"><small>✓</small>${markdown(`Worked for ${duration}`)}</article>`;
+  }
   const role = item.role === 'user' ? 'user' : item.role === 'assistant' ? 'assistant' : 'activity';
   const content = item.text || item.detail;
   if (!content && !item.title) return '';
@@ -2288,6 +2293,19 @@ function toolDuration(item: ConversationItem): string {
   if (milliseconds < 1_000) return `${milliseconds} ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
   return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1_000)}s`;
+}
+
+function providerWorkDuration(item: ConversationItem): string {
+  if (!item.startedAt || !item.completedAt) return '';
+  const milliseconds = Date.parse(item.completedAt) - Date.parse(item.startedAt);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '';
+  const totalSeconds = Math.floor(milliseconds / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 function prettyJson(value: string): string {

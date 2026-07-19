@@ -52,6 +52,19 @@ describe('native conversation presentation', () => {
     expect(html).not.toContain('<small>Done</small>');
   });
 
+  it('renders the exact provider work counter even beside structured tasks', () => {
+    const html = renderConversationRows([
+      item({ id: 'tasks', kind: 'task_list', title: 'Updated plan', tasks: [
+        { id: 'one', title: 'Finished', activeTitle: '', detail: '', state: 'completed' }
+      ] }),
+      item({
+        id: 'done', kind: 'status', title: 'Done',
+        startedAt: '2026-07-19T00:00:00.143Z', completedAt: '2026-07-19T00:24:44.000Z'
+      })
+    ]);
+    expect(html).toContain('Worked for 24m 43s');
+  });
+
   it('uses tappable choice rows without radio controls or a final submit button', () => {
     const html = renderConversationRows([item({
       kind: 'question', state: 'pending', revision: 'r1', title: 'Answer needed', questions: [{
