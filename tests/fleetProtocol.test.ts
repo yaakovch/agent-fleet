@@ -19,10 +19,16 @@ describe('fleet protocol v1', () => {
     expect(JSON.stringify(dashboard).toLowerCase()).not.toContain('continue');
   });
 
-  it('rejects pane-derived titles and prompt fields', () => {
+  it('accepts negotiated smart titles but still rejects unnegotiated titles and prompt fields', () => {
     const titlePayload = JSON.parse(readFileSync(fixturePath, 'utf8'));
     titlePayload.sessions[0].title = 'private pane title';
     expect(() => parseBridgeFleetSnapshot(titlePayload)).toThrow(/title/i);
+
+    titlePayload.presentationRevision = '0123456789abcdef';
+    titlePayload.sessions[0].nameMode = 'automatic';
+    const titled = toFleetSnapshot(parseBridgeFleetSnapshot(titlePayload), 'Ubuntu');
+    expect(titled.sessions[0]).toMatchObject({ title: 'private pane title', nameMode: 'automatic' });
+    expect(titled.presentationRevision).toBe('0123456789abcdef');
 
     const promptPayload = JSON.parse(readFileSync(fixturePath, 'utf8'));
     promptPayload.schedules[0].prompt = 'continue';

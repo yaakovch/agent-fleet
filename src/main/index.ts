@@ -62,7 +62,7 @@ import { applyInteractionMode } from './window-mode';
 import { loadWindowBounds, loadWindowPosition, saveWindowBounds, saveWindowPosition } from './window-state';
 import { discoverWslProfiles } from './wsl-discovery';
 import { DownloadPowerPolicy } from './download-power-policy';
-import { isFleetSessionAvailable } from '../shared/fleet';
+import { isFleetSessionAvailable, sessionIdentityPresentation } from '../shared/fleet';
 import type { LocalSuggestionSettingsInput } from '../shared/local-suggestions';
 import { LocalSuggestionStore } from './local-suggestion-store';
 import { LocalSuggestionManager } from './local-suggestion-manager';
@@ -178,6 +178,7 @@ function createFleetBridge(): FleetBridgeSupervisor {
     launch: fleetBridgeLaunchFromSettings(appSettings),
     logger
   });
+  if (!appSettings.automaticSessionTitles) bridge.purgeSessionTitles();
   bridge.on('changed', () => {
     const view = getFleetView();
     if (!terminalRestored && view.status === 'live') {
@@ -444,7 +445,7 @@ function updateTrayMenu(): void {
   const recentSessions: Electron.MenuItemConstructorOptions[] = fleet.sessions.slice(0, 5).map((fleetSession) => {
     const host = fleet.hosts.find((item) => item.id === fleetSession.hostId);
     return {
-      label: `${host?.name ?? fleetSession.hostId} · ${fleetSession.name}`,
+      label: `${host?.name ?? fleetSession.hostId} · ${sessionIdentityPresentation(fleetSession).primary}`,
       click: () => void openFleetSessionById(fleetSession.id)
     };
   });
@@ -559,8 +560,10 @@ function setWidgetInteractionMode(mode: InteractionMode): InteractionMode {
 async function applyAndPersistSettings(settings: WidgetSettings): Promise<SettingsLoadResult> {
   let message: string | undefined;
   const previousLaunch = fleetBridgeLaunchFromSettings(appSettings);
+  const titlesWereEnabled = appSettings.automaticSessionTitles;
   const overlayWasEnabled = appSettings.limitsOverlayEnabled;
   appSettings = saveSettings(settings, getSettingsPath(dataDirectory));
+  if (titlesWereEnabled && !appSettings.automaticSessionTitles) fleetBridge.purgeSessionTitles();
   try {
     applyLaunchOnLogin(appSettings.launchOnLogin);
   } catch (error) {
@@ -834,6 +837,21 @@ handle(IPC_CHANNELS.renameFleetSession, async (_event, sessionId, name) => {
       hostId: session.hostId, sessionId: session.id, name, idempotencyKey: randomUUID()
     });
     return { ok: true, message: `Session renamed to ${name}` };
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.resetFleetSessionName, async (_event, sessionId) => {
+  if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
+  if (!session) return { ok: false, message: 'Session is no longer available' };
+  if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
+  try {
+    await fleetBridge.mutate('session.name.reset', {
+      hostId: session.hostId, sessionId: session.id, idempotencyKey: randomUUID()
+    });
+    return { ok: true, message: 'Automatic session title restored' };
   } catch (error) {
     return fleetMutationFailure(error);
   }
@@ -1295,32 +1313,33 @@ async function openFleetSessionById(sessionId: string, request: WorkspaceOpenReq
   if (!session || !session.internalName) return { ok: false, message: 'Session is no longer available' };
   if (!isFleetSessionAvailable(snapshot, session)) return { ok: false, message: 'Session host is offline; no changes were made' };
   try {
+    const sessionTitle = sessionIdentityPresentation(session).primary;
     const target = {
       id: session.id,
       hostId: session.hostId,
       project: session.project,
       sessionName: session.internalName,
-      label: session.name
+      label: sessionTitle
     };
     const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
     if (appSettings.fleetOpenTarget === 'agentFleet') {
       const tab = terminalManager.open(session, request);
       showDashboard();
       broadcast(IPC_CHANNELS.terminalOpened, tab);
-      return { ok: true, message: `Opened ${session.name}`, tab };
+      return { ok: true, message: `Opened ${sessionTitle}`, tab };
     }
     if (appSettings.fleetOpenTarget === 'vscode') {
       try {
         await openFleetVscode(target, distro);
-        return { ok: true, message: `Opening ${session.name} in VS Code` };
+        return { ok: true, message: `Opening ${sessionTitle} in VS Code` };
       } catch (error) {
         logger.warn('VS Code wtmux integration unavailable; falling back to Windows Terminal', error);
         await openFleetTerminal(target, distro);
-        return { ok: true, message: `Opening ${session.name} in Windows Terminal · repair the wtmux VS Code extension to use the current window` };
+        return { ok: true, message: `Opening ${sessionTitle} in Windows Terminal · repair the wtmux VS Code extension to use the current window` };
       }
     }
     await openFleetTerminal(target, distro);
-    return { ok: true, message: `Opening ${session.name}` };
+    return { ok: true, message: `Opening ${sessionTitle}` };
   } catch (error) {
     logger.warn('Could not open fleet session terminal', error);
     return { ok: false, message: 'Windows Terminal could not be opened' };
@@ -1363,7 +1382,7 @@ async function openFleetSessionExternallyById(
     hostId: session.hostId,
     project: session.project,
     sessionName: session.internalName,
-    label: session.name
+    label: sessionIdentityPresentation(session).primary
   };
   const distro = fleetBridgeLaunchFromSettings(appSettings).distro;
   try {

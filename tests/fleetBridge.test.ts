@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FleetBridgeSupervisor, fleetBridgeLaunchFromSettings } from '../src/main/fleet-bridge';
+import { FleetBridgeSupervisor, fleetBridgeLaunchFromSettings, redactSessionTitles } from '../src/main/fleet-bridge';
 import { createDefaultSettings } from '../src/shared/settings';
 import type { FleetBridgeView } from '../src/shared/fleet-protocol';
 
@@ -19,9 +19,19 @@ describe('fleet bridge supervisor', () => {
     const launch = fleetBridgeLaunchFromSettings(createDefaultSettings());
     expect(launch).toEqual({
       command: 'wsl.exe',
-      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'],
+      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing', '--session-titles'],
       distro: 'Ubuntu'
     });
+  });
+
+  it('purges negotiated titles and their presentation revision from cached state', () => {
+    const enhanced = structuredClone(fixture);
+    enhanced.presentationRevision = 'title-revision';
+    enhanced.sessions[0].title = 'Fix the release picker';
+    enhanced.sessions[0].nameMode = 'automatic';
+    const redacted = redactSessionTitles(enhanced);
+    expect(redacted.presentationRevision).toBeUndefined();
+    expect(redacted.sessions[0]).toMatchObject({ name: 'project:1', title: '', nameMode: 'automatic' });
   });
 
   it('accepts a correlated snapshot and saves only the verified cache', async () => {

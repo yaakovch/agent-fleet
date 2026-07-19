@@ -45,6 +45,7 @@ export const IPC_CHANNELS = {
   localSuggestionsSettingsUpdated: 'localSuggestions:settingsUpdated',
   killFleetSession: 'fleet:killSession',
   renameFleetSession: 'fleet:renameSession',
+  resetFleetSessionName: 'fleet:resetSessionName',
   getFleetSessionModel: 'fleet:getSessionModel',
   setFleetSessionModel: 'fleet:setSessionModel',
   cancelFleetSessionModel: 'fleet:cancelSessionModel',

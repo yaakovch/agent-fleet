@@ -33,7 +33,8 @@ export interface BridgeSessionSnapshot {
   hostId: string;
   internalName: string;
   name: string;
-  title: '';
+  title: string;
+  nameMode: 'automatic' | 'manual';
   project: string;
   projectPath: string;
   locationKind: 'project' | 'custom';
@@ -92,6 +93,7 @@ export interface BridgeLimitSnapshot {
 
 export interface BridgeFleetSnapshot {
   revision: string;
+  presentationRevision?: string;
   generatedAt: string;
   hosts: BridgeHostSnapshot[];
   sessions: BridgeSessionSnapshot[];
@@ -123,7 +125,7 @@ export interface FleetBridgeView {
 
 export type FleetMutationMethod = 'session.create' | 'session.kill' | 'schedule.cancel' | 'schedule.create' | 'schedule.update'
   | 'attention.dismiss'
-  | 'host.doctor' | 'host.update' | 'session.rename'
+  | 'host.doctor' | 'host.update' | 'session.rename' | 'session.name.reset'
   | 'directory.list' | 'directory.create' | 'repository.list' | 'repository.search'
   | 'session.model.get' | 'session.model.set' | 'session.model.cancel'
   | 'preset.upsert' | 'preset.delete'
@@ -248,14 +250,17 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   if ('limits' in candidate) snapshotFields.push('limits');
   if ('presets' in candidate) snapshotFields.push('presets');
   if ('pairingRequests' in candidate) snapshotFields.push('pairingRequests');
+  if ('presentationRevision' in candidate) snapshotFields.push('presentationRevision');
   const root = exactObject(input, snapshotFields, 'snapshot');
   rejectPrivateFields(root);
   const revision = text(root.revision, 'revision', 64, false);
+  const presentationRevision = 'presentationRevision' in root
+    ? text(root.presentationRevision, 'presentationRevision', 64, false) : undefined;
   const generatedAt = instant(root.generatedAt, 'generatedAt', false) as string;
   const hosts = array(root.hosts, 'hosts', 256).map(parseHost);
   const hostIds = new Set(hosts.map((host) => host.id));
   if (hostIds.size !== hosts.length) fail('hosts contain a duplicate id');
-  const sessions = array(root.sessions, 'sessions', 500).map((value) => parseSession(value, hostIds));
+  const sessions = array(root.sessions, 'sessions', 500).map((value) => parseSession(value, hostIds, Boolean(presentationRevision)));
   const schedules = array(root.schedules, 'schedules', 500).map((value) => parseSchedule(value, hostIds));
   const attention = array(root.attention, 'attention', 500).map((value) => parseAttention(value, hostIds));
   const limits = 'limits' in root ? array(root.limits, 'limits', 100).map((value) => parseLimit(value, hostIds)) : [];
@@ -263,7 +268,7 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   const pairingRequests = 'pairingRequests' in root
     ? array(root.pairingRequests, 'pairingRequests', 256).map(parsePairingRequest)
     : [];
-  return { revision, generatedAt, hosts, sessions, schedules, attention, limits, presets, pairingRequests };
+  return { revision, ...(presentationRevision ? { presentationRevision } : {}), generatedAt, hosts, sessions, schedules, attention, limits, presets, pairingRequests };
 }
 
 export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): FleetSnapshot {
@@ -271,6 +276,7 @@ export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): Fleet
   const hostTimeZones = new Map(raw.hosts.map((host) => [host.id, host.timeZone]));
   return {
     revision: raw.revision,
+    ...(raw.presentationRevision ? { presentationRevision: raw.presentationRevision } : {}),
     generatedAt: raw.generatedAt,
     registrySyncedAt: raw.generatedAt,
     controller: { distro, status: raw.hosts.some((host) => host.status === 'healthy') ? 'healthy' : 'offline', protocolVersion: 1 },
@@ -472,23 +478,28 @@ function parseHost(input: unknown): BridgeHostSnapshot {
   };
 }
 
-function parseSession(input: unknown, hostIds: ReadonlySet<string>): BridgeSessionSnapshot {
+function parseSession(input: unknown, hostIds: ReadonlySet<string>, includeTitles: boolean): BridgeSessionSnapshot {
   const candidate = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
   const fields = [
     'id', 'hostId', 'internalName', 'name', 'title', 'project', 'tool', 'backend', 'activity',
     'attached', 'updatedAt', 'pendingScheduleCount'
   ];
   if ('projectPath' in candidate || 'locationKind' in candidate) fields.push('projectPath', 'locationKind');
+  if ('nameMode' in candidate) fields.push('nameMode');
   const value = exactObject(input, fields, 'session');
   const hostId = text(value.hostId, 'session.hostId', 160, false);
   if (!hostIds.has(hostId)) fail('session references an unknown host');
-  if (value.title !== '') fail('pane-derived session titles are forbidden');
+  const nameMode = 'nameMode' in value ? oneOf(value.nameMode, 'session.nameMode', ['automatic', 'manual']) : 'automatic';
+  if (value.title !== '' && (!includeTitles || !('nameMode' in value))) {
+    fail('pane-derived session titles are forbidden without negotiation');
+  }
   return {
     id: text(value.id, 'session.id', 320, false),
     hostId,
     internalName: text(value.internalName, 'session.internalName', 128, false),
     name: text(value.name, 'session.name', 256, false),
-    title: '',
+    title: text(value.title, 'session.title', 120),
+    nameMode,
     project: text(value.project, 'session.project', 256),
     projectPath: 'projectPath' in value ? text(value.projectPath, 'session.projectPath', 2048) : '',
     locationKind: 'locationKind' in value ? oneOf(value.locationKind, 'session.locationKind', ['project', 'custom']) : 'project',
@@ -623,7 +634,8 @@ function toSession(session: BridgeSessionSnapshot, presets: FleetFavorite[]): Fl
     hostId: session.hostId,
     internalName: session.internalName,
     name: session.name,
-    title: '',
+    title: session.title,
+    nameMode: session.nameMode,
     project: session.project,
     projectPath: session.projectPath,
     tool: session.tool,

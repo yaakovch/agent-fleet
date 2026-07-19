@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0-beta.20 - 2026-07-19
+
+- Reused the coding-agent titles already shown by tmux and VS Code throughout
+  the Sessions dashboard, workspace rail, embedded tabs, tray, and external
+  open targets while retaining the stable `project:N` identity underneath.
+- Preserved manual rename overrides and added an explicit reset to automatic
+  naming without changing the internal tmux session identity.
+- Added a default-on per-device privacy toggle that stops title negotiation and
+  purges cached titles, plus a separate presentation revision so title refreshes
+  do not invalidate fleet mutations or remount live terminals.
+
 ## 0.11.0-beta.19 - 2026-07-19
 
 - Added Off, Manual, and Automatic local-reply modes for Native conversations.

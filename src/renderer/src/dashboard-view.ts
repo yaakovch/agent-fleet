@@ -56,7 +56,7 @@ import type {
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
-import { isFleetSessionAvailable } from '../../shared/fleet';
+import { isFleetSessionAvailable, sessionIdentityPresentation } from '../../shared/fleet';
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
 import type { FleetDownloadJob } from '../../shared/app';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
@@ -415,13 +415,25 @@ export class DashboardPrototype {
       this.render();
       return true;
     }
+    if (action === 'dashboard-reset-session-name') {
+      const session = this.sessionFromControl(control);
+      if (!session) return this.showToast('Session is no longer available');
+      if (!this.sessionAvailable(session)) return this.showToast(`${session.name}'s host is offline; no changes were made`);
+      this.sessionMenuId = '';
+      void window.limitsWidget.resetFleetSessionName(session.id).then((result) => {
+        this.showToast(result.message);
+        this.render();
+      });
+      return true;
+    }
     if (action === 'dashboard-session-details') {
       const session = this.sessionFromControl(control);
       if (!session) return this.showToast('Session is no longer available');
       this.sessionMenuId = '';
+      const identity = sessionIdentityPresentation(session);
       this.modal = {
-        title: `Session details · ${session.name}`,
-        body: `${session.hostId} · ${session.backend} · ${session.tool}${session.projectPath ? ` · ${session.projectPath}` : ' · Path unavailable for this older session'}`,
+        title: `Session details · ${identity.primary}`,
+        body: `${session.hostId} · ${session.backend} · ${session.tool}${session.projectPath ? ` · ${session.projectPath}` : ' · Path unavailable for this older session'}${session.title ? ` · Automatic title: ${session.title}` : ''} · Naming: ${session.nameMode === 'manual' ? 'manual' : 'automatic'}`,
         confirm: 'Done'
       };
       this.render();
@@ -787,13 +799,15 @@ export class DashboardPrototype {
     const session = this.snapshot.sessions.find((item) => item.id === this.sessionMenuId);
     if (!session) return '';
     const unavailable = !this.sessionAvailable(session);
+    const identity = sessionIdentityPresentation(session);
     return `<div class="fleet-modal-backdrop"><section class="fleet-modal session-more-modal" role="dialog" aria-modal="true" data-session-id="${escapeAttr(session.id)}">
-      <div class="repository-heading"><div><small>Session actions</small><h2>${escapeHtml(session.name)}</h2><p>${escapeHtml(session.project)} · ${escapeHtml(session.hostId)}</p></div><button class="quiet-button icon-only" data-action="session-more-close" aria-label="Close">${icon('x')}</button></div>
+      <div class="repository-heading"><div><small>Session actions</small><h2>${escapeHtml(identity.primary)}</h2><p>${escapeHtml(identity.secondary)}</p></div><button class="quiet-button icon-only" data-action="session-more-close" aria-label="Close">${icon('x')}</button></div>
       <div class="session-more-actions">
         <button data-action="dashboard-download-file" ${unavailable ? 'disabled' : ''}>${icon('download')}<span><strong>Download a file</strong><small>${unavailable ? 'Host unavailable' : 'Browse this session’s repository'}</small></span>${icon('chevron-right')}</button>
         <button data-action="dashboard-session-details">${icon('eye')}<span><strong>Session details</strong><small>Host, backend, tool, and path</small></span>${icon('chevron-right')}</button>
         <button data-action="dashboard-copy">${icon('copy')}<span><strong>Copy attach command</strong><small>Use from another terminal</small></span>${icon('chevron-right')}</button>
         <button data-action="dashboard-rename-session" ${unavailable ? 'disabled' : ''}>${icon('sliders-horizontal')}<span><strong>Rename session</strong><small>Keep its internal tmux identity</small></span>${icon('chevron-right')}</button>
+        ${session.nameMode === 'manual' ? `<button data-action="dashboard-reset-session-name" ${unavailable ? 'disabled' : ''}>${icon('refresh-cw')}<span><strong>Use automatic title</strong><small>Remove the manual name override</small></span>${icon('chevron-right')}</button>` : ''}
         ${unavailable ? `<button data-action="dashboard-hide-session">${icon('x')}<span><strong>Remove from this device</strong><small>Hide this last-known record until the host reconnects</small></span>${icon('chevron-right')}</button>` : `<button class="danger-action" data-action="dashboard-kill-session">${icon('trash-2')}<span><strong>Kill session</strong><small>Stops it and cancels pending schedules</small></span>${icon('chevron-right')}</button>`}
       </div>
     </section></div>`;
@@ -810,7 +824,7 @@ export class DashboardPrototype {
     const pending = this.repositoryPendingDownload;
     const progress = job?.total ? Math.min(100, Math.round(job.received * 100 / job.total)) : 0;
     return `<div class="fleet-modal-backdrop"><section class="fleet-modal repository-modal" role="dialog" aria-modal="true">
-      <div class="repository-heading"><div><small>Download from repository</small><h2>${escapeHtml(session.name)}</h2><p>${escapeHtml(page?.rootName ?? session.project)}${path ? ` / ${escapeHtml(path)}` : ''}</p></div><button class="quiet-button icon-only" data-action="repository-close" aria-label="Close">${icon('x')}</button></div>
+      <div class="repository-heading"><div><small>Download from repository</small><h2>${escapeHtml(sessionIdentityPresentation(session).primary)}</h2><p>${escapeHtml(page?.rootName ?? session.project)}${path ? ` / ${escapeHtml(path)}` : ''}</p></div><button class="quiet-button icon-only" data-action="repository-close" aria-label="Close">${icon('x')}</button></div>
       <div class="repository-toolbar">
         <button class="quiet-button" data-action="repository-up" ${!page?.parentPath && !path ? 'disabled' : ''}>${icon('chevron-right')}Up</button>
         <label><span class="sr-only">Search file names</span><input data-repository-search placeholder="Search file names" value="${escapeAttr(this.repositoryQuery)}"></label>
@@ -1109,7 +1123,7 @@ export class DashboardPrototype {
         ${notificationToggle('pairing', 'Pairing requests', 'New verified device proposals', draft)}
       </div><div class="inline-dashboard-actions"><button class="quiet-button" data-action="dashboard-pause">${icon('pause')}Pause for one hour</button><button class="primary-button" data-action="dashboard-save-settings" ${dirty ? '' : 'disabled'}>${icon('check')}Save changes</button></div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Tray appearance</h2><p>Worst unresolved fleet state controls severity</p></div>${icon('gauge')}</div><div class="tray-variants"><span><i class="status-healthy"></i>Healthy</span><span><i class="status-attention"></i>Attention</span><span><i class="status-failure"></i>Failure</span><span><i class="status-offline"></i>Disconnected</span></div></section>
-      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Privacy and diagnostics</h2><p>Metadata only, local and bounded</p></div>${icon('shield-check')}</div><p class="privacy-copy">Prompts, responses, transcripts, terminal screens, and credentials are never collected. Diagnostics are generated only when requested and can be previewed before sharing.</p><div class="inline-dashboard-actions"><button class="quiet-button">${icon('folder-open')}Preview diagnostics</button><button class="quiet-button">${icon('wrench')}Run doctor</button></div></section>
+      <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Privacy and diagnostics</h2><p>Metadata only, local and bounded</p></div>${icon('shield-check')}</div><div class="dashboard-form-grid">${settingsToggle('automaticSessionTitles', 'Automatic coding-session titles', 'Reads one bounded host-derived label; turning this off purges cached titles on this PC', draft.automaticSessionTitles)}</div><p class="privacy-copy">Complete prompts, responses, transcripts, terminal screens, and credentials are never collected. Diagnostics are generated only when requested and can be previewed before sharing.</p><div class="inline-dashboard-actions"><button class="quiet-button">${icon('folder-open')}Preview diagnostics</button><button class="quiet-button">${icon('wrench')}Run doctor</button></div></section>
     </div>`;
   }
 
@@ -1120,6 +1134,7 @@ export class DashboardPrototype {
     else if (key === 'fleetOpenTarget' && (control.value === 'agentFleet' || control.value === 'windowsTerminal' || control.value === 'vscode')) {
       this.settingsDraft.fleetOpenTarget = control.value;
     } else if (key === 'launchOnLogin') this.settingsDraft.launchOnLogin = checked;
+    else if (key === 'automaticSessionTitles') this.settingsDraft.automaticSessionTitles = checked;
     else if (key === 'limitsOverlayEnabled') this.settingsDraft.limitsOverlayEnabled = checked;
     else if (key === 'terminal.theme' && (control.value === 'fleetDark' || control.value === 'midnight' || control.value === 'light')) this.settingsDraft.terminalAppearance.theme = control.value;
     else if (key === 'terminal.fontFamily') this.settingsDraft.terminalAppearance.fontFamily = control.value.slice(0, 160);
@@ -1142,9 +1157,10 @@ export class DashboardPrototype {
   private renderSessionRow(session: FleetSession, compact: boolean): string {
     const host = this.snapshot.hosts.find((item) => item.id === session.hostId);
     const unavailable = !this.sessionAvailable(session);
+    const identity = sessionIdentityPresentation(session);
     return `<div class="session-row ${compact ? 'is-compact' : ''} ${unavailable ? 'unavailable' : ''}" data-session-id="${escapeAttr(session.id)}">
       <span class="tool-icon tool-${session.tool}">${toolIcon(session.tool)}</span>
-      <span class="session-primary"><strong>${escapeHtml(session.name)}</strong><small>${escapeHtml(session.title || 'Managed tmux session')}</small></span>
+      <span class="session-primary"><strong>${escapeHtml(identity.primary)}</strong><small>${escapeHtml(identity.secondary || 'Managed tmux session')}</small></span>
       <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label ${unavailable ? 'activity-unavailable' : `activity-${session.activity}`}"><i></i>${unavailable ? 'Unavailable' : capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
@@ -1225,7 +1241,7 @@ export class DashboardPrototype {
   private renderModal(modal: NonNullable<ModalState>): string {
     const schedulableSessions = this.visibleSessions().filter((session) => this.sessionAvailable(session));
     const scheduleForm = modal.action?.kind === 'create-schedule'
-      ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${schedulableSessions.map((session) => `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(session.name)} · ${escapeHtml(session.hostId)}</option>`).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
+      ? `<div class="dashboard-form-grid"><label>Session<select data-modal-session>${schedulableSessions.map((session) => { const identity = sessionIdentityPresentation(session); return `<option value="${escapeAttr(session.id)}" ${session.id === modal.action?.id ? 'selected' : ''}>${escapeHtml(identity.primary)} · ${escapeHtml(identity.stableName)} · ${escapeHtml(session.hostId)}</option>`; }).join('')}</select></label><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
       : modal.action?.kind === 'update-schedule'
         ? `<div class="dashboard-form-grid"><label>Deliver at<input data-modal-deliver-at type="datetime-local" value="${defaultScheduleTime(modal.deliverAt)}"></label></div>`
         : '';

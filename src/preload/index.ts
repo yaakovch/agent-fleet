@@ -95,6 +95,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.killFleetSession, sessionId),
   renameFleetSession: (sessionId: string, name: string): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.renameFleetSession, sessionId, name),
+  resetFleetSessionName: (sessionId: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.resetFleetSessionName, sessionId),
   getFleetSessionModel: (sessionId: string, includeCatalog = false): Promise<FleetModelControlResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.getFleetSessionModel, sessionId, includeCatalog),
   setFleetSessionModel: (

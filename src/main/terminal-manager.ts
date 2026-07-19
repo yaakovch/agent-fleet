@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import * as nodePty from 'node-pty';
 import type { Logger } from 'electron-log';
-import type { FleetSession } from '../shared/fleet';
+import { sessionIdentityPresentation, type FleetSession } from '../shared/fleet';
 import type {
   SessionViewMode,
   TerminalFailure,
@@ -113,7 +113,7 @@ export class TerminalManager {
           hostId: session.hostId,
           project: session.project,
           internalName: session.internalName,
-          label: session.name,
+          label: sessionIdentityPresentation(session).primary,
           tool: session.tool,
           backend: session.backend === 'windows' ? 'windows' as const : 'linux' as const,
           status: 'connecting' as const,
@@ -141,6 +141,13 @@ export class TerminalManager {
     for (const tab of this.tabs.values()) {
       if (tab.closed) continue;
       const session = this.options.resolveSession(tab.descriptor.sessionId);
+      if (session) {
+        const label = sessionIdentityPresentation(session).primary;
+        if (tab.descriptor.label !== label) {
+          tab.descriptor.label = label;
+          this.emitStatus(tab);
+        }
+      }
       const hostId = session?.hostId ?? tab.descriptor.hostId;
       if (!this.hostAvailable(hostId)) {
         this.stopProcess(tab);
@@ -172,7 +179,7 @@ export class TerminalManager {
         hostId: session.hostId,
         project: session.project,
         internalName: session.internalName,
-        label: session.name,
+        label: sessionIdentityPresentation(session).primary,
         tool: session.tool,
         backend: session.backend === 'windows' ? 'windows' : 'linux',
         status: 'connecting',
@@ -209,7 +216,7 @@ export class TerminalManager {
       hostId: session.hostId,
       project: session.project,
       internalName: session.internalName,
-      label: session.name,
+      label: sessionIdentityPresentation(session).primary,
       tool: session.tool,
       backend: session.backend === 'windows' ? 'windows' : 'linux',
       viewMode: 'native',
@@ -426,7 +433,7 @@ export class TerminalManager {
       hostId: session.hostId,
       project: session.project,
       internalName: session.internalName,
-      label: session.name,
+      label: sessionIdentityPresentation(session).primary,
       tool: session.tool,
       backend: session.backend === 'windows' ? 'windows' : 'linux',
       status: tab.reconnectIndex ? 'reconnecting' : 'connecting',
@@ -439,7 +446,7 @@ export class TerminalManager {
       hostId: session.hostId,
       project: session.project,
       sessionName: session.internalName,
-      label: session.name
+      label: sessionIdentityPresentation(session).primary
     }, this.options.getDistro());
     const generation = ++tab.generation;
     try {

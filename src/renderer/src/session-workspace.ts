@@ -9,7 +9,7 @@ import type { WidgetSettings } from '../../shared/settings';
 import type { TerminalTabDescriptor, TerminalWorkspaceState } from '../../shared/terminal';
 import type { FleetAttention, FleetSession, FleetSnapshot } from '../../shared/fleet';
 import type { FleetModelControlState, FleetModelOption } from '../../shared/fleet-protocol';
-import { isFleetSessionAvailable, reconcileHiddenUnavailableSessions } from '../../shared/fleet';
+import { isFleetSessionAvailable, reconcileHiddenUnavailableSessions, sessionIdentityPresentation } from '../../shared/fleet';
 import type {
   ConversationAnswer, ConversationFrame, ConversationItem, ConversationQuestion, StagedAttachment,
   ToolPresentationBlock
@@ -821,7 +821,7 @@ export class SessionWorkspace {
     const focused = pane.id === this.workspaceState.layout.focusedPaneId;
     const renderState = workspacePaneRenderState(pane, [...this.tabs.values()]);
     if (renderState === 'opening') return `<section class="workspace-pane opening ${focused ? 'focused' : ''}" data-pane-id="${escapeAttr(pane.id)}" data-pane-number="${number}" tabindex="-1">
-      ${this.renderPaneChip(pane, number, session?.name, unavailable)}
+      ${this.renderPaneChip(pane, number, session ? sessionIdentityPresentation(session).primary : undefined, unavailable)}
       <div class="workspace-opening-session" role="status"><span>&gt;_</span><strong>Opening session…</strong><small>Preparing the ${pane.viewMode === 'native' ? 'Native conversation' : 'Terminal'} view.</small></div>
     </section>`;
     if (!tab) return `<section class="workspace-pane empty ${focused ? 'focused' : ''}" data-pane-id="${escapeAttr(pane.id)}" data-pane-number="${number}" tabindex="-1">
@@ -842,7 +842,7 @@ export class SessionWorkspace {
       ? this.fleetSnapshot?.sessions.find((item) => item.id === pane.sessionId)
       : undefined;
     return workspacePanePresentation(pane, [...this.tabs.values()], {
-      sessionName: sessionName ?? session?.name,
+      sessionName: sessionName ?? (session ? sessionIdentityPresentation(session).primary : undefined),
       unavailable: unavailable ?? Boolean(session && this.fleetSnapshot
         && !isFleetSessionAvailable(this.fleetSnapshot, session))
     });
@@ -1007,8 +1007,9 @@ export class SessionWorkspace {
     const paneNumber = pane ? workspacePanes(this.workspaceState.layout).findIndex((item) => item.id === pane.id) + 1 : 0;
     const attention = this.fleetSnapshot?.attention.filter((item) => item.targetSessionId === session.id).length ?? 0;
     const unavailable = Boolean(this.fleetSnapshot && !isFleetSessionAvailable(this.fleetSnapshot, session));
+    const identity = sessionIdentityPresentation(session);
     return `<div class="workspace-rail-session ${pane ? 'visible' : ''} ${unavailable ? 'unavailable' : ''}" data-rail-session-id="${escapeAttr(session.id)}" draggable="${unavailable ? 'false' : 'true'}">
-      <button data-action="workspace-rail-session" data-workspace-action title="${unavailable ? 'Host unavailable' : `Open ${escapeAttr(session.name)}`}" ${unavailable ? 'disabled' : ''}><span class="rail-tool rail-tool-${session.tool}">${session.tool.slice(0, 1).toUpperCase()}</span><span><strong>${escapeHtml(session.name)}</strong><small>${escapeHtml(unavailable ? `Unavailable · ${session.hostId}` : `${session.hostId} · ${session.project}`)}</small></span>${paneNumber ? `<b class="rail-pane-number">${paneNumber}</b>` : ''}${attention && !unavailable ? `<b class="rail-attention">${attention}</b>` : ''}<i class="${unavailable ? 'activity-unavailable' : `activity-${session.activity}`}"></i></button>
+      <button data-action="workspace-rail-session" data-workspace-action title="${unavailable ? 'Host unavailable' : `Open ${escapeAttr(identity.primary)}`}" ${unavailable ? 'disabled' : ''}><span class="rail-tool rail-tool-${session.tool}">${session.tool.slice(0, 1).toUpperCase()}</span><span><strong>${escapeHtml(identity.primary)}</strong><small>${escapeHtml(unavailable ? `Unavailable · ${session.hostId}` : identity.secondary)}</small></span>${paneNumber ? `<b class="rail-pane-number">${paneNumber}</b>` : ''}${attention && !unavailable ? `<b class="rail-attention">${attention}</b>` : ''}<i class="${unavailable ? 'activity-unavailable' : `activity-${session.activity}`}"></i></button>
       <button class="rail-more" data-action="workspace-rail-more" data-workspace-action title="More actions">•••</button>
     </div>`;
   }
@@ -1251,7 +1252,7 @@ export class SessionWorkspace {
     const pending = state.pending;
     const validModel = /^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,159}$/u.test(this.modelDialogModelId);
     return `<div class="model-control-backdrop"><section class="model-control-dialog" role="dialog" aria-modal="true" aria-labelledby="model-control-title">
-      <header><div><small>${escapeHtml(session.tool)} · current session only</small><h2 id="model-control-title">${escapeHtml(session.name)}</h2><p>Effective: ${escapeHtml(effective.modelLabel)} · ${escapeHtml(effective.effortLabel)}</p></div><button data-action="model-control-close" data-workspace-action aria-label="Close">×</button></header>
+      <header><div><small>${escapeHtml(session.tool)} · current session only</small><h2 id="model-control-title">${escapeHtml(sessionIdentityPresentation(session).primary)}</h2><p>Effective: ${escapeHtml(effective.modelLabel)} · ${escapeHtml(effective.effortLabel)}</p></div><button data-action="model-control-close" data-workspace-action aria-label="Close">×</button></header>
       ${pending ? `<div class="model-control-pending"><span><strong>Queued for idle</strong><small>${escapeHtml(pending.modelId)} · ${escapeHtml(pending.effortId)} · expires ${escapeHtml(new Date(pending.expiresAt).toLocaleTimeString())}</small></span><button data-action="model-control-cancel-pending" data-workspace-action>Cancel queued change</button></div>` : ''}
       <label class="model-control-field"><span>Model</span><select data-model-picker ${this.modelDialogCustom ? 'disabled' : ''}>${catalog.models.map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === this.modelDialogModelId ? 'selected' : ''}>${escapeHtml(item.label)}${item.isDefault ? ' (Default)' : ''}</option>`).join('')}</select><small>${escapeHtml(selectedModel?.description ?? 'Enter a provider model ID exposed to your account.')}</small></label>
       ${catalog.customAllowed ? `<label class="model-control-custom"><input type="checkbox" data-model-custom-toggle ${this.modelDialogCustom ? 'checked' : ''}><span>Other model ID</span></label>${this.modelDialogCustom ? `<label class="model-control-field"><span>Provider model ID</span><input data-model-custom-id value="${escapeAttr(this.modelDialogModelId)}" maxlength="160" autocomplete="off" spellcheck="false"><small>Letters, numbers, dots, slashes, colons, @, +, underscores, and dashes only.</small></label>` : ''}` : ''}

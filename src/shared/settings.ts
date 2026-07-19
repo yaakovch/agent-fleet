@@ -36,7 +36,7 @@ export interface CodexProfileSettings {
 }
 
 export interface WidgetSettings {
-  version: 4;
+  version: 5;
   codexProfiles: CodexProfileSettings[];
   codexSortMode: CodexSortMode;
   claudeEnabled: boolean;
@@ -44,6 +44,7 @@ export interface WidgetSettings {
   activeOpacity: number;
   launchOnLogin: boolean;
   automaticUpdates: boolean;
+  automaticSessionTitles: boolean;
   onboardingComplete: boolean;
   fleetControllerDistro: string;
   fleetOpenTarget: FleetOpenTarget;
@@ -75,7 +76,7 @@ export interface SettingsImportPreview {
   warnings: string[];
 }
 
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 export const SETTINGS_EXPORT_FORMAT = 'ai-limits-widget-settings';
 export const SETTINGS_EXPORT_VERSION = 1;
 export const MIN_OPACITY = 0;
@@ -103,6 +104,7 @@ export function createDefaultSettings(): WidgetSettings {
     activeOpacity: DEFAULT_ACTIVE_OPACITY,
     launchOnLogin: false,
     automaticUpdates: true,
+    automaticSessionTitles: true,
     onboardingComplete: false,
     fleetControllerDistro: 'Ubuntu',
     fleetOpenTarget: 'agentFleet',
@@ -129,7 +131,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
   }
 
   const raw = input as Record<string, unknown>;
-  if (![1, 2, 3, SETTINGS_VERSION].includes(Number(raw.version))) {
+  if (![1, 2, 3, 4, SETTINGS_VERSION].includes(Number(raw.version))) {
     return { settings: defaults, recovered: true, message: 'Settings version was unsupported; defaults loaded' };
   }
 
@@ -147,6 +149,8 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
       launchOnLogin: typeof raw.launchOnLogin === 'boolean' ? raw.launchOnLogin : defaults.launchOnLogin,
       automaticUpdates:
         typeof raw.automaticUpdates === 'boolean' ? raw.automaticUpdates : defaults.automaticUpdates,
+      automaticSessionTitles:
+        typeof raw.automaticSessionTitles === 'boolean' ? raw.automaticSessionTitles : defaults.automaticSessionTitles,
       onboardingComplete:
         typeof raw.onboardingComplete === 'boolean'
           ? raw.onboardingComplete

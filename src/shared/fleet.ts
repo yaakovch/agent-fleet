@@ -24,6 +24,7 @@ export interface FleetSession {
   internalName?: string;
   name: string;
   title: string;
+  nameMode?: 'automatic' | 'manual';
   project: string;
   projectPath: string;
   tool: FleetTool;
@@ -103,6 +104,7 @@ export interface FleetUsageLimit {
 
 export interface FleetSnapshot {
   revision: string;
+  presentationRevision?: string;
   generatedAt: string;
   registrySyncedAt: string;
   controller: { distro: string; status: FleetSeverity; protocolVersion: number };
@@ -114,6 +116,21 @@ export interface FleetSnapshot {
   events: FleetEvent[];
   pairingRequests: PairingRequest[];
   limits: FleetUsageLimit[];
+}
+
+export interface SessionIdentityPresentation {
+  primary: string;
+  secondary: string;
+  stableName: string;
+}
+
+export function sessionIdentityPresentation(session: FleetSession): SessionIdentityPresentation {
+  const automatic = session.nameMode !== 'manual';
+  const primary = automatic && session.title ? session.title : session.name;
+  const secondary = automatic && session.title
+    ? [session.name, session.hostId, session.project].filter(Boolean).join(' · ')
+    : [session.hostId, session.project].filter(Boolean).join(' · ');
+  return { primary, secondary, stableName: session.name };
 }
 
 export function isFleetSessionAvailable(snapshot: FleetSnapshot, session: FleetSession): boolean {

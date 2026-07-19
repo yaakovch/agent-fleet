@@ -124,6 +124,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
 
   refreshAndWait(timeoutMs = 5_000): Promise<FleetBridgeView> {
     const revision = this.snapshot?.revision ?? '';
+    const presentationRevision = this.snapshot?.presentationRevision ?? '';
     return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (error?: FleetMutationError) => {
@@ -135,7 +136,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
       };
       const changed = () => {
         const view = this.getView();
-        if (view.status === 'live' && view.snapshot.revision !== revision) finish();
+        if (view.status === 'live' && (view.snapshot.revision !== revision
+          || (view.snapshot.presentationRevision ?? '') !== presentationRevision)) finish();
         else if (view.status === 'error' || this.stopped) finish(new FleetMutationError('host_offline', 'Fleet controller is not live'));
       };
       const timeout = setTimeout(() => finish(new FleetMutationError('timeout', 'Fleet refresh timed out')), timeoutMs);
@@ -152,6 +154,14 @@ export class FleetBridgeSupervisor extends EventEmitter {
       : emptyFleetSnapshot(this.options.launch.distro);
     snapshot.controller.status = this.status === 'live' ? 'healthy' : this.status === 'error' ? 'failure' : 'offline';
     return { status: this.status, snapshot, cacheSavedAt: this.cacheSavedAt, errorCode: this.errorCode };
+  }
+
+  purgeSessionTitles(): void {
+    if (!this.snapshot) return;
+    this.snapshot = redactSessionTitles(this.snapshot);
+    this.cacheSavedAt = new Date().toISOString();
+    this.saveCache(this.snapshot, this.cacheSavedAt);
+    this.emitChanged();
   }
 
   mutate(method: 'directory.list', params: Record<string, unknown>): Promise<FleetDirectoryListing>;
@@ -286,12 +296,15 @@ export class FleetBridgeSupervisor extends EventEmitter {
     if (value.protocolVersion !== FLEET_PROTOCOL_VERSION) throw new Error('Unsupported fleet protocol version');
     this.lastFrameAt = Date.now();
     if (value.type === 'event') {
-      exactKeys(value, ['protocolVersion', 'type', 'eventId', 'event', 'timestamp', 'revision', 'data'], 'event');
+      const eventKeys = ['protocolVersion', 'type', 'eventId', 'event', 'timestamp', 'revision', 'data'];
+      if ('presentationRevision' in value) eventKeys.push('presentationRevision');
+      exactKeys(value, eventKeys, 'event');
       if (value.event !== 'fleet.heartbeat' || typeof value.revision !== 'string') throw new Error('Invalid heartbeat');
       const data = object(value.data, 'heartbeat data');
       exactKeys(data, ['hostCount'], 'heartbeat data');
       if (!Number.isInteger(data.hostCount)) throw new Error('Invalid heartbeat host count');
-      if (!this.snapshot || value.revision !== this.snapshot.revision) this.requestSnapshot();
+      if (!this.snapshot || value.revision !== this.snapshot.revision
+        || value.presentationRevision !== this.snapshot.presentationRevision) this.requestSnapshot();
       return;
     }
     if (this.pendingMutation && value.requestId === this.pendingMutation.requestId) {
@@ -603,7 +616,18 @@ export function fleetBridgeLaunchFromSettings(settings: WidgetSettings): FleetBr
   const args = profile
     ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio', '--pairing']
     : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'];
+  if (settings.automaticSessionTitles) args.push('--session-titles');
   return { command: 'wsl.exe', args, distro };
+}
+
+export function redactSessionTitles(snapshot: BridgeFleetSnapshot): BridgeFleetSnapshot {
+  const { presentationRevision: _presentationRevision, ...rest } = snapshot;
+  return {
+    ...rest,
+    sessions: snapshot.sessions.map(({ nameMode: _nameMode, ...session }) => ({
+      ...session, title: '', nameMode: 'automatic'
+    }))
+  };
 }
 
 function object(input: unknown, label: string): Record<string, unknown> {

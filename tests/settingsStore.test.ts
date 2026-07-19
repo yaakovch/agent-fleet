@@ -31,6 +31,7 @@ describe('settings store', () => {
     expect(result.settings.fleetOpenTarget).toBe('agentFleet');
     expect(result.settings.terminalAppearance.fontSize).toBe(16);
     expect(result.settings.fleetNotifications.hostState).toBe(true);
+    expect(result.settings.automaticSessionTitles).toBe(true);
   });
 
   it('recovers machine-neutral defaults when settings are unreadable', () => {
@@ -74,7 +75,8 @@ describe('settings store', () => {
     );
     const result = loadSettings(settingsPath);
     expect(result.migrated).toBe(true);
-    expect(result.settings.version).toBe(4);
+    expect(result.settings.version).toBe(5);
+    expect(result.settings.automaticSessionTitles).toBe(true);
     expect(result.settings.fleetOpenTarget).toBe('agentFleet');
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
