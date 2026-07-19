@@ -517,3 +517,20 @@ than an automatic update. Beta.16 remains available for rollback.
    all tests, production packaging, and packaged ConPTY/WSL smoke.
 5. Release `0.11.0-beta.19` through the updater, retain beta.18 for rollback,
    and record installer and portable checksums before Android parity rollout.
+
+Implementation record (2026-07-19): commit `57dc21e` adds Off, Manual, and
+Automatic modes, migrates version-1 settings to Manual/Off, and baselines each
+focused Native session so only later live assistant completions and structured
+free-text questions start a local draft. Typing, attachments, focus or
+visibility changes, newer context, and Off cancel pending work; choosing a
+result still fills without sending. TypeScript lint and all 142 Windows tests
+passed, followed by the production NSIS/portable package and packaged WSL
+smoke. The published beta.19 prerelease and GitHub asset digests match the
+validated files: setup SHA-256
+`6dec6d33584c8c4eae492bb8325088391c43ab6fc7dc110c094d1e31d461bb2f`
+and portable SHA-256
+`1074b35f0ddb0559a529813f4467102ba3e50bfd701ce235b3d6f668dab1b6ef`.
+Beta.18 remains available locally for rollback. The repository still has no
+SignPath secrets, so beta.19 is unsigned and an installed build enforcing the
+configured publisher may require a one-time manual installation; signature
+verification was not weakened.
