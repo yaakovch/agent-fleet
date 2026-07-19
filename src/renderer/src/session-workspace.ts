@@ -11,7 +11,7 @@ import type { FleetAttention, FleetSession, FleetSnapshot } from '../../shared/f
 import type { FleetModelControlState, FleetModelOption } from '../../shared/fleet-protocol';
 import { isFleetSessionAvailable, reconcileHiddenUnavailableSessions, sessionIdentityPresentation } from '../../shared/fleet';
 import type {
-  ConversationAnswer, ConversationFrame, ConversationItem, ConversationQuestion, StagedAttachment,
+  ConversationAnswer, ConversationFrame, ConversationItem, ConversationQuestion, ProviderActivity, StagedAttachment,
   ToolPresentationBlock
 } from '../../shared/conversation';
 import { mergeConversationItems, resolveConversationScroll } from '../../shared/conversation';
@@ -70,6 +70,8 @@ interface NativeState {
   items: ConversationItem[];
   interactionMode: string;
   connection: string;
+  providerActivity: ProviderActivity | null;
+  providerActivityReceivedAt: number;
   nextCursor: string | null;
   hasMore: boolean;
   loadingOlder: boolean;
@@ -140,6 +142,7 @@ export class SessionWorkspace {
   private localSuggestionSettings: LocalSuggestionSettingsView = createDefaultLocalSuggestionSettings();
   private modelStates = new Map<string, FleetModelControlState>();
   private modelPollTimer = 0;
+  private providerActivityTimer = 0;
   private modelPollActive = false;
   private modelDialogSessionId = '';
   private modelDialogLoading = false;
@@ -391,6 +394,9 @@ export class SessionWorkspace {
     container.append(this.element);
     this.renderStructure();
     this.startModelPolling();
+    if (!this.providerActivityTimer) {
+      this.providerActivityTimer = window.setInterval(() => this.patchProviderActivityStatuses(), 1_000);
+    }
   }
 
   detach(): void {
@@ -400,6 +406,8 @@ export class SessionWorkspace {
     this.terminalHistoryTimers.clear();
     if (this.modelPollTimer) window.clearInterval(this.modelPollTimer);
     this.modelPollTimer = 0;
+    if (this.providerActivityTimer) window.clearInterval(this.providerActivityTimer);
+    this.providerActivityTimer = 0;
     for (const [tabId] of this.nativeStates) this.clearSuggestions(tabId, true);
     this.syncConversation();
     this.syncTerminal();
@@ -1396,7 +1404,8 @@ export class SessionWorkspace {
   private nativeState(tabId: string): NativeState {
     let state = this.nativeStates.get(tabId);
     if (!state) {
-      state = { items: [], interactionMode: 'unknown', connection: 'Connecting…', nextCursor: null,
+      state = { items: [], interactionMode: 'unknown', connection: 'Connecting…', providerActivity: null,
+        providerActivityReceivedAt: 0, nextCursor: null,
         hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
         scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
         renderMode: 'initial', questionDrafts: new Map(), questionSteps: new Map(),
@@ -1455,6 +1464,8 @@ export class SessionWorkspace {
       state.items = mergeItems([], frame.items ?? []);
       state.renderMode = firstSnapshot ? 'initial' : 'preserve';
       state.interactionMode = frame.interactionMode ?? 'unknown';
+      state.providerActivity = Object.prototype.hasOwnProperty.call(frame, 'providerActivity') ? frame.providerActivity ?? null : null;
+      state.providerActivityReceivedAt = state.providerActivity ? Date.now() : 0;
       state.connection = 'Live'; state.error = '';
       state.nextCursor = frame.nextCursor ?? null; state.hasMore = Boolean(frame.hasMore); state.loadingOlder = false;
     } else if (frame.type === 'conversation.event' && frame.item) {
@@ -1466,9 +1477,15 @@ export class SessionWorkspace {
       const connection = frame.status === 'ready' ? 'Live' : frame.status?.replaceAll('_', ' ') ?? state.connection;
       const interactionMode = frame.interactionMode && frame.interactionMode !== 'unknown'
         ? frame.interactionMode : state.interactionMode;
-      if (connection === state.connection && interactionMode === state.interactionMode) return;
+      const hasProviderActivity = Object.prototype.hasOwnProperty.call(frame, 'providerActivity');
+      const providerChanged = hasProviderActivity && !sameProviderActivity(state.providerActivity, frame.providerActivity ?? null);
+      if (connection === state.connection && interactionMode === state.interactionMode && !providerChanged) return;
       state.connection = connection;
       state.interactionMode = interactionMode;
+      if (hasProviderActivity) {
+        state.providerActivity = frame.providerActivity ?? null;
+        state.providerActivityReceivedAt = state.providerActivity ? Date.now() : 0;
+      }
     }
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
@@ -1489,6 +1506,17 @@ export class SessionWorkspace {
       this.nativeRenderQueued.delete(tabId);
       this.renderNativePanel(tabId);
     });
+  }
+
+  private patchProviderActivityStatuses(): void {
+    for (const element of this.element.querySelectorAll<HTMLElement>('[data-provider-activity-tab]')) {
+      const tabId = element.dataset.providerActivityTab ?? '';
+      const state = this.nativeStates.get(tabId);
+      const tab = this.tabs.get(tabId);
+      if (!state || !tab) continue;
+      const value = providerActivityText(tab.tool, state.providerActivity, state.providerActivityReceivedAt) || state.connection;
+      if (element.textContent !== value) element.textContent = value;
+    }
   }
 
   private renderSelectedNative(): void {
@@ -1515,7 +1543,7 @@ export class SessionWorkspace {
       item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId && !this.dismissedAttention.has(item.id)
     );
     return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
-      <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i>${escapeHtml(state.connection)}</span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
+      <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i><span data-provider-activity-tab="${escapeAttr(tab.id)}">${escapeHtml(providerActivityText(tab.tool, state.providerActivity, state.providerActivityReceivedAt) || state.connection)}</span></span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
@@ -2399,6 +2427,28 @@ function providerWorkDuration(item: ConversationItem): string {
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
+}
+
+function sameProviderActivity(left: ProviderActivity | null, right: ProviderActivity | null): boolean {
+  return left?.label === right?.label && left?.elapsedSeconds === right?.elapsedSeconds && left?.observedAt === right?.observedAt;
+}
+
+export function providerActivityText(
+  tool: string,
+  activity: ProviderActivity | null,
+  receivedAt: number,
+  now = Date.now()
+): string {
+  if (!activity || !Number.isInteger(activity.elapsedSeconds) || activity.elapsedSeconds < 0 || !receivedAt) return '';
+  const extraSeconds = Math.max(0, Math.floor((now - receivedAt) / 1_000));
+  const totalSeconds = activity.elapsedSeconds + extraSeconds;
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const duration = hours > 0 ? `${hours}h ${minutes}m ${seconds}s`
+    : minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  const provider = tool ? `${tool.charAt(0).toUpperCase()}${tool.slice(1)}` : 'Agent';
+  return `${provider} · ${activity.label} (${duration})`;
 }
 
 function prettyJson(value: string): string {

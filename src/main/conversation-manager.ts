@@ -220,6 +220,16 @@ function parseFrame(line: string): ConversationFrame | null {
   if (line.length < 2 || line.length > MAX_FRAME) return null;
   const value = safeJson(line);
   if (value?.protocolVersion !== 2 || !['conversation.snapshot', 'conversation.event', 'conversation.status', 'conversation.heartbeat', 'conversation.error'].includes(String(value.type))) return null;
+  if (Object.prototype.hasOwnProperty.call(value, 'providerActivity')) {
+    const activity = value.providerActivity;
+    if (activity !== null && (
+      typeof activity !== 'object' || typeof activity.label !== 'string' || !activity.label.length || activity.label.length > 80
+      || /[\u0000-\u001f\u007f]/u.test(activity.label) || !Number.isInteger(activity.elapsedSeconds)
+      || activity.elapsedSeconds < 0 || activity.elapsedSeconds > 7 * 24 * 60 * 60
+      || typeof activity.observedAt !== 'string' || activity.observedAt.length < 1 || activity.observedAt.length > 64
+      || /[\u0000-\u001f\u007f]/u.test(activity.observedAt)
+    )) return null;
+  }
   return value as unknown as ConversationFrame;
 }
 function parsePaneScrollback(line: string, session: string): PaneScrollbackSnapshot | null {

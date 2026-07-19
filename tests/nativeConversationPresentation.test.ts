@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { renderConversationRows } from '../src/renderer/src/session-workspace';
+import { providerActivityText, renderConversationRows } from '../src/renderer/src/session-workspace';
 import { mergeConversationItems } from '../src/shared/conversation';
 import type { ConversationItem } from '../src/shared/conversation';
 
@@ -15,6 +15,12 @@ function item(value: Partial<ConversationItem>): ConversationItem {
 }
 
 describe('native conversation presentation', () => {
+  it('ticks the exact host-observed provider phase from local receipt time', () => {
+    expect(providerActivityText('codex', {
+      label: 'Waiting for background terminal', elapsedSeconds: 617, observedAt: '2026-07-19T17:00:00Z'
+    }, 10_000, 13_000)).toBe('Codex · Waiting for background terminal (10m 20s)');
+  });
+
   it('consumes the shared structured-work fixture', () => {
     const fixture = JSON.parse(readFileSync(join(process.cwd(), 'tests', 'fixtures', 'conversation_structured_work_v1.json'), 'utf8'));
     const items = mergeConversationItems([], fixture.items);

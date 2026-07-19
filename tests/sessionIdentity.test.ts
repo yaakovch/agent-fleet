@@ -21,4 +21,11 @@ describe('session identity presentation', () => {
   it('falls back to the stable name when a title is unavailable', () => {
     expect(sessionIdentityPresentation({ ...session, title: '' }).primary).toBe('demo:1');
   });
+
+  it('word-safely caps inherited titles but never manual names', () => {
+    const title = 'Use the reclaimed native session space without allowing inherited titles to crowd the controls';
+    expect(sessionIdentityPresentation({ ...session, title }).primary).toBe('Use the reclaimed native session space…');
+    expect(sessionIdentityPresentation({ ...session, name: title, title: 'ignored', nameMode: 'manual' }).primary).toBe(title);
+    expect([...sessionIdentityPresentation({ ...session, title: '🙂'.repeat(60) }).primary]).toHaveLength(48);
+  });
 });

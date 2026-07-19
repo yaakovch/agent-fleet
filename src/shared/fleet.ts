@@ -124,9 +124,21 @@ export interface SessionIdentityPresentation {
   stableName: string;
 }
 
+export const MAX_INHERITED_SESSION_TITLE_CHARS = 48;
+
+export function inheritedSessionTitle(value: string): string {
+  const title = value.trim();
+  const characters = [...title];
+  if (characters.length <= MAX_INHERITED_SESSION_TITLE_CHARS) return title;
+  const available = MAX_INHERITED_SESSION_TITLE_CHARS - 1;
+  const prefix = characters.slice(0, available).join('').trimEnd();
+  const boundary = prefix.lastIndexOf(' ');
+  return `${(boundary >= Math.floor(available * 2 / 3) ? prefix.slice(0, boundary) : prefix).trimEnd()}…`;
+}
+
 export function sessionIdentityPresentation(session: FleetSession): SessionIdentityPresentation {
   const automatic = session.nameMode !== 'manual';
-  const primary = automatic && session.title ? session.title : session.name;
+  const primary = automatic && session.title ? inheritedSessionTitle(session.title) : session.name;
   const secondary = automatic && session.title
     ? [session.name, session.hostId, session.project].filter(Boolean).join(' · ')
     : [session.hostId, session.project].filter(Boolean).join(' · ');

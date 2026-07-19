@@ -7,6 +7,7 @@ export interface ConversationQuestion {
   required: boolean; allowOther: boolean; options: ConversationQuestionOption[];
 }
 export interface ConversationAnswer { questionId: string; choiceIds: string[]; text: string }
+export interface ProviderActivity { label: string; elapsedSeconds: number; observedAt: string }
 export interface ConversationTask {
   id: string; title: string; activeTitle: string; detail: string;
   state: 'pending' | 'in_progress' | 'completed';
@@ -29,6 +30,7 @@ export interface ConversationFrame {
   session?: string; adapter?: string; mode?: string; interactionMode?: 'plan' | 'default' | 'unknown';
   revision?: string; items?: ConversationItem[]; item?: ConversationItem; nextCursor?: string | null;
   hasMore?: boolean; status?: string; error?: { code: string; message: string };
+  providerActivity?: ProviderActivity | null;
 }
 export interface ConversationEvent { tabId: string; frame: ConversationFrame }
 export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame; pane?: PaneScrollbackSnapshot }
