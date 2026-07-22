@@ -1,0 +1,21 @@
+{
+  "protocolVersion": 2,
+  "type": "conversation.event",
+  "timestamp": "2026-07-22T12:00:00Z",
+  "session": "fixture-session",
+  "adapter": "codex",
+  "item": {
+    "id": "fixture-item",
+    "kind": "status",
+    "timestamp": "2026-07-22T12:00:00Z",
+    "role": "assistant",
+    "title": "Working",
+    "text": "",
+    "detail": "",
+    "state": "running",
+    "tool": "",
+    "attachments": [],
+    "choices": [],
+    "prompt": "forbidden"
+  }
+}

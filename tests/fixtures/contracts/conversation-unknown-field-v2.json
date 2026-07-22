@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 2,
+  "type": "conversation.error",
+  "timestamp": "2026-07-22T12:00:00Z",
+  "error": {
+    "code": "fixture_error",
+    "message": "Synthetic fixture error"
+  },
+  "terminalOutput": "forbidden"
+}

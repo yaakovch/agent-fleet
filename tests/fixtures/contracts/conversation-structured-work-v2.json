@@ -1,0 +1,112 @@
+{
+  "protocolVersion": 2,
+  "type": "conversation.snapshot",
+  "session": "fixture-session",
+  "adapter": "codex",
+  "mode": "ai",
+  "interactionMode": "plan",
+  "revision": "structured-work-fixture-v1",
+  "items": [
+    {
+      "id": "task-list:codex:fixture-turn",
+      "kind": "task_list",
+      "timestamp": "2026-07-14T00:00:00Z",
+      "role": "assistant",
+      "title": "Current work",
+      "text": "Preparing the release",
+      "detail": "",
+      "state": "running",
+      "tool": "update_plan",
+      "attachments": [],
+      "choices": [],
+      "source": "codex",
+      "turnId": "fixture-turn",
+      "taskListId": "fixture-turn",
+      "updateMode": "replace",
+      "tasks": [
+        {
+          "id": "inspect",
+          "title": "Inspect the current behavior",
+          "activeTitle": "Inspecting the current behavior",
+          "detail": "Compare Native and Terminal views",
+          "state": "completed"
+        },
+        {
+          "id": "repair",
+          "title": "Repair the Native view",
+          "activeTitle": "Repairing the Native view",
+          "detail": "Keep long content in a dedicated viewer",
+          "state": "in_progress"
+        },
+        {
+          "id": "verify",
+          "title": "Verify both clients",
+          "activeTitle": "Verifying both clients",
+          "detail": "",
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "id": "plan:codex:fixture-turn",
+      "kind": "plan",
+      "timestamp": "2026-07-14T00:00:01Z",
+      "role": "assistant",
+      "title": "Plan",
+      "text": "## Plan\n\n1. Inspect the current behavior.\n2. Repair the Native view.\n3. Verify both clients.",
+      "detail": "",
+      "state": "complete",
+      "tool": "plan",
+      "attachments": [],
+      "choices": [],
+      "source": "codex",
+      "turnId": "fixture-turn"
+    },
+    {
+      "id": "plan-gate:codex:fixture-turn",
+      "kind": "question",
+      "timestamp": "2026-07-14T00:00:02Z",
+      "role": "",
+      "title": "Implement this plan?",
+      "text": "",
+      "detail": "",
+      "state": "pending",
+      "tool": "question",
+      "attachments": [],
+      "choices": [],
+      "source": "codex_plan_gate",
+      "revision": "fixture-gate-revision",
+      "questions": [
+        {
+          "id": "plan-action",
+          "header": "Plan",
+          "prompt": "Implement this plan?",
+          "type": "single",
+          "required": true,
+          "allowOther": false,
+          "options": [
+            {
+              "id": "implement",
+              "label": "Yes, implement this plan",
+              "description": "Switch to Default and start coding."
+            },
+            {
+              "id": "implement-clear",
+              "label": "Yes, clear context and implement",
+              "description": "Start a fresh implementation thread."
+            },
+            {
+              "id": "stay",
+              "label": "No, stay in Plan mode",
+              "description": "Continue planning."
+            }
+          ]
+        }
+      ],
+      "answers": []
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+

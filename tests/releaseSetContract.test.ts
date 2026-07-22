@@ -14,9 +14,14 @@ describe('Agent Fleet canonical contract fixtures', () => {
     };
     expect(lock).toMatchObject({ schemaVersion: 1, packageVersion: '1.0.0', algorithm: 'sha256' });
     const fixtures = {
+      'fixtures/valid/conversation-structured-work-v2.json': 'conversation-structured-work-v2.json',
       'fixtures/valid/fleet-snapshot-base-v1.json': 'fleet-snapshot-base-v1.json',
       'fixtures/valid/release-set-v1.json': 'release-set-v1.json',
       'fixtures/valid/workspace-layout-v1.json': 'workspace-layout-v1.json',
+      'fixtures/invalid/conversation-item-unknown-field-v2.json': 'conversation-item-unknown-field-v2.json',
+      'fixtures/invalid/conversation-unknown-field-v2.json': 'conversation-unknown-field-v2.json',
+      'fixtures/invalid/fleet-snapshot-content-field-v1.json': 'fleet-snapshot-content-field-v1.json',
+      'fixtures/invalid/fleet-snapshot-unknown-field-v1.json': 'fleet-snapshot-unknown-field-v1.json',
       'fixtures/invalid/release-set-content-field-v1.json': 'release-set-content-field-v1.json',
       'fixtures/invalid/release-set-unknown-field-v1.json': 'release-set-unknown-field-v1.json',
       'fixtures/invalid/workspace-layout-unknown-field-v1.json': 'workspace-layout-unknown-field-v1.json'
@@ -32,6 +37,12 @@ describe('Agent Fleet canonical contract fixtures', () => {
     expect(release.artifacts.map((item) => item.component)).toEqual(['windowsApp', 'androidApp']);
     expect(parseBridgeFleetSnapshot(JSON.parse(fixture('fleet-snapshot-base-v1.json'))).revision).toBe('fixture-revision');
   });
+
+  it.each(['fleet-snapshot-unknown-field-v1.json', 'fleet-snapshot-content-field-v1.json'])(
+    'rejects shared invalid fleet snapshot %s', (name) => {
+      expect(() => parseBridgeFleetSnapshot(JSON.parse(fixture(name)))).toThrow('Invalid fleet protocol v1');
+    }
+  );
 
   it.each(['release-set-unknown-field-v1.json', 'release-set-content-field-v1.json'])(
     'rejects shared invalid fixture %s', (name) => {

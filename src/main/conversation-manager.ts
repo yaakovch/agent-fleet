@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { nativeImage } from 'electron';
-import type { ConversationAnswer, ConversationEvent, ConversationFrame, NativeActionResult, StagedAttachment } from '../shared/conversation';
+import { parseConversationFrame, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
 import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
 
 const MAX_FRAME = 256 * 1024;
@@ -165,7 +165,7 @@ export class ConversationManager {
       const line = state.buffer.slice(0, newline).trim();
       state.buffer = state.buffer.slice(newline + 1);
       if (line) {
-        const frame = parseFrame(line);
+        const frame = parseConversationFrame(line);
         if (frame) this.options.onEvent({ tabId, frame });
         else this.localError(tabId, 'invalid_frame', 'The host sent an invalid conversation frame.');
       }
@@ -184,7 +184,7 @@ export class ConversationManager {
     if (!tab) return { ok: false, message: 'Session is no longer open' };
     const result = await runBounded('wsl.exe', this.command(tab, action, args), timeout, this.options.spawnProcess ?? spawn);
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
-    const frame = parseFrame(line);
+    const frame = parseConversationFrame(line);
     if (result.code === 0) return { ok: true, message: 'Delivered', ...(frame ? { frame } : {}) };
     const structured = safeJson(line)?.error?.message;
     return { ok: false, message: typeof structured === 'string' ? structured.slice(0, 500) : result.stderr.trim().slice(0, 500) || 'The host rejected the action' };
@@ -216,22 +216,6 @@ export class ConversationManager {
   }
 }
 
-function parseFrame(line: string): ConversationFrame | null {
-  if (line.length < 2 || line.length > MAX_FRAME) return null;
-  const value = safeJson(line);
-  if (value?.protocolVersion !== 2 || !['conversation.snapshot', 'conversation.event', 'conversation.status', 'conversation.heartbeat', 'conversation.error'].includes(String(value.type))) return null;
-  if (Object.prototype.hasOwnProperty.call(value, 'providerActivity')) {
-    const activity = value.providerActivity;
-    if (activity !== null && (
-      typeof activity !== 'object' || typeof activity.label !== 'string' || !activity.label.length || activity.label.length > 80
-      || /[\u0000-\u001f\u007f]/u.test(activity.label) || !Number.isInteger(activity.elapsedSeconds)
-      || activity.elapsedSeconds < 0 || activity.elapsedSeconds > 7 * 24 * 60 * 60
-      || typeof activity.observedAt !== 'string' || activity.observedAt.length < 1 || activity.observedAt.length > 64
-      || /[\u0000-\u001f\u007f]/u.test(activity.observedAt)
-    )) return null;
-  }
-  return value as unknown as ConversationFrame;
-}
 function parsePaneScrollback(line: string, session: string): PaneScrollbackSnapshot | null {
   if (line.length < 2 || line.length > 6 * 1024 * 1024) return null;
   const value = safeJson(line);
