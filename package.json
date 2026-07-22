@@ -17,7 +17,7 @@
     "preview": "electron-vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run --dir tests",
-    "smoke:packaged": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-packaged.ps1",
+    "smoke:packaged": "node scripts/run-powershell.mjs scripts/smoke-packaged.ps1",
     "finalize:release": "node scripts/finalize-release.mjs"
   },
   "devDependencies": {
