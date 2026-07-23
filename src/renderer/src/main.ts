@@ -43,6 +43,7 @@ import {
 } from '../../shared/settings';
 import { renderLimitCell } from './widget-view';
 import type { LocalSuggestionSettingsInput } from '../../shared/local-suggestions';
+import type { WslRuntimeState } from '../../shared/runtime';
 
 const iconSet = {
   ArrowDown,
@@ -90,6 +91,7 @@ let updaterState: UpdaterState | null = null;
 let claudeIntegration: ClaudeIntegrationState | null = null;
 let importPreview: SettingsImportSelection | null = null;
 let discoveryResult: WslDiscoveryResult | null = null;
+let runtimeState: WslRuntimeState | null = null;
 let onboardingStep = 0;
 const profileTestMessages = new Map<string, string>();
 const dashboard = isDashboardView ? new DashboardPrototype(appRoot) : null;
@@ -199,6 +201,8 @@ async function handleAction(action: string, target: HTMLElement): Promise<void> 
   if (action === 'restart-update') await window.limitsWidget.restartToUpdate();
   if (action === 'open-releases') await window.limitsWidget.openReleasePage();
   if (action === 'export-diagnostics') await runFileOperation(() => window.limitsWidget.exportDiagnostics());
+  if (action === 'repair-runtime') await maintainRuntime('repair');
+  if (action === 'rollback-runtime') await maintainRuntime('rollback');
   if (action === 'onboarding-back') {
     onboardingStep = Math.max(0, onboardingStep - 1);
     renderOnboarding();
@@ -273,12 +277,13 @@ function renderDiagnostics(state: CombinedLimitState): string {
 }
 
 async function loadConfigView(): Promise<void> {
-  const [settingsResult, info, update, claude, localSuggestions] = await Promise.all([
+  const [settingsResult, info, update, claude, localSuggestions, runtime] = await Promise.all([
     window.limitsWidget.getSettings(),
     window.limitsWidget.getAppInfo(),
     window.limitsWidget.getUpdaterState(),
     window.limitsWidget.getClaudeIntegration(),
-    window.limitsWidget.getLocalSuggestionSettings()
+    window.limitsWidget.getLocalSuggestionSettings(),
+    window.limitsWidget.getRuntimeState()
   ]);
   settingsDraft = cloneSettings(settingsResult.settings);
   settingsMessage = settingsResult.message ?? '';
@@ -286,6 +291,7 @@ async function loadConfigView(): Promise<void> {
   updaterState = update;
   claudeIntegration = claude;
   localSuggestionDraft = { ...localSuggestions, managed: { ...localSuggestions.managed }, external: { ...localSuggestions.external } };
+  runtimeState = runtime;
   renderConfigView();
 }
 
@@ -307,6 +313,7 @@ function renderSettings(): void {
       ${renderLocalSuggestionSection()}
       ${renderClaudeSection()}
       ${renderProfilesSection()}
+      ${renderRuntimeSection()}
       ${renderSupportSection()}
     </main>`;
   refreshIcons();
@@ -396,6 +403,49 @@ function renderSupportSection(): string {
       </div>
       <p class="data-path">Data: ${escapeHtml(appInfo?.dataDirectory ?? '')}</p>
     </section>`;
+}
+
+function renderRuntimeSection(): string {
+  const runtime = runtimeState;
+  const state = runtime?.status ?? 'missing';
+  const detail = runtime?.error || runtime?.detail || 'Inspecting the app-owned WSL runtime…';
+  return `
+    <section class="settings-section support-section">
+      <div class="section-title-row">
+        <div><h2>Built-in WSL runtime</h2><p class="section-note">${escapeHtml(detail)}</p></div>
+        <span class="status-pill status-${escapeAttr(state)}">${escapeHtml(state)}</span>
+      </div>
+      <p class="section-note">Active ${escapeHtml(runtime?.current || 'not installed')} · Embedded ${escapeHtml(runtime?.embeddedVersion || 'unavailable')} · Contracts ${escapeHtml(runtime?.contractPackageVersion || 'unknown')}</p>
+      <div class="inline-actions support-actions">
+        <button data-action="repair-runtime" ${state === 'busy' ? 'disabled' : ''}>${icon('wrench')}${state === 'ready' ? 'Verify / repair' : 'Repair'}</button>
+        <button data-action="rollback-runtime" ${state === 'busy' || !runtime?.previous ? 'disabled' : ''}>${icon('undo-2')}Roll back</button>
+      </div>
+    </section>`;
+}
+
+async function maintainRuntime(action: 'repair' | 'rollback'): Promise<void> {
+  if (runtimeState?.status === 'busy') return;
+  runtimeState = {
+    ...(runtimeState ?? {
+      current: '', previous: '', embeddedVersion: '', contractPackageVersion: '', sourceCommit: ''
+    }),
+    status: 'busy',
+    detail: action === 'repair' ? 'Repairing the verified WSL runtime…' : 'Rolling back the WSL runtime…',
+    error: undefined
+  };
+  renderConfigView();
+  try {
+    runtimeState = action === 'repair'
+      ? await window.limitsWidget.repairRuntime()
+      : await window.limitsWidget.rollbackRuntime();
+  } catch (error) {
+    runtimeState = {
+      ...runtimeState,
+      status: 'repair-needed',
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+  renderConfigView();
 }
 
 function renderProfileSettings(profile: CodexProfileSettings, index: number, profiles: CodexProfileSettings[]): string {

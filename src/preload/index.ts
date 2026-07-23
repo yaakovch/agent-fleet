@@ -29,6 +29,7 @@ import type {
   LocalSuggestionOperationResult, LocalSuggestionRequest, LocalSuggestionResult,
   LocalSuggestionSettingsInput, LocalSuggestionSettingsView
 } from '../shared/local-suggestions';
+import type { WslRuntimeState } from '../shared/runtime';
 
 const api = {
   getState: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.getState),
@@ -175,6 +176,9 @@ const api = {
   checkForUpdates: (): Promise<UpdaterState | undefined> => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates),
   restartToUpdate: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.restartToUpdate),
   openReleasePage: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.openReleasePage),
+  getRuntimeState: (): Promise<WslRuntimeState> => ipcRenderer.invoke(IPC_CHANNELS.getRuntimeState),
+  repairRuntime: (): Promise<WslRuntimeState> => ipcRenderer.invoke(IPC_CHANNELS.repairRuntime),
+  rollbackRuntime: (): Promise<WslRuntimeState> => ipcRenderer.invoke(IPC_CHANNELS.rollbackRuntime),
   openSettings: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.openSettings),
   getInteractionMode: (): Promise<InteractionMode> => ipcRenderer.invoke(IPC_CHANNELS.getInteractionMode),
   setInteractionMode: (mode: InteractionMode): Promise<InteractionMode> => ipcRenderer.invoke(IPC_CHANNELS.setInteractionMode, mode),

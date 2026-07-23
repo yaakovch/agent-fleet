@@ -66,6 +66,7 @@ import { isFleetSessionAvailable, sessionIdentityPresentation } from '../shared/
 import type { LocalSuggestionSettingsInput } from '../shared/local-suggestions';
 import { LocalSuggestionStore } from './local-suggestion-store';
 import { LocalSuggestionManager } from './local-suggestion-manager';
+import { WslRuntimeManager } from './wsl-runtime-manager';
 
 const APP_ID = 'com.yaakovch.ailimitswidget';
 const PRODUCT_NAME = 'Agent Fleet';
@@ -102,6 +103,10 @@ const logger = configureLogger(dataDirectory);
 const stateManager = new LimitStateManager({
   settings: appSettings,
   settingsDiagnostic: settingsLoadResult.recovered ? settingsLoadResult.message : undefined
+});
+const wslRuntimeManager = new WslRuntimeManager({
+  resourcesRoot: join(getResourceRoot(), 'resources'),
+  distro: () => fleetBridgeLaunchFromSettings(appSettings).distro
 });
 let fleetBridge = createFleetBridge();
 let terminalRestored = false;
@@ -579,7 +584,13 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
   if (JSON.stringify(previousLaunch) !== JSON.stringify(nextLaunch)) {
     fleetBridge.stop();
     fleetBridge = createFleetBridge();
-    fleetBridge.start();
+    try {
+      await wslRuntimeManager.ensure();
+      fleetBridge.start();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+      logger.error('WSL runtime provisioning failed after distribution change', error);
+    }
   }
   updater?.setEnabled(appSettings.automaticUpdates);
   if (mainWindow) applyInteractionMode(mainWindow, interactionMode, appSettings);
@@ -1474,7 +1485,8 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
     logPath: getLogPath(dataDirectory),
     fleet: getFleetView(),
     doctors: [...lastDoctorResults.values()],
-    terminal: terminalManager.getHealth()
+    terminal: terminalManager.getHealth(),
+    wslRuntime: wslRuntimeManager.getState()
   });
   return { canceled: false, message: `Diagnostics exported to ${basename(result.filePath)}`, path: result.filePath };
 });
@@ -1482,6 +1494,18 @@ handle(IPC_CHANNELS.getUpdaterState, () => updater?.getState() ?? ({ status: 'di
 handle(IPC_CHANNELS.checkForUpdates, () => updater?.checkNow());
 handle(IPC_CHANNELS.restartToUpdate, () => updater?.restartToUpdate());
 handle(IPC_CHANNELS.openReleasePage, () => shell.openExternal(RELEASE_URL));
+handle(IPC_CHANNELS.getRuntimeState, () => wslRuntimeManager.inspect());
+handle(IPC_CHANNELS.repairRuntime, async () => {
+  const state = await wslRuntimeManager.repair();
+  if (state.status === 'ready') fleetBridge.start();
+  return state;
+});
+handle(IPC_CHANNELS.rollbackRuntime, async () => {
+  fleetBridge.stop();
+  const state = await wslRuntimeManager.rollback();
+  if (state.status === 'ready') fleetBridge.start();
+  return state;
+});
 handle(IPC_CHANNELS.openSettings, () => createSettingsWindow());
 handle(IPC_CHANNELS.getInteractionMode, () => interactionMode);
 handle(IPC_CHANNELS.setInteractionMode, (_event, mode) => setWidgetInteractionMode(mode === 'active' ? 'active' : 'passive'));
@@ -1534,7 +1558,7 @@ if (terminalSmokePath) {
     else showDashboard();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     applyLaunchOnLogin(appSettings.launchOnLogin);
     createWindow();
@@ -1563,7 +1587,12 @@ if (terminalSmokePath) {
     });
     updater.setEnabled(appSettings.automaticUpdates);
     stateManager.start();
-    fleetBridge.start();
+    try {
+      await wslRuntimeManager.ensure();
+      fleetBridge.start();
+    } catch (error) {
+      logger.error('Verified WSL runtime provisioning failed', error);
+    }
     if (!appSettings.onboardingComplete) createSettingsWindow('onboarding');
     if (!app.isPackaged) showDashboard();
     logger.info(PRODUCT_NAME, app.getVersion(), app.isPackaged ? 'packaged' : 'development', migrationResult);

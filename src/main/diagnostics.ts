@@ -8,6 +8,7 @@ import type { WidgetSettings } from '../shared/settings';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import type { TerminalHealth } from '../shared/terminal';
 import { createContractDiagnosticReport } from '../shared/compatibility-contract';
+import type { WslRuntimeState } from '../shared/runtime';
 
 interface DiagnosticsInput {
   app: AppInfo;
@@ -17,6 +18,7 @@ interface DiagnosticsInput {
   fleet: FleetBridgeView;
   doctors: FleetDoctorResult[];
   terminal: TerminalHealth;
+  wslRuntime: WslRuntimeState;
 }
 
 interface ArchiveWriter {
@@ -50,7 +52,8 @@ export async function writeDiagnosticsArchive(destination: string, input: Diagno
         state: input.state,
         fleet: input.fleet,
         doctors: input.doctors,
-        terminal: input.terminal
+        terminal: input.terminal,
+        wslRuntime: input.wslRuntime
       },
       null,
       2

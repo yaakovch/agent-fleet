@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { win32 } from 'node:path';
+import { activatedRuntimeCommand } from '../shared/runtime';
 
 export interface FleetSessionOpenTarget {
   id: string;
@@ -50,7 +51,7 @@ export function buildFleetWslAttachCommand(target: FleetSessionOpenTarget, distr
     command: 'wsl.exe',
     args: [
       '-d', distro, '--cd', '~', '--',
-      '.local/bin/wtmux', '--host', target.hostId, '--project', target.project,
+      activatedRuntimeCommand('wtmux'), '--host', target.hostId, '--project', target.project,
       '--session', target.sessionName, '--fast'
     ]
   };

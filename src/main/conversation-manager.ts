@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { nativeImage } from 'electron';
 import { parseConversationFrame, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
 import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
+import { activatedRuntimeCommand } from '../shared/runtime';
 
 const MAX_FRAME = 256 * 1024;
 const MAX_ACTION_OUTPUT = 512 * 1024;
@@ -90,7 +91,7 @@ export class ConversationManager {
     const tab = this.options.resolveTab(tabId);
     if (!tab || tab.tool === 'shell') return { ok: false, message: 'Terminal history is unavailable for this session' };
     const result = await runBounded('wsl.exe', [
-      '-d', this.options.getDistro(), '--cd', '~', '--', '.local/bin/wtmux', 'pane', 'scrollback',
+      '-d', this.options.getDistro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'pane', 'scrollback',
       '--host', tab.hostId, '--session', tab.internalName, '--limit', '2000'
     ], 20_000, this.options.spawnProcess ?? spawn);
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
@@ -191,7 +192,7 @@ export class ConversationManager {
   }
 
   private command(tab: TerminalTabDescriptor, action: string, extra: string[]): string[] {
-    return ['-d', this.options.getDistro(), '--cd', '~', '--', '.local/bin/wtmux', 'conversation', action,
+    return ['-d', this.options.getDistro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'conversation', action,
       '--host', tab.hostId, '--session', tab.internalName, ...extra];
   }
 
@@ -201,7 +202,7 @@ export class ConversationManager {
     writeFileSync(path, attachment.data, { mode: 0o600 });
     try {
       const linuxPath = windowsToWslPath(path);
-      const result = await runBounded('wsl.exe', ['-d', this.options.getDistro(), '--cd', '~', '--', '.local/bin/wtmux',
+      const result = await runBounded('wsl.exe', ['-d', this.options.getDistro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'),
         'image', 'send', linuxPath, '--host', tab.hostId, '--project', tab.project, '--session', tab.internalName, '--json'], 35_000);
       const value = safeJson(result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '');
       if (result.code !== 0 || typeof value?.path !== 'string') throw new Error('Image upload failed; staged images were kept for retry');

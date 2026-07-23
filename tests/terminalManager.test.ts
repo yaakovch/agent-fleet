@@ -36,7 +36,7 @@ describe('embedded terminal manager', () => {
     });
     const tab = manager.open(session);
     expect(spawn.mock.calls[0]?.slice(0, 2)).toEqual([WINDOWS_WSL, [
-      '-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux', '--host', 'gaming',
+      '-d', 'Ubuntu', '--cd', '~', '--', '.local/share/agent-fleet/wtmux/current/scripts/wtmux', '--host', 'gaming',
       '--project', 'agent-fleet', '--session', 'wtmux-agent-fleet-1', '--fast'
     ]]);
     pty.data?.('private prompt text');

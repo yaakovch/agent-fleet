@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { assertAgentFleetControlRequest } from '../shared/control-contract';
 import { assertAgentFleetControlResult } from '../shared/control-result-contract';
 import type { WidgetSettings } from '../shared/settings';
+import { activatedRuntimeCommand } from '../shared/runtime';
 import {
   reduceSupervisorState,
   STOPPED_SUPERVISOR_STATE,
@@ -693,8 +694,8 @@ export function fleetBridgeLaunchFromSettings(settings: WidgetSettings): FleetBr
     ?? settings.codexProfiles.find((item) => item.distro && item.user && item.home);
   const distro = process.env.AGENT_FLEET_WSL_DISTRO || explicitDistro || profile?.distro || 'Ubuntu';
   const args = profile
-    ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio', '--pairing']
-    : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'];
+    ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/${activatedRuntimeCommand('wtmux-bridge')}`, '--stdio', '--pairing']
+    : ['-d', distro, '--cd', '~', '--', activatedRuntimeCommand('wtmux-bridge'), '--stdio', '--pairing'];
   args.push('--identity-graph');
   if (settings.automaticSessionTitles) args.push('--session-titles');
   return { command: 'wsl.exe', args, distro };

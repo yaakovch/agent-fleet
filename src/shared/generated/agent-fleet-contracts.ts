@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.2.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.3.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -14,6 +14,41 @@ export const GENERATED_PROTOCOL_VERSIONS = {
   "supervisor": 1
 } as const;
 export const GENERATED_OBJECT_SHAPES = {
+  "activation-journal-v1:#": {
+    "required": [
+      "candidate",
+      "current",
+      "failureCode",
+      "phase",
+      "previous",
+      "schemaVersion",
+      "transactionId",
+      "updatedAt"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "activation-journal-v1:#/$defs/componentSequences": {
+    "required": [
+      "androidApp",
+      "clientRuntime",
+      "contracts",
+      "hostRuntime",
+      "providerAdapters",
+      "windowsApp"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "activation-journal-v1:#/$defs/slot": {
+    "required": [
+      "componentSequences",
+      "manifestSha256",
+      "releaseSetSequence"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
   "client-policy-v1:#": {
     "required": [
       "apkManifestUrls",
@@ -1296,25 +1331,64 @@ export const GENERATED_OBJECT_SHAPES = {
     "required": [
       "architecture",
       "component",
+      "componentSequence",
+      "contractPackageVersion",
       "id",
+      "licenseSha256",
       "platform",
+      "sbomSha256",
       "sha256",
       "size",
-      "url"
+      "sourceCommit",
+      "sourceRepository",
+      "url",
+      "version"
     ],
     "optional": [],
     "rejectUnknown": true
   },
   "release-set-v1:#/$defs/component": {
     "required": [
-      "maximumCompatibleVersion",
-      "minimumCompatibleVersion",
+      "compatibility",
+      "sequence",
       "version"
     ],
     "optional": [],
     "rejectUnknown": true
   },
+  "release-set-v1:#/$defs/componentCompatibility": {
+    "required": [],
+    "optional": [
+      "androidApp",
+      "clientRuntime",
+      "contracts",
+      "hostRuntime",
+      "providerAdapters",
+      "windowsApp"
+    ],
+    "rejectUnknown": true
+  },
+  "release-set-v1:#/$defs/componentSequences": {
+    "required": [
+      "androidApp",
+      "clientRuntime",
+      "contracts",
+      "hostRuntime",
+      "providerAdapters",
+      "windowsApp"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
   "release-set-v1:#/$defs/range": {
+    "required": [
+      "maximum",
+      "minimum"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "release-set-v1:#/$defs/sequenceRange": {
     "required": [
       "maximum",
       "minimum"
@@ -1345,9 +1419,8 @@ export const GENERATED_OBJECT_SHAPES = {
   },
   "release-set-v1:#/properties/rollbackFloor": {
     "required": [
-      "androidVersionCode",
-      "releaseSetSequence",
-      "runtimeSequence"
+      "componentSequences",
+      "releaseSetSequence"
     ],
     "optional": [],
     "rejectUnknown": true

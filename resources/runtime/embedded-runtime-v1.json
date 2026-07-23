@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "baselineVersion": "git-8fba47f",
+  "sourceRepository": "https://github.com/yaakovch/wtmux",
+  "sourceCommit": "8fba47fb2d4f8899f288fc5576b592ab2f31b6d9",
+  "contractPackageVersion": "1.3.0",
+  "components": {
+    "clientRuntime": {
+      "sequence": 45,
+      "version": "git-8fba47f"
+    },
+    "hostRuntime": {
+      "sequence": 38,
+      "version": "git-8fba47f"
+    },
+    "providerAdapters": {
+      "sequence": 13,
+      "version": "git-8fba47f"
+    },
+    "contracts": {
+      "sequence": 13,
+      "version": "1.3.0"
+    }
+  },
+  "runtime": {
+    "file": "wtmux-runtime-git-8fba47f.tar",
+    "sha256": "6c3d18fd92abad66b109feebeca2a485511e65f208aac6b6bc1b254a8e43007b",
+    "size": 1269760,
+    "sbomSha256": "427c85e4705d7a0afe5f199757cdbca924553a609d0715cad6a3f67d26d01cd0",
+    "licenseSha256": "53f96bb6511b3baa6c1a4a19a2c1595ac66f2e4d7037015d8aeda35604bc203b"
+  }
+}

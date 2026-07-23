@@ -19,7 +19,7 @@ describe('fleet terminal launcher', () => {
       args: [
         'new-tab', '--title', 'project:1',
         'wsl.exe', '-d', 'Ubuntu', '--cd', '~', '--',
-        '.local/bin/wtmux', '--host', 'work-m-ubuntu', '--project', 'project',
+        '.local/share/agent-fleet/wtmux/current/scripts/wtmux', '--host', 'work-m-ubuntu', '--project', 'project',
         '--session', 'wtmux-project-1', '--fast'
       ]
     });
@@ -38,7 +38,7 @@ describe('fleet terminal launcher', () => {
       sessionName: 'wtmux-main-1', label: 'main'
     }, 'Ubuntu')).toEqual({
       command: 'wsl.exe',
-      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/bin/wtmux', '--host', 'gaming',
+      args: ['-d', 'Ubuntu', '--cd', '~', '--', '.local/share/agent-fleet/wtmux/current/scripts/wtmux', '--host', 'gaming',
         '--project', 'main', '--session', 'wtmux-main-1', '--fast']
     });
   });

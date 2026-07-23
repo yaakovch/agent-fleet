@@ -12,8 +12,11 @@ describe('Agent Fleet canonical contract fixtures', () => {
     const lock = JSON.parse(fixture('contract-lock-v1.json')) as {
       schemaVersion: number; packageVersion: string; algorithm: string; files: Record<string, string>
     };
-    expect(lock).toMatchObject({ schemaVersion: 1, packageVersion: '1.2.0', algorithm: 'sha256' });
+    expect(lock).toMatchObject({ schemaVersion: 1, packageVersion: '1.3.0', algorithm: 'sha256' });
     const fixtures = {
+      'fixtures/invalid/activation-journal-content-field-v1.json': 'activation-journal-content-field-v1.json',
+      'fixtures/invalid/activation-journal-unknown-field-v1.json': 'activation-journal-unknown-field-v1.json',
+      'fixtures/valid/activation-journal-v1.json': 'activation-journal-v1.json',
       'fixtures/invalid/compatibility-content-field-v1.json': 'compatibility-content-field-v1.json',
       'fixtures/invalid/compatibility-unknown-field-v1.json': 'compatibility-unknown-field-v1.json',
       'fixtures/valid/control-frames-v1.json': 'control-frames-v1.json',
@@ -47,7 +50,9 @@ describe('Agent Fleet canonical contract fixtures', () => {
   it('accepts the shared release set and base fleet snapshot', () => {
     const release = parseAgentFleetReleaseSetJson(fixture('release-set-v1.json'));
     expect(release.releaseSetSequence).toBe(1082);
-    expect(release.artifacts.map((item) => item.component)).toEqual(['windowsApp', 'androidApp']);
+    expect(release.artifacts.map((item) => item.component)).toEqual([
+      'windowsApp', 'androidApp', 'clientRuntime', 'clientRuntime'
+    ]);
     expect(parseBridgeFleetSnapshot(JSON.parse(fixture('fleet-snapshot-base-v1.json'))).revision).toBe('fixture-revision');
   });
 
@@ -68,6 +73,12 @@ describe('Agent Fleet canonical contract fixtures', () => {
     expect(() => parseAgentFleetReleaseSetJson(JSON.stringify({ ...baseline, protocols: { ...baseline.protocols, extra: 1 } }))).toThrow();
     expect(() => parseAgentFleetReleaseSetJson(JSON.stringify({ ...baseline, rollbackFloor: { ...baseline.rollbackFloor, releaseSetSequence: 1083 } }))).toThrow();
     expect(() => parseAgentFleetReleaseSetJson(JSON.stringify({ ...baseline, artifacts: [baseline.artifacts[0], baseline.artifacts[0]] }))).toThrow();
+    const incompatible = structuredClone(baseline);
+    incompatible.components.clientRuntime.sequence = 46;
+    expect(() => parseAgentFleetReleaseSetJson(JSON.stringify(incompatible))).toThrow('incompatible');
+    const mismatchedArtifact = structuredClone(baseline);
+    mismatchedArtifact.artifacts[0].componentSequence += 1;
+    expect(() => parseAgentFleetReleaseSetJson(JSON.stringify(mismatchedArtifact))).toThrow('identity');
     const credentialed = structuredClone(baseline); credentialed.artifacts[0].url = 'https://user:secret@updates.example.invalid/app';
     expect(() => parseAgentFleetReleaseSetJson(JSON.stringify(credentialed))).toThrow();
   });

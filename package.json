@@ -10,7 +10,8 @@
   "homepage": "https://github.com/yaakovch/agent-fleet",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "npm run verify:runtime && electron-vite build",
+    "verify:runtime": "node scripts/verify-embedded-runtime.mjs",
     "package": "npm run build && electron-builder --win nsis portable --x64 --publish never",
     "package:dir": "npm run build && electron-builder --win dir --x64 --publish never",
     "sbom": "cyclonedx-npm --output-file dist/bom.json --spec-version 1.6",

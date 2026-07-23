@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "transactionId": "0123456789abcdef0123456789abcdef",
+  "phase": "health-check",
+  "current": {
+    "releaseSetSequence": 1081,
+    "manifestSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "componentSequences": {
+      "windowsApp": 21,
+      "androidApp": 1075,
+      "clientRuntime": 44,
+      "hostRuntime": 37,
+      "providerAdapters": 12,
+      "contracts": 12
+    }
+  },
+  "previous": null,
+  "candidate": {
+    "releaseSetSequence": 1082,
+    "manifestSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "componentSequences": {
+      "windowsApp": 22,
+      "androidApp": 1076,
+      "clientRuntime": 45,
+      "hostRuntime": 38,
+      "providerAdapters": 13,
+      "contracts": 13
+    }
+  },
+  "updatedAt": "2026-07-23T10:00:00Z",
+  "failureCode": ""
+}

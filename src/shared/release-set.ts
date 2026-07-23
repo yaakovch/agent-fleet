@@ -6,18 +6,26 @@ export type ReleaseComponentId =
 
 export interface ReleaseProtocolRange { minimum: number; maximum: number }
 export interface ReleaseComponent {
+  sequence: number;
   version: string;
-  minimumCompatibleVersion: string;
-  maximumCompatibleVersion: string;
+  compatibility: Partial<Record<ReleaseComponentId, ReleaseSequenceRange>>;
 }
+export interface ReleaseSequenceRange { minimum: number; maximum: number }
 export interface ReleaseArtifact {
   id: string;
   component: ReleaseComponentId;
+  componentSequence: number;
+  version: string;
   platform: 'windows' | 'android' | 'linux' | 'termux' | 'any';
   architecture: 'x86_64' | 'arm64' | 'universal' | 'any';
   url: string;
   sha256: string;
   size: number;
+  sourceRepository: string;
+  sourceCommit: string;
+  contractPackageVersion: string;
+  sbomSha256: string;
+  licenseSha256: string;
 }
 export interface AgentFleetReleaseSet {
   schemaVersion: 1;
@@ -32,7 +40,10 @@ export interface AgentFleetReleaseSet {
   };
   components: Record<ReleaseComponentId, ReleaseComponent>;
   artifacts: ReleaseArtifact[];
-  rollbackFloor: { releaseSetSequence: number; androidVersionCode: number; runtimeSequence: number };
+  rollbackFloor: {
+    releaseSetSequence: number;
+    componentSequences: Record<ReleaseComponentId, number>;
+  };
   signature: { algorithm: 'ed25519'; keyId: string; value: string };
 }
 
@@ -75,28 +86,58 @@ export function parseAgentFleetReleaseSet(input: unknown): AgentFleetReleaseSet 
   const components = Object.fromEntries(
     COMPONENTS.map((id) => [id, component(componentValue[id], id)])
   ) as Record<ReleaseComponentId, ReleaseComponent>;
+  for (const [id, selected] of Object.entries(components) as [ReleaseComponentId, ReleaseComponent][]) {
+    for (const [dependency, accepted] of Object.entries(selected.compatibility) as [ReleaseComponentId, ReleaseSequenceRange][]) {
+      if (dependency === id) fail(`${id} cannot depend on itself`);
+      const dependencySequence = components[dependency].sequence;
+      if (dependencySequence < accepted.minimum || dependencySequence > accepted.maximum) {
+        fail(`${id} is incompatible with ${dependency}`);
+      }
+    }
+  }
 
   if (!Array.isArray(value.artifacts) || value.artifacts.length > 64) fail('artifacts are invalid');
   const artifactIds = new Set<string>();
   const artifacts = value.artifacts.map((candidate) => {
-    const item = exact(candidate, ['id', 'component', 'platform', 'architecture', 'url', 'sha256', 'size']);
+    const item = exact(candidate, [
+      'id', 'component', 'componentSequence', 'version', 'platform', 'architecture', 'url',
+      'sha256', 'size', 'sourceRepository', 'sourceCommit', 'contractPackageVersion',
+      'sbomSha256', 'licenseSha256'
+    ]);
     const id = pattern(item.id, TOKEN, 'artifact id');
     if (artifactIds.has(id)) fail('artifact id is duplicated');
     artifactIds.add(id);
     const componentId = member(item.component, COMPONENTS, 'artifact component');
+    const componentSequence = integer(item.componentSequence, 1, Number.MAX_SAFE_INTEGER, 'artifact component sequence');
+    const version = pattern(item.version, VERSION, 'artifact version');
     const platform = member(item.platform, ['windows', 'android', 'linux', 'termux', 'any'] as const, 'artifact platform');
     const architecture = member(item.architecture, ['x86_64', 'arm64', 'universal', 'any'] as const, 'artifact architecture');
     const url = httpsUrl(item.url);
     const sha256 = pattern(item.sha256, /^[a-f0-9]{64}$/u, 'artifact digest');
     const size = integer(item.size, 1, 2 * 1024 * 1024 * 1024, 'artifact size');
-    return { id, component: componentId, platform, architecture, url, sha256, size };
+    const sourceRepository = httpsUrl(item.sourceRepository);
+    const sourceCommit = pattern(item.sourceCommit, /^[a-f0-9]{40}$/u, 'artifact source commit');
+    const artifactContractVersion = pattern(item.contractPackageVersion, VERSION, 'artifact contract package version');
+    const sbomSha256 = pattern(item.sbomSha256, /^[a-f0-9]{64}$/u, 'artifact SBOM digest');
+    const licenseSha256 = pattern(item.licenseSha256, /^[a-f0-9]{64}$/u, 'artifact license digest');
+    const selected = components[componentId];
+    if (componentSequence !== selected.sequence || version !== selected.version) fail('artifact component identity does not match');
+    if (artifactContractVersion !== contractPackageVersion) fail('artifact contract package version does not match');
+    return {
+      id, component: componentId, componentSequence, version, platform, architecture, url, sha256, size,
+      sourceRepository, sourceCommit, contractPackageVersion: artifactContractVersion, sbomSha256, licenseSha256
+    };
   });
 
-  const floorValue = exact(value.rollbackFloor, ['releaseSetSequence', 'androidVersionCode', 'runtimeSequence']);
+  const floorValue = exact(value.rollbackFloor, ['releaseSetSequence', 'componentSequences']);
+  const sequenceValues = exact(floorValue.componentSequences, COMPONENTS);
+  const componentSequences = Object.fromEntries(COMPONENTS.map((id) => {
+    const sequence = integer(sequenceValues[id], 0, components[id].sequence, `${id} rollback floor`);
+    return [id, sequence];
+  })) as Record<ReleaseComponentId, number>;
   const rollbackFloor = {
     releaseSetSequence: integer(floorValue.releaseSetSequence, 0, releaseSetSequence, 'rollback release sequence'),
-    androidVersionCode: integer(floorValue.androidVersionCode, 0, Number.MAX_SAFE_INTEGER, 'Android rollback floor'),
-    runtimeSequence: integer(floorValue.runtimeSequence, 0, Number.MAX_SAFE_INTEGER, 'runtime rollback floor')
+    componentSequences
   };
   const signatureValue = exact(value.signature, ['algorithm', 'keyId', 'value']);
   if (signatureValue.algorithm !== 'ed25519') fail('signature algorithm is unsupported');
@@ -112,11 +153,15 @@ export function parseAgentFleetReleaseSet(input: unknown): AgentFleetReleaseSet 
 }
 
 function component(input: unknown, label: string): ReleaseComponent {
-  const value = exact(input, ['version', 'minimumCompatibleVersion', 'maximumCompatibleVersion']);
+  const value = exact(input, ['sequence', 'version', 'compatibility']);
+  const compatibilityValue = atMost(value.compatibility, COMPONENTS);
+  const compatibility = Object.fromEntries(Object.entries(compatibilityValue).map(([dependency, accepted]) => [
+    dependency, sequenceRange(accepted, `${label} ${dependency}`)
+  ])) as Partial<Record<ReleaseComponentId, ReleaseSequenceRange>>;
   return {
+    sequence: integer(value.sequence, 1, Number.MAX_SAFE_INTEGER, `${label} sequence`),
     version: pattern(value.version, VERSION, `${label} version`),
-    minimumCompatibleVersion: pattern(value.minimumCompatibleVersion, VERSION, `${label} minimum version`),
-    maximumCompatibleVersion: pattern(value.maximumCompatibleVersion, VERSION, `${label} maximum version`)
+    compatibility
   };
 }
 
@@ -128,12 +173,27 @@ function range(input: unknown, label: string): ReleaseProtocolRange {
   return { minimum, maximum };
 }
 
+function sequenceRange(input: unknown, label: string): ReleaseSequenceRange {
+  const value = exact(input, ['minimum', 'maximum']);
+  const minimum = integer(value.minimum, 1, Number.MAX_SAFE_INTEGER, `${label} minimum`);
+  const maximum = integer(value.maximum, 1, Number.MAX_SAFE_INTEGER, `${label} maximum`);
+  if (minimum > maximum) fail(`${label} range is inverted`);
+  return { minimum, maximum };
+}
+
 function exact(input: unknown, fields: readonly string[]): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('object shape is invalid');
   const value = input as Record<string, unknown>;
   const actual = Object.keys(value).sort();
   const expected = [...fields].sort();
   if (actual.length !== expected.length || actual.some((item, index) => item !== expected[index])) fail('object fields are invalid');
+  return value;
+}
+
+function atMost(input: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail('object shape is invalid');
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).some((item) => !fields.includes(item))) fail('object fields are invalid');
   return value;
 }
 

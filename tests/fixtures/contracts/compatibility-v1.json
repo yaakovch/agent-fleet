@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractPackageVersion": "1.2.0",
+  "contractPackageVersion": "1.3.0",
   "components": {
     "wtmux": {
       "sourceVersion": "git-7b9113e",

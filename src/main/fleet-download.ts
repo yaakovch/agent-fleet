@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { win32 } from 'node:path';
 import type { FleetDownloadJob } from '../shared/app';
 import { resolveWslExecutable } from './fleet-terminal';
+import { activatedRuntimeCommand } from '../shared/runtime';
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,320}$/u;
@@ -64,7 +65,7 @@ export class FleetDownloadManager {
     const outputDirectory = this.options.downloadsDirectory();
     const wslOutputDirectory = windowsPathToWsl(outputDirectory);
     const args = [
-      '-d', this.options.distro(), '--cd', '~', '--', '.local/bin/wtmux', 'file', 'download',
+      '-d', this.options.distro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'file', 'download',
       '--host', target.hostId, '--session', target.internalName, '--path', target.relativePath,
       '--output-dir', wslOutputDirectory, '--yes', '--json', '--json-progress'
     ];
