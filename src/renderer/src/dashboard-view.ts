@@ -50,13 +50,19 @@ import {
 import type {
   FleetAttention,
   FleetHost,
+  FleetPhysicalHost,
   FleetSchedule,
   FleetSession,
   FleetSeverity,
   FleetSnapshot,
   FleetTool
 } from '../../shared/fleet';
-import { isFleetSessionAvailable, sessionIdentityPresentation } from '../../shared/fleet';
+import {
+  isFleetSessionAvailable,
+  physicalHostForSession,
+  sessionIdentityPresentation,
+  transportHostId
+} from '../../shared/fleet';
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
 import type { FleetDownloadJob } from '../../shared/app';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
@@ -566,7 +572,9 @@ export class DashboardPrototype {
       const name = this.root.querySelector<HTMLInputElement>('[data-launcher-new-folder]')?.value.trim() ?? '';
       const parent = this.launcherDirectory?.path;
       if (!parent || !name) return this.showToast('Enter a folder name');
-      void window.limitsWidget.createFleetDirectory(this.launcherHostId, this.launcherBackend, parent, name).then((result) => {
+      const transportHost = transportHostId(this.snapshot, this.launcherHostId, this.launcherBackend);
+      if (!transportHost) return this.showToast('The selected target is no longer available');
+      void window.limitsWidget.createFleetDirectory(transportHost, this.launcherBackend, parent, name).then((result) => {
         if (!result.ok || !result.path) return this.showToast(result.message);
         void this.loadLauncherDirectory(result.path, false);
       });
@@ -587,8 +595,10 @@ export class DashboardPrototype {
       if (!this.workspace.confirmPlacement(placement)) {
         return this.showToast(placement === 'replace' ? 'Current draft was kept' : 'Up to four sessions can be visible at once');
       }
+      const transportHost = transportHostId(this.snapshot, this.launcherHostId, this.launcherBackend);
+      if (!transportHost) return this.showToast('The selected target is no longer available');
       void window.limitsWidget.createFleetSession(
-        this.launcherHostId, label, this.launcherBackend, this.launcherTool,
+        transportHost, label, this.launcherBackend, this.launcherTool,
         this.launcherSelectedPath, this.launcherLocation,
         { placement }
       ).then((result) => {
@@ -922,7 +932,7 @@ export class DashboardPrototype {
 
   private renderOverview(): string {
     const sessions = this.visibleSessions();
-    const healthyHosts = this.snapshot.hosts.filter((host) => host.status === 'healthy').length;
+    const healthyHosts = this.snapshot.physicalHosts.filter((host) => host.status === 'healthy').length;
     const pending = this.snapshot.schedules.filter((item) => item.status === 'pending').length;
     return `<div class="dashboard-stack">
       ${this.snapshot.attention.length ? `<section class="attention-center fleet-card">
@@ -930,7 +940,7 @@ export class DashboardPrototype {
         <div class="attention-list">${this.snapshot.attention.slice(0, 2).map((item) => this.renderAttention(item)).join('')}</div>
       </section>` : ''}
       <section class="fleet-metrics">
-        ${metric('network', 'Hosts online', `${healthyHosts} / ${this.snapshot.hosts.length}`, healthyHosts === this.snapshot.hosts.length ? 'All connected' : 'Some hosts are unavailable', healthyHosts === this.snapshot.hosts.length ? 'healthy' : 'offline')}
+        ${metric('network', 'Hosts online', `${healthyHosts} / ${this.snapshot.physicalHosts.length}`, healthyHosts === this.snapshot.physicalHosts.length ? 'All connected' : 'Some hosts are unavailable', healthyHosts === this.snapshot.physicalHosts.length ? 'healthy' : 'offline')}
         ${metric('square-terminal', 'Sessions', String(sessions.length), `${sessions.filter((item) => item.activity === 'active').length} active`, 'healthy')}
         ${metric('calendar-clock', 'Scheduled', String(pending), pending ? 'Pending delivery' : 'Nothing pending', 'healthy')}
       </section>
@@ -950,7 +960,7 @@ export class DashboardPrototype {
         </article>
         <article class="fleet-card host-health-card">
           ${cardHeader('Hosts', 'Current fleet status', 'Manage', 'fleet')}
-          <div class="host-list compact">${this.snapshot.hosts.map((host) => this.renderHostRow(host)).join('')}</div>
+          <div class="host-list compact">${this.snapshot.physicalHosts.map((host) => this.renderHostRow(host)).join('')}</div>
         </article>
       </section>
     </div>`;
@@ -958,19 +968,32 @@ export class DashboardPrototype {
 
   private renderSessions(): string {
     const needle = this.search.trim().toLowerCase();
-    const sessions = this.visibleSessions().filter((session) => !needle || [session.name, session.title, session.project, session.hostId, session.tool].some((value) => value.toLowerCase().includes(needle)));
-    const grouped = this.snapshot.hosts.map((host) => ({ host, sessions: sessions.filter((session) => session.hostId === host.id) })).filter((group) => group.sessions.length);
+    const sessions = this.visibleSessions().filter((session) => {
+      const host = physicalHostForSession(this.snapshot, session);
+      return !needle || [session.name, session.title, session.project, session.hostId, host?.name ?? '', session.tool]
+        .some((value) => value.toLowerCase().includes(needle));
+    });
+    const grouped = this.snapshot.physicalHosts
+      .map((host) => ({ host, sessions: sessions.filter((session) => session.physicalHostId === host.id) }))
+      .filter((group) => group.sessions.length);
     return `<div class="dashboard-stack">
-      <div class="view-toolbar"><label class="fleet-search">${icon('search')}<input data-dashboard-search value="${escapeAttr(this.search)}" placeholder="Search session, project, host, or tool"></label><div class="filter-pills"><button class="active">All hosts</button>${this.snapshot.hosts.map((host) => `<button>${escapeHtml(host.name)}</button>`).join('')}</div><button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button></div>
-      ${grouped.length ? grouped.map(({ host, sessions: hostSessions }) => `<section class="fleet-card session-group"><div class="session-group-heading"><div><span class="status-dot status-${host.status}"></span><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span>${hostSessions.length} session${hostSessions.length === 1 ? '' : 's'}</span></div><div class="session-list">${hostSessions.map((session) => this.renderSessionRow(session, false)).join('')}</div></section>`).join('') : this.renderNoResults('No sessions match this search', 'Try another host, project, or tool name.')}
+      <div class="view-toolbar"><label class="fleet-search">${icon('search')}<input data-dashboard-search value="${escapeAttr(this.search)}" placeholder="Search session, project, host, or tool"></label><div class="filter-pills"><button class="active">All hosts</button>${this.snapshot.physicalHosts.map((host) => `<button>${escapeHtml(host.name)}</button>`).join('')}</div><button class="primary-button" data-action="dashboard-nav" data-view="launcher">${icon('plus')}New session</button></div>
+      ${grouped.length ? grouped.map(({ host, sessions: hostSessions }) => `<section class="fleet-card session-group"><div class="session-group-heading"><div><span class="status-dot status-${host.status}"></span><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(this.targetLabels(host))}</small></div><span>${hostSessions.length} session${hostSessions.length === 1 ? '' : 's'}</span></div><div class="session-list">${hostSessions.map((session) => this.renderSessionRow(session, false)).join('')}</div></section>`).join('') : this.renderNoResults('No sessions match this search', 'Try another host, project, or tool name.')}
     </div>`;
   }
 
   private renderLauncher(): string {
-    const hosts = this.snapshot.hosts.filter((host) => host.status === 'healthy');
+    const hosts = this.snapshot.physicalHosts.filter((host) => host.status === 'healthy');
     const selectedHostId = hosts.some((host) => host.id === this.launcherHostId) ? this.launcherHostId : hosts[0]?.id ?? '';
     if (selectedHostId !== this.launcherHostId) {
       this.launcherHostId = selectedHostId;
+      this.resetLauncherDirectory();
+    }
+    const targets = this.snapshot.executionTargets.filter((target) =>
+      target.physicalHostId === selectedHostId && target.status !== 'unavailable'
+    );
+    if (!targets.some((target) => target.id === this.launcherBackend)) {
+      this.launcherBackend = targets[0]?.id ?? 'linux';
       this.resetLauncherDirectory();
     }
     if (selectedHostId && !this.launcherDirectory && !this.launcherDirectoryLoading && !this.launcherDirectoryError) {
@@ -998,7 +1021,7 @@ export class DashboardPrototype {
         <div class="card-heading"><div><h2>Start a session</h2><p>Choose the host and folder, then launch</p></div><span class="safe-badge">${icon('shield-check')}Safe argv</span></div>
         <div class="launcher-grid">
           <label>Host<select data-launcher-host>${hosts.map((host) => `<option value="${escapeAttr(host.id)}" ${host.id === selectedHostId ? 'selected' : ''}>${escapeHtml(host.name)}</option>`).join('')}</select></label>
-          <label>Backend<select data-launcher-backend><option value="linux" ${this.launcherBackend === 'linux' ? 'selected' : ''}>Linux / WSL</option><option value="windows" ${this.launcherBackend === 'windows' ? 'selected' : ''}>Windows</option></select></label>
+          <label>Target<select data-launcher-backend>${targets.map((target) => `<option value="${target.id}" ${this.launcherBackend === target.id ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}</select></label>
           <label>Location<select data-launcher-location><option value="project" ${this.launcherLocation === 'project' ? 'selected' : ''}>Projects</option><option value="custom" ${this.launcherLocation === 'custom' ? 'selected' : ''}>Other location</option></select></label>
           <label>Tool<select data-launcher-tool><option value="codex" ${this.launcherTool === 'codex' ? 'selected' : ''}>Codex</option><option value="claude" ${this.launcherTool === 'claude' ? 'selected' : ''}>Claude Code</option><option value="copilot" ${this.launcherTool === 'copilot' ? 'selected' : ''}>GitHub Copilot</option><option value="shell" ${this.launcherTool === 'shell' ? 'selected' : ''}>Shell</option></select></label>
         </div>
@@ -1023,15 +1046,21 @@ export class DashboardPrototype {
 
   private async loadLauncherDirectory(path: string, projectsRoot: boolean, recent = false): Promise<void> {
     if (!this.launcherHostId || this.launcherDirectoryLoading) return;
+    const transportHost = transportHostId(this.snapshot, this.launcherHostId, this.launcherBackend);
+    if (!transportHost) {
+      this.launcherDirectoryError = 'The selected execution target is unavailable.';
+      this.render();
+      return;
+    }
     this.launcherDirectoryLoading = true;
     this.launcherDirectoryError = '';
     this.render();
-    const first = await window.limitsWidget.listFleetDirectory(this.launcherHostId, this.launcherBackend, path);
+    const first = await window.limitsWidget.listFleetDirectory(transportHost, this.launcherBackend, path);
     let result = first;
     if (first.ok && first.listing && projectsRoot) {
       const projects = first.listing.shortcuts.find((shortcut) => shortcut.id === 'projects');
       if (projects && projects.path !== first.listing.path) {
-        result = await window.limitsWidget.listFleetDirectory(this.launcherHostId, this.launcherBackend, projects.path);
+        result = await window.limitsWidget.listFleetDirectory(transportHost, this.launcherBackend, projects.path);
       }
     }
     this.launcherDirectoryLoading = false;
@@ -1084,7 +1113,7 @@ export class DashboardPrototype {
   private renderFleet(): string {
     return `<div class="dashboard-stack">
       ${this.snapshot.pairingRequests.filter((request) => request.status === 'awaiting-review').map((request) => `<section class="pairing-request" data-pairing-request-id="${escapeAttr(request.id)}"><span class="pairing-icon">${icon('user-plus')}</span><div><strong>Pairing request from ${escapeHtml(request.deviceName)}</strong><p>${escapeHtml(request.platform)} · live peer ${escapeHtml(request.peer)} · expires ${formatTime(request.expiresAt)}</p></div><button data-action="dashboard-review-pairing">Review exact proposal</button></section>`).join('')}
-      <section class="fleet-card fleet-host-grid">${this.snapshot.hosts.map((host) => this.renderHostCard(host)).join('')}</section>
+      <section class="fleet-card fleet-host-grid">${this.snapshot.physicalHosts.map((host) => this.renderHostCard(host)).join('')}</section>
       <section class="pairing-layout">
         <article class="fleet-card registry-card"><div class="card-heading"><div><h2>Fleet registry</h2><p>Provider: GitHub · verified cache available</p></div><span class="safe-badge">${icon('check')}Synced</span></div><dl><div><dt>Last sync</dt><dd>${relativeTime(this.snapshot.registrySyncedAt)}</dd></div><div><dt>Checkout</dt><dd>Clean</dd></div><div><dt>Schema</dt><dd>fleet/v1</dd></div><div><dt>Runtime bundle</dt><dd>1.4.0-dev</dd></div></dl><button class="quiet-button" data-action="dashboard-refresh">${icon('refresh-cw')}Check registry</button></article>
       </section>
@@ -1155,32 +1184,53 @@ export class DashboardPrototype {
   }
 
   private renderSessionRow(session: FleetSession, compact: boolean): string {
-    const host = this.snapshot.hosts.find((item) => item.id === session.hostId);
+    const host = physicalHostForSession(this.snapshot, session);
     const unavailable = !this.sessionAvailable(session);
     const identity = sessionIdentityPresentation(session);
     return `<div class="session-row ${compact ? 'is-compact' : ''} ${unavailable ? 'unavailable' : ''}" data-session-id="${escapeAttr(session.id)}">
       <span class="tool-icon tool-${session.tool}">${toolIcon(session.tool)}</span>
       <span class="session-primary"><strong>${escapeHtml(identity.primary)}</strong><small>${escapeHtml(identity.secondary || 'Managed tmux session')}</small></span>
-      <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.hostId)} · ${escapeHtml(session.backend)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
+      <span class="session-context"><strong>${escapeHtml(session.project)}</strong><small>${escapeHtml(host?.name ?? session.physicalHostId)} · ${escapeHtml(session.executionTargetId)}${session.profileAlias ? ` · ${escapeHtml(session.profileAlias)}` : ''}</small></span>
       <span class="activity-label ${unavailable ? 'activity-unavailable' : `activity-${session.activity}`}"><i></i>${unavailable ? 'Unavailable' : capitalize(session.activity)}</span>
       <span class="session-time">${relativeTime(session.updatedAt)}${session.attached ? '<small>Attached</small>' : ''}</span>
       <span class="session-actions"><button data-action="dashboard-open-session" title="${unavailable ? 'Host unavailable' : 'Open session'}" ${unavailable ? 'disabled' : ''}>${icon('panel-top-open')}<span>${unavailable ? 'Offline' : 'Open'}</span></button>${compact ? '' : `<button class="quiet-button" data-action="dashboard-favorite" title="${session.favorite ? 'Remove favorite' : 'Save favorite'}" ${unavailable ? 'disabled' : ''}>${icon('star')}</button><button class="quiet-button" data-action="dashboard-session-more" title="More session actions">${icon('more-horizontal')}</button>`}</span>
     </div>`;
   }
 
-  private renderHostRow(host: FleetHost): string {
-    return `<div class="host-row"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><span><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.detail)}</small></span><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div>`;
+  private renderHostRow(host: FleetPhysicalHost): string {
+    const transport = this.transportHost(host);
+    const detail = transport?.detail ?? `${host.endpointIds.length} endpoint${host.endpointIds.length === 1 ? '' : 's'} · ${this.targetLabels(host)}`;
+    return `<div class="host-row"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><span><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(detail)}</small></span><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div>`;
   }
 
-  private renderHostCard(host: FleetHost): string {
+  private renderHostCard(host: FleetPhysicalHost): string {
+    const transport = this.transportHost(host);
+    const endpoints = this.snapshot.endpoints.filter((endpoint) => endpoint.physicalHostId === host.id);
+    const needsVerification = endpoints.some((endpoint) => endpoint.identityState !== 'verified');
     const offline = host.status === 'offline';
-    const detail = offline ? `${host.detail} · Showing last known data` : host.detail;
+    const baseDetail = transport?.detail ?? `${endpoints.length} registered endpoint${endpoints.length === 1 ? '' : 's'}`;
+    const detail = `${baseDetail}${needsVerification ? ' · Endpoint identity needs verification' : ''}${offline ? ' · Showing last known data' : ''}`;
     const secondaryAction = host.status === 'attention'
       ? `<button class="primary-button" data-action="dashboard-repair-host">${icon('wrench')}Review update</button>`
       : offline
         ? `<button class="primary-button" data-action="dashboard-refresh" title="Retry this host connection">${icon('refresh-cw')}Retry connection</button>`
         : `<button class="quiet-button">${icon('more-horizontal')}More</button>`;
-    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(host.machine)}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${host.sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(host.wtmuxVersion)}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>v${host.protocolVersion}</dd></div></dl><div class="host-card-actions"><button class="quiet-button" data-action="dashboard-doctor-host" ${offline ? 'disabled' : ''}>${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
+    const operationalId = transport?.id ?? host.legacyHostIds[0] ?? '';
+    const sessionCount = this.snapshot.sessions.filter((session) => session.physicalHostId === host.id).length;
+    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(operationalId)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(this.targetLabels(host))}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(transport?.wtmuxVersion ?? 'Unknown')}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>${transport ? `v${transport.protocolVersion}` : 'Unknown'}</dd></div></dl><div class="host-card-actions"><button class="quiet-button" data-action="dashboard-doctor-host" ${offline || !transport ? 'disabled' : ''}>${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
+  }
+
+  private transportHost(host: FleetPhysicalHost): FleetHost | undefined {
+    return host.legacyHostIds
+      .map((id) => this.snapshot.hosts.find((candidate) => candidate.id === id))
+      .find((candidate): candidate is FleetHost => Boolean(candidate));
+  }
+
+  private targetLabels(host: FleetPhysicalHost): string {
+    return this.snapshot.executionTargets
+      .filter((target) => target.physicalHostId === host.id)
+      .map((target) => target.label)
+      .join(' · ') || 'No execution targets';
   }
 
   private renderScheduleRow(schedule: FleetSchedule): string {

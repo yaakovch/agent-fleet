@@ -1,0 +1,88 @@
+{
+  "revision": "identity-fixture",
+  "generatedAt": "2026-07-23T10:00:00Z",
+  "fleetId": "agent-fleet",
+  "hosts": [
+    {
+      "id": "gaming-desktop-ubuntu",
+      "name": "Gaming desktop",
+      "platform": "wsl",
+      "transport": "tailscale",
+      "status": "healthy",
+      "lastSeenAt": "2026-07-23T10:00:00Z",
+      "errorCode": "",
+      "capabilities": ["fleet.snapshot", "sessions.execution-target.v1"],
+      "wtmuxVersion": "fixture",
+      "agentVersion": "0.1.0",
+      "protocolVersion": 1,
+      "timeZone": "Asia/Jerusalem"
+    }
+  ],
+  "physicalHosts": [
+    {
+      "id": "gaming-desktop",
+      "name": "Gaming desktop",
+      "platform": "wsl",
+      "status": "healthy",
+      "lastSeenAt": "2026-07-23T10:00:00Z",
+      "errorCode": "",
+      "endpointIds": ["gaming-desktop-tailnet-openssh"],
+      "executionTargetIds": ["linux", "windows"],
+      "legacyHostIds": ["gaming-desktop-ubuntu", "gaming-desktop_windows"]
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "gaming-desktop-tailnet-openssh",
+      "physicalHostId": "gaming-desktop",
+      "network": "tailnet",
+      "address": "gaming-desktop.example.ts.net",
+      "port": 22,
+      "sshEngine": "openssh",
+      "authentication": "tailnet-ssh",
+      "status": "healthy",
+      "identityState": "verified",
+      "sshHostKeySha256": "SHA256:0123456789012345678901234567890123456789012",
+      "tailscaleNodeId": "node-example",
+      "errorCode": ""
+    }
+  ],
+  "executionTargets": [
+    {
+      "id": "linux",
+      "physicalHostId": "gaming-desktop",
+      "kind": "linux",
+      "label": "Ubuntu",
+      "status": "available",
+      "fingerprint": "wsl:Ubuntu"
+    },
+    {
+      "id": "windows",
+      "physicalHostId": "gaming-desktop",
+      "kind": "windows-git-bash",
+      "label": "Windows Git Bash",
+      "status": "available",
+      "fingerprint": "windows-git-bash"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "gaming-desktop-ubuntu:wtmux-project-1",
+      "hostId": "gaming-desktop-ubuntu",
+      "physicalHostId": "gaming-desktop",
+      "executionTargetId": "linux",
+      "internalName": "wtmux-project-1",
+      "name": "project:1",
+      "title": "",
+      "project": "project",
+      "tool": "shell",
+      "backend": "linux",
+      "activity": "active",
+      "attached": false,
+      "updatedAt": "2026-07-23T10:00:00Z",
+      "pendingScheduleCount": 0
+    }
+  ],
+  "schedules": [],
+  "attention": []
+}

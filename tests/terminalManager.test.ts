@@ -242,7 +242,8 @@ function makeManager(statePath: string): { manager: TerminalManager; spawn: Retu
 const WINDOWS_WSL = 'C:\\Windows\\System32\\wsl.exe';
 
 const session: FleetSession = {
-  id: 'gaming:wtmux-agent-fleet-1', hostId: 'gaming', internalName: 'wtmux-agent-fleet-1',
+  id: 'gaming:wtmux-agent-fleet-1', hostId: 'gaming', physicalHostId: 'gaming', executionTargetId: 'linux',
+  internalName: 'wtmux-agent-fleet-1',
   name: 'Agent Fleet', title: 'codex', project: 'agent-fleet', projectPath: '/home/me/projects/agent-fleet',
   tool: 'codex', backend: 'linux', activity: 'active', attached: false, updatedAt: null,
   pendingScheduleCount: 0, favorite: false

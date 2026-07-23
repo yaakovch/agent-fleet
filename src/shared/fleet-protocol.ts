@@ -3,6 +3,8 @@ import type {
   FleetBackend,
   FleetFavorite,
   FleetHost,
+  FleetEndpoint,
+  FleetExecutionTarget,
   FleetUsageLimit,
   FleetSchedule,
   FleetSession,
@@ -31,6 +33,8 @@ export interface BridgeHostSnapshot {
 export interface BridgeSessionSnapshot {
   id: string;
   hostId: string;
+  physicalHostId?: string;
+  executionTargetId?: 'linux' | 'windows';
   internalName: string;
   name: string;
   title: string;
@@ -45,6 +49,20 @@ export interface BridgeSessionSnapshot {
   updatedAt: string | null;
   pendingScheduleCount: number;
 }
+
+export interface BridgePhysicalHostSnapshot {
+  id: string;
+  name: string;
+  platform: 'wsl' | 'linux' | 'termux';
+  status: 'healthy' | 'connecting' | 'offline';
+  lastSeenAt: string | null;
+  errorCode: string;
+  endpointIds: string[];
+  executionTargetIds: Array<'linux' | 'windows'>;
+  legacyHostIds: string[];
+}
+export type BridgeEndpointSnapshot = FleetEndpoint;
+export type BridgeExecutionTargetSnapshot = FleetExecutionTarget;
 
 export interface BridgeScheduleSnapshot {
   id: string;
@@ -96,6 +114,10 @@ export interface BridgeFleetSnapshot {
   presentationRevision?: string;
   generatedAt: string;
   hosts: BridgeHostSnapshot[];
+  fleetId?: string;
+  physicalHosts: BridgePhysicalHostSnapshot[];
+  endpoints: BridgeEndpointSnapshot[];
+  executionTargets: BridgeExecutionTargetSnapshot[];
   sessions: BridgeSessionSnapshot[];
   schedules: BridgeScheduleSnapshot[];
   attention: BridgeAttentionSnapshot[];
@@ -251,6 +273,11 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   if ('presets' in candidate) snapshotFields.push('presets');
   if ('pairingRequests' in candidate) snapshotFields.push('pairingRequests');
   if ('presentationRevision' in candidate) snapshotFields.push('presentationRevision');
+  const graphFieldNames = ['fleetId', 'physicalHosts', 'endpoints', 'executionTargets'] as const;
+  const graphFieldCount = graphFieldNames.filter((field) => field in candidate).length;
+  if (graphFieldCount !== 0 && graphFieldCount !== graphFieldNames.length) fail('identity graph fields are incomplete');
+  const includesIdentityGraph = graphFieldCount === graphFieldNames.length;
+  if (includesIdentityGraph) snapshotFields.push(...graphFieldNames);
   const root = exactObject(input, snapshotFields, 'snapshot');
   rejectPrivateFields(root);
   const revision = text(root.revision, 'revision', 64, false);
@@ -260,7 +287,10 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   const hosts = array(root.hosts, 'hosts', 256).map(parseHost);
   const hostIds = new Set(hosts.map((host) => host.id));
   if (hostIds.size !== hosts.length) fail('hosts contain a duplicate id');
-  const sessions = array(root.sessions, 'sessions', 500).map((value) => parseSession(value, hostIds, Boolean(presentationRevision)));
+  const sessions = array(root.sessions, 'sessions', 500).map((value) => parseSession(
+    value, hostIds, Boolean(presentationRevision), includesIdentityGraph
+  ));
+  if (new Set(sessions.map((session) => session.id)).size !== sessions.length) fail('sessions contain a duplicate id');
   const schedules = array(root.schedules, 'schedules', 500).map((value) => parseSchedule(value, hostIds));
   const attention = array(root.attention, 'attention', 500).map((value) => parseAttention(value, hostIds));
   const limits = 'limits' in root ? array(root.limits, 'limits', 100).map((value) => parseLimit(value, hostIds)) : [];
@@ -268,7 +298,22 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   const pairingRequests = 'pairingRequests' in root
     ? array(root.pairingRequests, 'pairingRequests', 256).map(parsePairingRequest)
     : [];
-  return { revision, ...(presentationRevision ? { presentationRevision } : {}), generatedAt, hosts, sessions, schedules, attention, limits, presets, pairingRequests };
+  const identity = includesIdentityGraph
+    ? parseIdentityGraph(root, hosts, sessions)
+    : legacyIdentityGraph(hosts, sessions);
+  return {
+    revision,
+    ...(presentationRevision ? { presentationRevision } : {}),
+    generatedAt,
+    hosts,
+    sessions,
+    schedules,
+    attention,
+    limits,
+    presets,
+    pairingRequests,
+    ...identity
+  };
 }
 
 export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): FleetSnapshot {
@@ -281,6 +326,12 @@ export function toFleetSnapshot(raw: BridgeFleetSnapshot, distro: string): Fleet
     registrySyncedAt: raw.generatedAt,
     controller: { distro, status: raw.hosts.some((host) => host.status === 'healthy') ? 'healthy' : 'offline', protocolVersion: 1 },
     hosts: raw.hosts.map((host) => toHost(host, sessions)),
+    physicalHosts: raw.physicalHosts.map((host) => ({
+      ...host,
+      status: host.status === 'healthy' ? 'healthy' : 'offline'
+    })),
+    endpoints: raw.endpoints,
+    executionTargets: raw.executionTargets,
     sessions,
     schedules: raw.schedules.map((schedule) => toSchedule(schedule, hostTimeZones.get(schedule.hostId) ?? '')),
     attention: raw.attention.filter((item) => ['detected', 'offering', 'offered'].includes(item.state)).map(toAttention),
@@ -298,6 +349,9 @@ export function emptyFleetSnapshot(distro: string, generatedAt = new Date().toIS
     registrySyncedAt: generatedAt,
     controller: { distro, status: 'offline', protocolVersion: 1 },
     hosts: [],
+    physicalHosts: [],
+    endpoints: [],
+    executionTargets: [],
     sessions: [],
     schedules: [],
     attention: [],
@@ -457,6 +511,129 @@ function repositoryPath(input: unknown, label: string, empty: boolean): string {
   return value;
 }
 
+function parseIdentityGraph(
+  root: Record<string, unknown>,
+  hosts: BridgeHostSnapshot[],
+  sessions: BridgeSessionSnapshot[]
+): Pick<BridgeFleetSnapshot, 'fleetId' | 'physicalHosts' | 'endpoints' | 'executionTargets'> {
+  const fleetId = text(root.fleetId, 'fleetId', 160, false);
+  const physicalHosts = array(root.physicalHosts, 'physicalHosts', 256).map((input) => {
+    const value = exactObject(input, [
+      'id', 'name', 'platform', 'status', 'lastSeenAt', 'errorCode',
+      'endpointIds', 'executionTargetIds', 'legacyHostIds'
+    ], 'physical host');
+    return {
+      id: text(value.id, 'physicalHost.id', 160, false),
+      name: text(value.name, 'physicalHost.name', 256, false),
+      platform: oneOf(value.platform, 'physicalHost.platform', ['wsl', 'linux', 'termux']),
+      status: oneOf(value.status, 'physicalHost.status', ['healthy', 'connecting', 'offline']),
+      lastSeenAt: instant(value.lastSeenAt, 'physicalHost.lastSeenAt'),
+      errorCode: text(value.errorCode, 'physicalHost.errorCode', 64),
+      endpointIds: uniqueStrings(value.endpointIds, 'physicalHost.endpointIds', 16, 160, true),
+      executionTargetIds: uniqueStrings(value.executionTargetIds, 'physicalHost.executionTargetIds', 16, 16, true)
+        .map((id) => oneOf(id, 'physicalHost.executionTargetId', ['linux', 'windows'])),
+      legacyHostIds: uniqueStrings(value.legacyHostIds, 'physicalHost.legacyHostIds', 16, 160, true)
+    } satisfies BridgePhysicalHostSnapshot;
+  });
+  const physicalIds = new Set(physicalHosts.map((host) => host.id));
+  if (physicalIds.size !== physicalHosts.length) fail('physical hosts contain a duplicate id');
+  const legacyAliases = physicalHosts.flatMap((host) => host.legacyHostIds);
+  if (new Set(legacyAliases).size !== legacyAliases.length) fail('physical hosts contain a duplicate legacy alias');
+  const rawHostIds = new Set(hosts.map((host) => host.id));
+  if ([...rawHostIds].some((id) => !legacyAliases.includes(id))) fail('legacy host is missing from the identity graph');
+
+  const endpoints = array(root.endpoints, 'endpoints', 512).map((input) => {
+    const value = exactObject(input, [
+      'id', 'physicalHostId', 'network', 'address', 'port', 'sshEngine', 'authentication',
+      'status', 'identityState', 'sshHostKeySha256', 'tailscaleNodeId', 'errorCode'
+    ], 'endpoint');
+    const physicalHostId = text(value.physicalHostId, 'endpoint.physicalHostId', 160, false);
+    if (!physicalIds.has(physicalHostId)) fail('endpoint references an unknown physical host');
+    return {
+      id: text(value.id, 'endpoint.id', 160, false),
+      physicalHostId,
+      network: oneOf(value.network, 'endpoint.network', ['local', 'tailnet', 'direct']),
+      address: text(value.address, 'endpoint.address', 253, false),
+      port: integer(value.port, 'endpoint.port', 1, 65535),
+      sshEngine: oneOf(value.sshEngine, 'endpoint.sshEngine', ['openssh', 'tailscale-cli']),
+      authentication: oneOf(value.authentication, 'endpoint.authentication', ['tailnet-ssh', 'key']),
+      status: oneOf(value.status, 'endpoint.status', ['healthy', 'connecting', 'offline']),
+      identityState: oneOf(value.identityState, 'endpoint.identityState', ['verified', 'unverified', 'reverify-required']),
+      sshHostKeySha256: text(value.sshHostKeySha256, 'endpoint.sshHostKeySha256', 96),
+      tailscaleNodeId: text(value.tailscaleNodeId, 'endpoint.tailscaleNodeId', 128),
+      errorCode: text(value.errorCode, 'endpoint.errorCode', 64)
+    } satisfies BridgeEndpointSnapshot;
+  });
+  if (new Set(endpoints.map((endpoint) => endpoint.id)).size !== endpoints.length) fail('endpoints contain a duplicate id');
+
+  const executionTargets = array(root.executionTargets, 'executionTargets', 512).map((input) => {
+    const value = exactObject(input, ['id', 'physicalHostId', 'kind', 'label', 'status', 'fingerprint'], 'execution target');
+    const id = oneOf(value.id, 'executionTarget.id', ['linux', 'windows']);
+    const physicalHostId = text(value.physicalHostId, 'executionTarget.physicalHostId', 160, false);
+    if (!physicalIds.has(physicalHostId)) fail('execution target references an unknown physical host');
+    const kind = oneOf(value.kind, 'executionTarget.kind', ['linux', 'windows-git-bash']);
+    if ((id === 'linux') !== (kind === 'linux')) fail('execution target kind does not match its id');
+    return {
+      id,
+      physicalHostId,
+      kind,
+      label: text(value.label, 'executionTarget.label', 128, false),
+      status: oneOf(value.status, 'executionTarget.status', ['available', 'unavailable', 'unknown']),
+      fingerprint: text(value.fingerprint, 'executionTarget.fingerprint', 160)
+    } satisfies BridgeExecutionTargetSnapshot;
+  });
+  const targetKeys = executionTargets.map((target) => `${target.physicalHostId}:${target.id}`);
+  if (new Set(targetKeys).size !== targetKeys.length) fail('execution targets contain a duplicate scoped id');
+  for (const host of physicalHosts) {
+    if (host.endpointIds.some((id) => !endpoints.some((endpoint) => endpoint.id === id && endpoint.physicalHostId === host.id))) {
+      fail('physical host references an unknown endpoint');
+    }
+    if (host.executionTargetIds.some((id) => !executionTargets.some((target) => target.id === id && target.physicalHostId === host.id))) {
+      fail('physical host references an unknown execution target');
+    }
+  }
+  for (const session of sessions) {
+    const physicalHost = physicalHosts.find((host) => host.id === session.physicalHostId);
+    if (!physicalHost || !physicalHost.legacyHostIds.includes(session.hostId)) fail('session physical host identity is inconsistent');
+    if (!executionTargets.some((target) =>
+      target.physicalHostId === session.physicalHostId && target.id === session.executionTargetId)) {
+      fail('session references an unknown execution target');
+    }
+    if (session.executionTargetId !== session.backend) fail('session backend and execution target differ');
+  }
+  return { fleetId, physicalHosts, endpoints, executionTargets };
+}
+
+function legacyIdentityGraph(
+  hosts: BridgeHostSnapshot[],
+  sessions: BridgeSessionSnapshot[]
+): Pick<BridgeFleetSnapshot, 'physicalHosts' | 'endpoints' | 'executionTargets'> {
+  const physicalHosts = hosts.map((host) => ({
+    id: host.id,
+    name: host.name,
+    platform: host.platform,
+    status: host.status,
+    lastSeenAt: host.lastSeenAt,
+    errorCode: host.errorCode,
+    endpointIds: [],
+    executionTargetIds: (host.platform === 'wsl' ? ['linux', 'windows'] : ['linux']) as Array<'linux' | 'windows'>,
+    legacyHostIds: [host.id]
+  }));
+  const executionTargets = physicalHosts.flatMap((host) => host.executionTargetIds.map((id) => ({
+    id,
+    physicalHostId: host.id,
+    kind: id === 'windows' ? 'windows-git-bash' as const : 'linux' as const,
+    label: id === 'windows' ? 'Windows Git Bash' : host.platform === 'wsl' ? 'WSL' : 'Linux',
+    status: host.status === 'healthy' ? 'available' as const : 'unknown' as const,
+    fingerprint: ''
+  })));
+  sessions.forEach((session) => {
+    session.physicalHostId = session.hostId;
+    session.executionTargetId = session.backend;
+  });
+  return { physicalHosts, endpoints: [], executionTargets };
+}
+
 function parseHost(input: unknown): BridgeHostSnapshot {
   const value = exactObject(input, [
     'id', 'name', 'platform', 'transport', 'status', 'lastSeenAt', 'errorCode', 'capabilities',
@@ -478,7 +655,12 @@ function parseHost(input: unknown): BridgeHostSnapshot {
   };
 }
 
-function parseSession(input: unknown, hostIds: ReadonlySet<string>, includeTitles: boolean): BridgeSessionSnapshot {
+function parseSession(
+  input: unknown,
+  hostIds: ReadonlySet<string>,
+  includeTitles: boolean,
+  includeIdentityGraph: boolean
+): BridgeSessionSnapshot {
   const candidate = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
   const fields = [
     'id', 'hostId', 'internalName', 'name', 'title', 'project', 'tool', 'backend', 'activity',
@@ -486,6 +668,7 @@ function parseSession(input: unknown, hostIds: ReadonlySet<string>, includeTitle
   ];
   if ('projectPath' in candidate || 'locationKind' in candidate) fields.push('projectPath', 'locationKind');
   if ('nameMode' in candidate) fields.push('nameMode');
+  if ('physicalHostId' in candidate || 'executionTargetId' in candidate) fields.push('physicalHostId', 'executionTargetId');
   const value = exactObject(input, fields, 'session');
   const hostId = text(value.hostId, 'session.hostId', 160, false);
   if (!hostIds.has(hostId)) fail('session references an unknown host');
@@ -493,9 +676,17 @@ function parseSession(input: unknown, hostIds: ReadonlySet<string>, includeTitle
   if (value.title !== '' && (!includeTitles || !('nameMode' in value))) {
     fail('pane-derived session titles are forbidden without negotiation');
   }
+  if (includeIdentityGraph !== ('physicalHostId' in value && 'executionTargetId' in value)) {
+    fail('session identity graph fields are incomplete or unnegotiated');
+  }
+  const backend = oneOf(value.backend, 'session.backend', ['linux', 'windows']);
   return {
     id: text(value.id, 'session.id', 320, false),
     hostId,
+    ...('physicalHostId' in value ? {
+      physicalHostId: text(value.physicalHostId, 'session.physicalHostId', 160, false),
+      executionTargetId: oneOf(value.executionTargetId, 'session.executionTargetId', ['linux', 'windows'])
+    } : {}),
     internalName: text(value.internalName, 'session.internalName', 128, false),
     name: text(value.name, 'session.name', 256, false),
     title: text(value.title, 'session.title', 120),
@@ -504,7 +695,7 @@ function parseSession(input: unknown, hostIds: ReadonlySet<string>, includeTitle
     projectPath: 'projectPath' in value ? text(value.projectPath, 'session.projectPath', 2048) : '',
     locationKind: 'locationKind' in value ? oneOf(value.locationKind, 'session.locationKind', ['project', 'custom']) : 'project',
     tool: oneOf(value.tool, 'session.tool', ['codex', 'claude', 'copilot', 'shell']),
-    backend: oneOf(value.backend, 'session.backend', ['linux', 'windows']),
+    backend,
     activity: oneOf(value.activity, 'session.activity', ['active', 'idle']),
     attached: boolean(value.attached, 'session.attached'),
     updatedAt: instant(value.updatedAt, 'session.updatedAt'),
@@ -632,6 +823,8 @@ function toSession(session: BridgeSessionSnapshot, presets: FleetFavorite[]): Fl
   return {
     id: session.id,
     hostId: session.hostId,
+    physicalHostId: session.physicalHostId ?? session.hostId,
+    executionTargetId: session.executionTargetId ?? session.backend,
     internalName: session.internalName,
     name: session.name,
     title: session.title,
@@ -723,6 +916,19 @@ function rejectPrivateFields(input: unknown): void {
 function array(input: unknown, label: string, maximum: number): unknown[] {
   if (!Array.isArray(input) || input.length > maximum) fail(`${label} is invalid`);
   return input;
+}
+
+function uniqueStrings(
+  input: unknown,
+  label: string,
+  maximumItems: number,
+  maximumLength: number,
+  requireOne = false
+): string[] {
+  const values = array(input, label, maximumItems).map((item) => text(item, label, maximumLength, false));
+  if (requireOne && values.length === 0) fail(`${label} must not be empty`);
+  if (new Set(values).size !== values.length) fail(`${label} contains a duplicate`);
+  return values;
 }
 
 function text(input: unknown, label: string, maximum: number, empty = true): string {

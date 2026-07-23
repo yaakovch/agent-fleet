@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.0.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.1.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -624,6 +624,7 @@ export const GENERATED_OBJECT_SHAPES = {
   "control-v1:#/$defs/snapshotParams": {
     "required": [],
     "optional": [
+      "includeIdentityGraph",
       "includeSessionTitles"
     ],
     "rejectUnknown": true
@@ -924,8 +925,12 @@ export const GENERATED_OBJECT_SHAPES = {
       "sessions"
     ],
     "optional": [
+      "endpoints",
+      "executionTargets",
+      "fleetId",
       "limits",
       "pairingRequests",
+      "physicalHosts",
       "presentationRevision",
       "presets"
     ],
@@ -942,6 +947,36 @@ export const GENERATED_OBJECT_SHAPES = {
       "sessionId",
       "state",
       "updatedAt"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "fleet-snapshot-v1:#/$defs/endpoint": {
+    "required": [
+      "address",
+      "authentication",
+      "errorCode",
+      "id",
+      "identityState",
+      "network",
+      "physicalHostId",
+      "port",
+      "sshEngine",
+      "sshHostKeySha256",
+      "status",
+      "tailscaleNodeId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "fleet-snapshot-v1:#/$defs/executionTarget": {
+    "required": [
+      "fingerprint",
+      "id",
+      "kind",
+      "label",
+      "physicalHostId",
+      "status"
     ],
     "optional": [],
     "rejectUnknown": true
@@ -1001,6 +1036,21 @@ export const GENERATED_OBJECT_SHAPES = {
     "optional": [],
     "rejectUnknown": true
   },
+  "fleet-snapshot-v1:#/$defs/physicalHost": {
+    "required": [
+      "endpointIds",
+      "errorCode",
+      "executionTargetIds",
+      "id",
+      "lastSeenAt",
+      "legacyHostIds",
+      "name",
+      "platform",
+      "status"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
   "fleet-snapshot-v1:#/$defs/preset": {
     "required": [
       "backend",
@@ -1048,10 +1098,70 @@ export const GENERATED_OBJECT_SHAPES = {
       "updatedAt"
     ],
     "optional": [
+      "executionTargetId",
       "locationKind",
       "nameMode",
+      "physicalHostId",
       "projectPath"
     ],
+    "rejectUnknown": true
+  },
+  "identity-graph-v1:#": {
+    "required": [
+      "aliases",
+      "endpoints",
+      "executionTargets",
+      "fleetId",
+      "physicalHosts",
+      "schemaVersion"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "identity-graph-v1:#/$defs/alias": {
+    "required": [
+      "executionTargetId",
+      "id",
+      "physicalHostId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "identity-graph-v1:#/$defs/endpoint": {
+    "required": [
+      "address",
+      "authentication",
+      "id",
+      "identityState",
+      "network",
+      "physicalHostId",
+      "port",
+      "sshEngine",
+      "sshHostKeySha256",
+      "tailscaleNodeId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "identity-graph-v1:#/$defs/executionTarget": {
+    "required": [
+      "fingerprint",
+      "id",
+      "kind",
+      "label",
+      "physicalHostId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "identity-graph-v1:#/$defs/physicalHost": {
+    "required": [
+      "id",
+      "legacyMachineId",
+      "name",
+      "platform"
+    ],
+    "optional": [],
     "rejectUnknown": true
   },
   "machine-v1:#": {
@@ -1073,6 +1183,70 @@ export const GENERATED_OBJECT_SHAPES = {
     "rejectUnknown": true
   },
   "machine-v1:#/properties/fallback": {
+    "required": [
+      "ip",
+      "sshHost"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "machine-v2:#": {
+    "required": [
+      "aliases",
+      "endpoints",
+      "executionTargets",
+      "fallback",
+      "fleetId",
+      "hostCommand",
+      "id",
+      "linuxUsername",
+      "name",
+      "physicalHostId",
+      "platform",
+      "projectsRoot",
+      "roles",
+      "schemaVersion",
+      "tailscaleNode",
+      "transport",
+      "wslDistro"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "machine-v2:#/properties/aliases/items": {
+    "required": [
+      "executionTargetId",
+      "id"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "machine-v2:#/properties/endpoints/items": {
+    "required": [
+      "address",
+      "authentication",
+      "id",
+      "identityState",
+      "network",
+      "port",
+      "sshEngine",
+      "sshHostKeySha256",
+      "tailscaleNodeId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "machine-v2:#/properties/executionTargets/items": {
+    "required": [
+      "fingerprint",
+      "id",
+      "kind",
+      "label"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "machine-v2:#/properties/fallback": {
     "required": [
       "ip",
       "sshHost"
@@ -1233,6 +1407,7 @@ export const GENERATED_CONTROL_REQUEST_SHAPES = {
   "fleet.snapshot": {
     "required": [],
     "optional": [
+      "includeIdentityGraph",
       "includeSessionTitles"
     ]
   },

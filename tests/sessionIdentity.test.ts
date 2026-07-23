@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { sessionIdentityPresentation, type FleetSession } from '../src/shared/fleet';
 
 const session: FleetSession = {
-  id: 'host:wtmux-demo-1', hostId: 'host', internalName: 'wtmux-demo-1', name: 'demo:1',
+  id: 'host:wtmux-demo-1', hostId: 'host', physicalHostId: 'host', executionTargetId: 'linux',
+  internalName: 'wtmux-demo-1', name: 'demo:1',
   title: 'Fix Android session titles', nameMode: 'automatic', project: 'demo', projectPath: '/demo',
   tool: 'codex', backend: 'linux', activity: 'active', attached: true, updatedAt: null,
   pendingScheduleCount: 0, favorite: false

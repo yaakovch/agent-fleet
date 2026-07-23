@@ -622,6 +622,7 @@ export function fleetBridgeLaunchFromSettings(settings: WidgetSettings): FleetBr
   const args = profile
     ? ['-d', distro, '-u', profile.user, '--', `${profile.home}/.local/bin/wtmux-bridge`, '--stdio', '--pairing']
     : ['-d', distro, '--cd', '~', '--', '.local/bin/wtmux-bridge', '--stdio', '--pairing'];
+  args.push('--identity-graph');
   if (settings.automaticSessionTitles) args.push('--session-titles');
   return { command: 'wsl.exe', args, distro };
 }

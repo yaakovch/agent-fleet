@@ -18,9 +18,47 @@ export interface FleetHost {
   detail: string;
 }
 
+export interface FleetPhysicalHost {
+  id: string;
+  name: string;
+  platform: 'wsl' | 'linux' | 'termux';
+  status: FleetSeverity;
+  lastSeenAt: string | null;
+  errorCode: string;
+  endpointIds: string[];
+  executionTargetIds: Array<'linux' | 'windows'>;
+  legacyHostIds: string[];
+}
+
+export interface FleetEndpoint {
+  id: string;
+  physicalHostId: string;
+  network: 'local' | 'tailnet' | 'direct';
+  address: string;
+  port: number;
+  sshEngine: 'openssh' | 'tailscale-cli';
+  authentication: 'tailnet-ssh' | 'key';
+  status: 'healthy' | 'connecting' | 'offline';
+  identityState: 'verified' | 'unverified' | 'reverify-required';
+  sshHostKeySha256: string;
+  tailscaleNodeId: string;
+  errorCode: string;
+}
+
+export interface FleetExecutionTarget {
+  id: 'linux' | 'windows';
+  physicalHostId: string;
+  kind: 'linux' | 'windows-git-bash';
+  label: string;
+  status: 'available' | 'unavailable' | 'unknown';
+  fingerprint: string;
+}
+
 export interface FleetSession {
   id: string;
   hostId: string;
+  physicalHostId: string;
+  executionTargetId: 'linux' | 'windows';
   internalName?: string;
   name: string;
   title: string;
@@ -109,6 +147,9 @@ export interface FleetSnapshot {
   registrySyncedAt: string;
   controller: { distro: string; status: FleetSeverity; protocolVersion: number };
   hosts: FleetHost[];
+  physicalHosts: FleetPhysicalHost[];
+  endpoints: FleetEndpoint[];
+  executionTargets: FleetExecutionTarget[];
   sessions: FleetSession[];
   schedules: FleetSchedule[];
   attention: FleetAttention[];
@@ -148,6 +189,23 @@ export function sessionIdentityPresentation(session: FleetSession): SessionIdent
 export function isFleetSessionAvailable(snapshot: FleetSnapshot, session: FleetSession): boolean {
   if (snapshot.controller.status !== 'healthy') return false;
   return snapshot.hosts.some((host) => host.id === session.hostId && host.status === 'healthy');
+}
+
+export function physicalHostForSession(snapshot: FleetSnapshot, session: FleetSession): FleetPhysicalHost | undefined {
+  return snapshot.physicalHosts.find((host) => host.id === session.physicalHostId);
+}
+
+export function transportHostId(
+  snapshot: FleetSnapshot,
+  physicalHostId: string,
+  executionTargetId: 'linux' | 'windows'
+): string | undefined {
+  const physicalHost = snapshot.physicalHosts.find((host) => host.id === physicalHostId);
+  if (!physicalHost || !physicalHost.executionTargetIds.includes(executionTargetId)) return undefined;
+  const liveLegacyIds = new Set(snapshot.hosts.map((host) => host.id));
+  const candidates = physicalHost.legacyHostIds.filter((id) => liveLegacyIds.has(id));
+  const preferred = candidates.find((id) => executionTargetId === 'windows' ? id.endsWith('_windows') : !id.endsWith('_windows'));
+  return preferred ?? candidates[0];
 }
 
 export function reconcileHiddenUnavailableSessions(snapshot: FleetSnapshot, hiddenSessionIds: string[]): string[] {

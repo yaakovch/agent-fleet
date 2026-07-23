@@ -4,7 +4,7 @@
     {
       "agentVersion": "0.1.0",
       "protocolVersion": 1,
-      "contractPackageVersion": "1.0.0",
+      "contractPackageVersion": "1.1.0",
       "controlVersions": [1],
       "conversationVersions": [2],
       "workspaceLayoutVersions": [1],
@@ -14,7 +14,7 @@
     {
       "bridgeVersion": "0.1.0",
       "protocolVersion": 1,
-      "contractPackageVersion": "1.0.0",
+      "contractPackageVersion": "1.1.0",
       "controlVersions": [1],
       "conversationVersions": [2],
       "workspaceLayoutVersions": [1],
@@ -107,7 +107,7 @@
         "hostId": "test-host",
         "checkedAt": "2026-07-22T12:00:00Z",
         "status": "healthy",
-        "checks": [{ "id": "compatibility", "status": "healthy", "summary": "Protocol compatibility is ready", "detail": "contracts 1.0.0" }]
+        "checks": [{ "id": "compatibility", "status": "healthy", "summary": "Protocol compatibility is ready", "detail": "contracts 1.1.0" }]
       }
     },
     {

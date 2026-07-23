@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.0.0",
+  "packageVersion": "1.1.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,
@@ -675,6 +675,7 @@
       "id": "control-v1:#/$defs/snapshotParams",
       "required": [],
       "optional": [
+        "includeIdentityGraph",
         "includeSessionTitles"
       ],
       "rejectUnknown": true
@@ -999,8 +1000,12 @@
         "sessions"
       ],
       "optional": [
+        "endpoints",
+        "executionTargets",
+        "fleetId",
         "limits",
         "pairingRequests",
+        "physicalHosts",
         "presentationRevision",
         "presets"
       ],
@@ -1018,6 +1023,38 @@
         "sessionId",
         "state",
         "updatedAt"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "fleet-snapshot-v1:#/$defs/endpoint",
+      "required": [
+        "address",
+        "authentication",
+        "errorCode",
+        "id",
+        "identityState",
+        "network",
+        "physicalHostId",
+        "port",
+        "sshEngine",
+        "sshHostKeySha256",
+        "status",
+        "tailscaleNodeId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "fleet-snapshot-v1:#/$defs/executionTarget",
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "label",
+        "physicalHostId",
+        "status"
       ],
       "optional": [],
       "rejectUnknown": true
@@ -1082,6 +1119,22 @@
       "rejectUnknown": true
     },
     {
+      "id": "fleet-snapshot-v1:#/$defs/physicalHost",
+      "required": [
+        "endpointIds",
+        "errorCode",
+        "executionTargetIds",
+        "id",
+        "lastSeenAt",
+        "legacyHostIds",
+        "name",
+        "platform",
+        "status"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
       "id": "fleet-snapshot-v1:#/$defs/preset",
       "required": [
         "backend",
@@ -1131,10 +1184,75 @@
         "updatedAt"
       ],
       "optional": [
+        "executionTargetId",
         "locationKind",
         "nameMode",
+        "physicalHostId",
         "projectPath"
       ],
+      "rejectUnknown": true
+    },
+    {
+      "id": "identity-graph-v1:#",
+      "required": [
+        "aliases",
+        "endpoints",
+        "executionTargets",
+        "fleetId",
+        "physicalHosts",
+        "schemaVersion"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "identity-graph-v1:#/$defs/alias",
+      "required": [
+        "executionTargetId",
+        "id",
+        "physicalHostId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "identity-graph-v1:#/$defs/endpoint",
+      "required": [
+        "address",
+        "authentication",
+        "id",
+        "identityState",
+        "network",
+        "physicalHostId",
+        "port",
+        "sshEngine",
+        "sshHostKeySha256",
+        "tailscaleNodeId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "identity-graph-v1:#/$defs/executionTarget",
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "label",
+        "physicalHostId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "identity-graph-v1:#/$defs/physicalHost",
+      "required": [
+        "id",
+        "legacyMachineId",
+        "name",
+        "platform"
+      ],
+      "optional": [],
       "rejectUnknown": true
     },
     {
@@ -1158,6 +1276,75 @@
     },
     {
       "id": "machine-v1:#/properties/fallback",
+      "required": [
+        "ip",
+        "sshHost"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "machine-v2:#",
+      "required": [
+        "aliases",
+        "endpoints",
+        "executionTargets",
+        "fallback",
+        "fleetId",
+        "hostCommand",
+        "id",
+        "linuxUsername",
+        "name",
+        "physicalHostId",
+        "platform",
+        "projectsRoot",
+        "roles",
+        "schemaVersion",
+        "tailscaleNode",
+        "transport",
+        "wslDistro"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "machine-v2:#/properties/aliases/items",
+      "required": [
+        "executionTargetId",
+        "id"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "machine-v2:#/properties/endpoints/items",
+      "required": [
+        "address",
+        "authentication",
+        "id",
+        "identityState",
+        "network",
+        "port",
+        "sshEngine",
+        "sshHostKeySha256",
+        "tailscaleNodeId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "machine-v2:#/properties/executionTargets/items",
+      "required": [
+        "fingerprint",
+        "id",
+        "kind",
+        "label"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "machine-v2:#/properties/fallback",
       "required": [
         "ip",
         "sshHost"
@@ -1332,6 +1519,7 @@
     "fleet.snapshot": {
       "required": [],
       "optional": [
+        "includeIdentityGraph",
         "includeSessionTitles"
       ]
     },

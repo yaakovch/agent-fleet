@@ -7,6 +7,7 @@ import {
 } from '../src/shared/fleet-protocol';
 
 const fixturePath = join(process.cwd(), 'tests', 'fixtures', 'fleet-snapshot-v1.json');
+const identityFixturePath = join(process.cwd(), 'tests', 'fixtures', 'contracts', 'fleet-snapshot-identity-v1.json');
 
 describe('fleet protocol v1', () => {
   it('maps the metadata-only fixture into dashboard data', () => {
@@ -16,7 +17,41 @@ describe('fleet protocol v1', () => {
     expect(dashboard.hosts[0]?.status).toBe('healthy');
     expect(dashboard.sessions[0]?.title).toBe('');
     expect(dashboard.schedules[0]?.summary).toBe('Scheduled message');
+    expect(dashboard.physicalHosts[0]).toMatchObject({ id: 'test-host', legacyHostIds: ['test-host'] });
+    expect(dashboard.sessions[0]).toMatchObject({ physicalHostId: 'test-host', executionTargetId: 'linux' });
     expect(JSON.stringify(dashboard).toLowerCase()).not.toContain('continue');
+  });
+
+  it('accepts the negotiated canonical identity graph without changing legacy session identity', () => {
+    const raw = parseBridgeFleetSnapshot(JSON.parse(readFileSync(identityFixturePath, 'utf8')));
+    const dashboard = toFleetSnapshot(raw, 'Ubuntu');
+    expect(dashboard.physicalHosts).toHaveLength(1);
+    expect(dashboard.physicalHosts[0]).toMatchObject({
+      id: 'gaming-desktop',
+      executionTargetIds: ['linux', 'windows'],
+      legacyHostIds: ['gaming-desktop-ubuntu', 'gaming-desktop_windows']
+    });
+    expect(dashboard.sessions[0]).toMatchObject({
+      id: 'gaming-desktop-ubuntu:wtmux-project-1',
+      hostId: 'gaming-desktop-ubuntu',
+      physicalHostId: 'gaming-desktop',
+      executionTargetId: 'linux'
+    });
+    expect(dashboard.endpoints[0]).toMatchObject({ identityState: 'verified', sshEngine: 'openssh' });
+  });
+
+  it('rejects duplicate or inconsistent canonical identity mappings', () => {
+    const duplicate = JSON.parse(readFileSync(identityFixturePath, 'utf8'));
+    duplicate.executionTargets.push({ ...duplicate.executionTargets[0] });
+    expect(() => parseBridgeFleetSnapshot(duplicate)).toThrow(/duplicate scoped id/i);
+
+    const inconsistent = JSON.parse(readFileSync(identityFixturePath, 'utf8'));
+    inconsistent.sessions[0].executionTargetId = 'windows';
+    expect(() => parseBridgeFleetSnapshot(inconsistent)).toThrow(/backend and execution target differ/i);
+
+    const changedEvidence = JSON.parse(readFileSync(identityFixturePath, 'utf8'));
+    changedEvidence.endpoints[0].identityState = 'reverify-required';
+    expect(parseBridgeFleetSnapshot(changedEvidence).endpoints[0]?.identityState).toBe('reverify-required');
   });
 
   it('accepts negotiated smart titles but still rejects unnegotiated titles and prompt fields', () => {

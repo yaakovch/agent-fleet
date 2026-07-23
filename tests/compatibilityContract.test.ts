@@ -29,7 +29,7 @@ describe('Agent Fleet compatibility and diagnostics contracts', () => {
 
   it('accepts the shared compatibility matrix', () => {
     const matrix = parseCompatibilityMatrixJson(fixture('compatibility-v1.json'));
-    expect(matrix.contractPackageVersion).toBe('1.0.0');
+    expect(matrix.contractPackageVersion).toBe('1.1.0');
     expect(Object.values(matrix.components).every(componentSupportsCurrentContracts)).toBe(true);
   });
 

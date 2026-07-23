@@ -3,7 +3,7 @@
   "releaseSetSequence": 1082,
   "issuedAt": "2026-07-22T10:00:00Z",
   "expiresAt": "2026-08-21T10:00:00Z",
-  "contractPackageVersion": "1.0.0",
+  "contractPackageVersion": "1.1.0",
   "protocols": {
     "control": { "minimum": 1, "maximum": 1 },
     "conversation": { "minimum": 2, "maximum": 2 },
@@ -15,7 +15,7 @@
     "clientRuntime": { "version": "git-7b9113e", "minimumCompatibleVersion": "git-7b9113e", "maximumCompatibleVersion": "git-7b9113e" },
     "hostRuntime": { "version": "git-7b9113e", "minimumCompatibleVersion": "git-7b9113e", "maximumCompatibleVersion": "git-7b9113e" },
     "providerAdapters": { "version": "git-7b9113e", "minimumCompatibleVersion": "git-7b9113e", "maximumCompatibleVersion": "git-7b9113e" },
-    "contracts": { "version": "1.0.0", "minimumCompatibleVersion": "1.0.0", "maximumCompatibleVersion": "1.0.0" }
+    "contracts": { "version": "1.1.0", "minimumCompatibleVersion": "1.0.0", "maximumCompatibleVersion": "1.1.0" }
   },
   "artifacts": [
     {

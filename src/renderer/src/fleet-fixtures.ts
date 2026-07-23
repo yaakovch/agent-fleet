@@ -22,29 +22,54 @@ export const FLEET_FIXTURE: FleetSnapshot = {
       protocolVersion: 1, sessionCount: 0, detail: 'Outbound client last connected 42 minutes ago'
     }
   ],
+  physicalHosts: [
+    {
+      id: 'work-m', name: 'work-m', platform: 'wsl', status: 'healthy',
+      lastSeenAt: '2026-07-12T00:25:58.000Z', errorCode: '',
+      endpointIds: [], executionTargetIds: ['linux', 'windows'], legacyHostIds: ['work-m']
+    },
+    {
+      id: 'home-m', name: 'home-m', platform: 'wsl', status: 'attention',
+      lastSeenAt: '2026-07-12T00:25:51.000Z', errorCode: '',
+      endpointIds: [], executionTargetIds: ['linux', 'windows'], legacyHostIds: ['home-m']
+    },
+    {
+      id: 's23fe', name: 's23fe', platform: 'termux', status: 'offline',
+      lastSeenAt: '2026-07-11T23:44:12.000Z', errorCode: 'offline',
+      endpointIds: [], executionTargetIds: ['linux'], legacyHostIds: ['s23fe']
+    }
+  ],
+  endpoints: [],
+  executionTargets: [
+    { id: 'linux', physicalHostId: 'work-m', kind: 'linux', label: 'WSL', status: 'available', fingerprint: '' },
+    { id: 'windows', physicalHostId: 'work-m', kind: 'windows-git-bash', label: 'Windows Git Bash', status: 'available', fingerprint: '' },
+    { id: 'linux', physicalHostId: 'home-m', kind: 'linux', label: 'WSL', status: 'available', fingerprint: '' },
+    { id: 'windows', physicalHostId: 'home-m', kind: 'windows-git-bash', label: 'Windows Git Bash', status: 'available', fingerprint: '' },
+    { id: 'linux', physicalHostId: 's23fe', kind: 'linux', label: 'Linux', status: 'unknown', fingerprint: '' }
+  ],
   sessions: [
     {
-      id: 'work-m:wtmux', hostId: 'work-m', name: 'wtmux', title: 'Agent Fleet dashboard prototype',
+      id: 'work-m:wtmux', hostId: 'work-m', physicalHostId: 'work-m', executionTargetId: 'linux', name: 'wtmux', title: 'Agent Fleet dashboard prototype',
       project: 'wtmux', projectPath: '/home/user/projects/wtmux', tool: 'codex', backend: 'wsl', profileAlias: 'codex2',
       activity: 'active', attached: true, updatedAt: '2026-07-12T00:25:52.000Z', pendingScheduleCount: 0, favorite: true
     },
     {
-      id: 'work-m:doctor', hostId: 'work-m', name: 'doctor', title: 'Registry migration audit',
+      id: 'work-m:doctor', hostId: 'work-m', physicalHostId: 'work-m', executionTargetId: 'linux', name: 'doctor', title: 'Registry migration audit',
       project: 'wtmux', projectPath: '/home/user/projects/wtmux', tool: 'claude', backend: 'wsl',
       activity: 'waiting', attached: false, updatedAt: '2026-07-12T00:21:08.000Z', pendingScheduleCount: 1, favorite: false
     },
     {
-      id: 'work-m:notes', hostId: 'work-m', name: 'notes', title: 'Release checklist',
+      id: 'work-m:notes', hostId: 'work-m', physicalHostId: 'work-m', executionTargetId: 'linux', name: 'notes', title: 'Release checklist',
       project: 'agent-fleet', projectPath: '/mnt/c/projects/agent-fleet', tool: 'shell', backend: 'wsl',
       activity: 'idle', attached: false, updatedAt: '2026-07-12T00:12:17.000Z', pendingScheduleCount: 0, favorite: false
     },
     {
-      id: 'home-m:client', hostId: 'home-m', name: 'client', title: 'Limits alert recovery',
+      id: 'home-m:client', hostId: 'home-m', physicalHostId: 'home-m', executionTargetId: 'linux', name: 'client', title: 'Limits alert recovery',
       project: 'agent-fleet', projectPath: '/mnt/c/projects/agent-fleet', tool: 'codex', backend: 'wsl', profileAlias: 'codex3',
       activity: 'waiting', attached: true, updatedAt: '2026-07-12T00:24:39.000Z', pendingScheduleCount: 1, favorite: true
     },
     {
-      id: 'home-m:docs', hostId: 'home-m', name: 'docs', title: 'Pairing threat model',
+      id: 'home-m:docs', hostId: 'home-m', physicalHostId: 'home-m', executionTargetId: 'linux', name: 'docs', title: 'Pairing threat model',
       project: 'wtmux', projectPath: '/home/user/projects/wtmux', tool: 'copilot', backend: 'linux',
       activity: 'idle', attached: false, updatedAt: '2026-07-11T23:58:01.000Z', pendingScheduleCount: 0, favorite: false
     }
