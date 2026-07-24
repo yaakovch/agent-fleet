@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "correlationId": "diag-0123456789abcdef0123456789abcdef",
+  "generatedAt": "2026-07-24T12:00:00Z",
+  "totalDurationMs": 1,
+  "components": [],
+  "checks": [],
+  "terminalOutput": "private"
+}

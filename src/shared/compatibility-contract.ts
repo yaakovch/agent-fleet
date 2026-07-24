@@ -9,7 +9,8 @@ export const CONTRACT_CAPABILITIES = [
   'control.v1',
   'conversation.v2',
   'workspace-layout.v1',
-  'host-runtime.v1'
+  'host-runtime.v1',
+  'diagnostics.v2'
 ] as const;
 const MAX_DOCUMENT_BYTES = 64 * 1024;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/u;

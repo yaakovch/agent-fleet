@@ -44,6 +44,10 @@ import {
 import { renderLimitCell } from './widget-view';
 import type { LocalSuggestionSettingsInput } from '../../shared/local-suggestions';
 import type { WslRuntimeState } from '../../shared/runtime';
+import type {
+  LayeredDiagnosticRecovery,
+  LayeredDiagnosticReport
+} from '../../shared/layered-diagnostics';
 
 const iconSet = {
   ArrowDown,
@@ -92,6 +96,7 @@ let claudeIntegration: ClaudeIntegrationState | null = null;
 let importPreview: SettingsImportSelection | null = null;
 let discoveryResult: WslDiscoveryResult | null = null;
 let runtimeState: WslRuntimeState | null = null;
+let layeredDiagnostics: LayeredDiagnosticReport | null = null;
 let onboardingStep = 0;
 const profileTestMessages = new Map<string, string>();
 const dashboard = isDashboardView ? new DashboardPrototype(appRoot) : null;
@@ -201,6 +206,15 @@ async function handleAction(action: string, target: HTMLElement): Promise<void> 
   if (action === 'restart-update') await window.limitsWidget.restartToUpdate();
   if (action === 'open-releases') await window.limitsWidget.openReleasePage();
   if (action === 'export-diagnostics') await runFileOperation(() => window.limitsWidget.exportDiagnostics());
+  if (action === 'refresh-layered-diagnostics') {
+    layeredDiagnostics = await window.limitsWidget.getDiagnostics();
+    renderConfigView();
+  }
+  if (action === 'copy-layered-diagnostics' && layeredDiagnostics) {
+    const result = await window.limitsWidget.copyConversationText(`${JSON.stringify(layeredDiagnostics, null, 2)}\n`);
+    settingsMessage = result.message;
+    renderConfigView();
+  }
   if (action === 'repair-runtime') await maintainRuntime('repair');
   if (action === 'rollback-runtime') await maintainRuntime('rollback');
   if (action === 'onboarding-back') {
@@ -277,13 +291,14 @@ function renderDiagnostics(state: CombinedLimitState): string {
 }
 
 async function loadConfigView(): Promise<void> {
-  const [settingsResult, info, update, claude, localSuggestions, runtime] = await Promise.all([
+  const [settingsResult, info, update, claude, localSuggestions, runtime, diagnostics] = await Promise.all([
     window.limitsWidget.getSettings(),
     window.limitsWidget.getAppInfo(),
     window.limitsWidget.getUpdaterState(),
     window.limitsWidget.getClaudeIntegration(),
     window.limitsWidget.getLocalSuggestionSettings(),
-    window.limitsWidget.getRuntimeState()
+    window.limitsWidget.getRuntimeState(),
+    window.limitsWidget.getDiagnostics()
   ]);
   settingsDraft = cloneSettings(settingsResult.settings);
   settingsMessage = settingsResult.message ?? '';
@@ -292,6 +307,7 @@ async function loadConfigView(): Promise<void> {
   claudeIntegration = claude;
   localSuggestionDraft = { ...localSuggestions, managed: { ...localSuggestions.managed }, external: { ...localSuggestions.external } };
   runtimeState = runtime;
+  layeredDiagnostics = diagnostics;
   renderConfigView();
 }
 
@@ -314,6 +330,7 @@ function renderSettings(): void {
       ${renderClaudeSection()}
       ${renderProfilesSection()}
       ${renderRuntimeSection()}
+      ${renderLayeredDiagnosticsSection()}
       ${renderSupportSection()}
     </main>`;
   refreshIcons();
@@ -403,6 +420,41 @@ function renderSupportSection(): string {
       </div>
       <p class="data-path">Data: ${escapeHtml(appInfo?.dataDirectory ?? '')}</p>
     </section>`;
+}
+
+function renderLayeredDiagnosticsSection(): string {
+  const report = layeredDiagnostics;
+  if (!report) return '';
+  const rows = report.checks.map((check) => `
+    <li class="${escapeAttr(check.severity)}">
+      <span><strong>${escapeHtml(check.label)}</strong><small>${escapeHtml(check.errorCode)}</small></span>
+      <span>${escapeHtml(check.summary)}<small>${escapeHtml(diagnosticRecoveryLabel(check.recoveryAction))}</small></span>
+    </li>`).join('');
+  return `
+    <section class="settings-section">
+      <div class="section-title-row">
+        <div><h2>Layered diagnostics</h2><p class="section-note">Read-only · ${escapeHtml(report.correlationId)} · ${report.totalDurationMs} ms</p></div>
+        <div class="inline-actions">
+          <button data-action="refresh-layered-diagnostics">${icon('refresh-cw')}Retry</button>
+          <button data-action="copy-layered-diagnostics">${icon('file-archive')}Copy redacted report</button>
+        </div>
+      </div>
+      <ul class="warning-list">${rows}</ul>
+    </section>`;
+}
+
+function diagnosticRecoveryLabel(action: LayeredDiagnosticRecovery): string {
+  const labels: Record<LayeredDiagnosticRecovery, string> = {
+    none: 'No action needed',
+    retry: 'Retry',
+    repair_client_runtime: 'Repair client runtime',
+    rollback_runtime: 'Roll back runtime',
+    open_tailscale: 'Open Tailscale',
+    review_host_key: 'Review host key',
+    copy_redacted_report: 'Copy redacted report',
+    open_terminal: 'Open Terminal'
+  };
+  return labels[action];
 }
 
 function renderRuntimeSection(): string {

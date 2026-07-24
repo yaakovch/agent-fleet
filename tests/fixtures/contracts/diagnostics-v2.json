@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "correlationId": "diag-0123456789abcdef0123456789abcdef",
+  "generatedAt": "2026-07-24T12:00:00Z",
+  "totalDurationMs": 42,
+  "components": [
+    {"id": "client", "version": "fixture"},
+    {"id": "runtime", "version": "1.7.0"}
+  ],
+  "checks": [
+    {"id": "client-app", "layer": "client_app", "label": "Client app", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 1, "version": "fixture", "recoveryAction": "none", "summary": "Client metadata is readable", "readOnly": true},
+    {"id": "platform-adapter", "layer": "platform_adapter", "label": "Platform adapter", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 1, "version": "fixture", "recoveryAction": "copy_redacted_report", "summary": "Platform integration is ready", "readOnly": true},
+    {"id": "client-runtime", "layer": "client_runtime", "label": "Client runtime", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 2, "version": "fixture", "recoveryAction": "repair_client_runtime", "summary": "Verified runtime is active", "readOnly": true},
+    {"id": "tailnet", "layer": "tailnet", "label": "Private network", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 4, "version": "external", "recoveryAction": "open_tailscale", "summary": "Private network is connected", "readOnly": true},
+    {"id": "ssh", "layer": "ssh", "label": "Secure Shell", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 5, "version": "external", "recoveryAction": "review_host_key", "summary": "Secure connection is ready", "readOnly": true},
+    {"id": "host-runtime", "layer": "host_runtime", "label": "Host runtime", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 6, "version": "fixture", "recoveryAction": "retry", "summary": "Host runtime is compatible", "readOnly": true},
+    {"id": "tmux", "layer": "tmux", "label": "Session service", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 4, "version": "external", "recoveryAction": "retry", "summary": "Session service is reachable", "readOnly": true},
+    {"id": "endpoint", "layer": "endpoint", "label": "Host endpoint", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 5, "version": "fixture", "recoveryAction": "retry", "summary": "Selected endpoint is reachable", "readOnly": true},
+    {"id": "execution-target", "layer": "execution_target", "label": "Execution target", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 3, "version": "fixture", "recoveryAction": "retry", "summary": "Execution target is available", "readOnly": true},
+    {"id": "provider-adapter", "layer": "provider_adapter", "label": "Native provider", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 5, "version": "fixture", "recoveryAction": "open_terminal", "summary": "Provider adapter is readable", "readOnly": true},
+    {"id": "update-channel", "layer": "update_channel", "label": "Update channel", "status": "healthy", "severity": "info", "errorCode": "OK", "durationMs": 6, "version": "fixture", "recoveryAction": "rollback_runtime", "summary": "Update policy is valid", "readOnly": true}
+  ]
+}

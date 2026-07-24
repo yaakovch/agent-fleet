@@ -33,9 +33,9 @@ import {
   removeClaudeStatusLine
 } from './claude-statusline-install';
 import { collectCodexProfileLimits, type WslCodexProfile } from './collectors/codex';
-import { writeDiagnosticsArchive } from './diagnostics';
+import { createDiagnosticsReport, writeDiagnosticsArchive } from './diagnostics';
 import { setLaunchOnLogin } from './launch-on-login';
-import { configureLogger, getLogPath } from './logger';
+import { configureLogger } from './logger';
 import {
   applyImportedSettings,
   createSettingsExport,
@@ -1471,6 +1471,14 @@ handle(IPC_CHANNELS.removeClaudeIntegration, async () => {
   return result;
 });
 handle(IPC_CHANNELS.getAppInfo, () => getAppInfo());
+handle(IPC_CHANNELS.getDiagnostics, () => createDiagnosticsReport({
+  app: getAppInfo(),
+  fleet: getFleetView(),
+  doctors: [...lastDoctorResults.values()],
+  terminal: terminalManager.getHealth(),
+  wslRuntime: wslRuntimeManager.getState(),
+  updateConfigured: appSettings.automaticUpdates
+}));
 handle(IPC_CHANNELS.exportDiagnostics, async () => {
   const result = await dialog.showSaveDialog(getDialogOwner(), {
     title: 'Export diagnostics',
@@ -1480,13 +1488,11 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
   if (result.canceled || !result.filePath) return { canceled: true, message: 'Diagnostics export canceled' };
   await writeDiagnosticsArchive(result.filePath, {
     app: getAppInfo(),
-    settings: { ...cloneSettings(appSettings), notificationPauseUntil: null },
-    state: stateManager.getState(),
-    logPath: getLogPath(dataDirectory),
     fleet: getFleetView(),
     doctors: [...lastDoctorResults.values()],
     terminal: terminalManager.getHealth(),
-    wslRuntime: wslRuntimeManager.getState()
+    wslRuntime: wslRuntimeManager.getState(),
+    updateConfigured: appSettings.automaticUpdates
   });
   return { canceled: false, message: `Diagnostics exported to ${basename(result.filePath)}`, path: result.filePath };
 });

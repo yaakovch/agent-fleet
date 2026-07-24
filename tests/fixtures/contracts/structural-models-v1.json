@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.6.0",
+  "packageVersion": "1.7.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,
@@ -8,7 +8,8 @@
     "release-set": 1,
     "supervisor": 1,
     "transport": 1,
-    "host-runtime": 1
+    "host-runtime": 1,
+    "diagnostics": 2
   },
   "objectShapes": [
     {
@@ -1051,6 +1052,46 @@
         "id",
         "version",
         "workspaceLayoutVersions"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "diagnostics-v2:#",
+      "required": [
+        "checks",
+        "components",
+        "correlationId",
+        "generatedAt",
+        "schemaVersion",
+        "totalDurationMs"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "diagnostics-v2:#/$defs/check",
+      "required": [
+        "durationMs",
+        "errorCode",
+        "id",
+        "label",
+        "layer",
+        "readOnly",
+        "recoveryAction",
+        "severity",
+        "status",
+        "summary",
+        "version"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "diagnostics-v2:#/$defs/component",
+      "required": [
+        "id",
+        "version"
       ],
       "optional": [],
       "rejectUnknown": true

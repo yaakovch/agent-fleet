@@ -30,6 +30,7 @@ import type {
   LocalSuggestionSettingsInput, LocalSuggestionSettingsView
 } from '../shared/local-suggestions';
 import type { WslRuntimeState } from '../shared/runtime';
+import type { LayeredDiagnosticReport } from '../shared/layered-diagnostics';
 
 const api = {
   getState: (): Promise<CombinedLimitState> => ipcRenderer.invoke(IPC_CHANNELS.getState),
@@ -171,6 +172,7 @@ const api = {
   installClaudeIntegration: (): Promise<ClaudeIntegrationState> => ipcRenderer.invoke(IPC_CHANNELS.installClaudeIntegration),
   removeClaudeIntegration: (): Promise<ClaudeIntegrationState> => ipcRenderer.invoke(IPC_CHANNELS.removeClaudeIntegration),
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
+  getDiagnostics: (): Promise<LayeredDiagnosticReport> => ipcRenderer.invoke(IPC_CHANNELS.getDiagnostics),
   exportDiagnostics: (): Promise<FileOperationResult> => ipcRenderer.invoke(IPC_CHANNELS.exportDiagnostics),
   getUpdaterState: (): Promise<UpdaterState> => ipcRenderer.invoke(IPC_CHANNELS.getUpdaterState),
   checkForUpdates: (): Promise<UpdaterState | undefined> => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates),

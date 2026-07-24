@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.6.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.7.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -13,7 +13,8 @@ export const GENERATED_PROTOCOL_VERSIONS = {
   "release-set": 1,
   "supervisor": 1,
   "transport": 1,
-  "host-runtime": 1
+  "host-runtime": 1,
+  "diagnostics": 2
 } as const;
 export const GENERATED_OBJECT_SHAPES = {
   "activation-journal-v1:#": {
@@ -972,6 +973,43 @@ export const GENERATED_OBJECT_SHAPES = {
       "id",
       "version",
       "workspaceLayoutVersions"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "diagnostics-v2:#": {
+    "required": [
+      "checks",
+      "components",
+      "correlationId",
+      "generatedAt",
+      "schemaVersion",
+      "totalDurationMs"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "diagnostics-v2:#/$defs/check": {
+    "required": [
+      "durationMs",
+      "errorCode",
+      "id",
+      "label",
+      "layer",
+      "readOnly",
+      "recoveryAction",
+      "severity",
+      "status",
+      "summary",
+      "version"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "diagnostics-v2:#/$defs/component": {
+    "required": [
+      "id",
+      "version"
     ],
     "optional": [],
     "rejectUnknown": true

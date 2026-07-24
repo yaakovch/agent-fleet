@@ -1,24 +1,23 @@
-import { createWriteStream, existsSync } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import type { AppInfo } from '../shared/app';
-import type { CombinedLimitState } from '../shared/limits';
-import type { WidgetSettings } from '../shared/settings';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import type { TerminalHealth } from '../shared/terminal';
-import { createContractDiagnosticReport } from '../shared/compatibility-contract';
 import type { WslRuntimeState } from '../shared/runtime';
+import {
+  createWindowsLayeredDiagnostics,
+  type LayeredDiagnosticReport
+} from '../shared/layered-diagnostics';
 
 interface DiagnosticsInput {
   app: AppInfo;
-  settings: WidgetSettings;
-  state: CombinedLimitState;
-  logPath: string;
   fleet: FleetBridgeView;
   doctors: FleetDoctorResult[];
   terminal: TerminalHealth;
   wslRuntime: WslRuntimeState;
+  updateConfigured: boolean;
 }
 
 interface ArchiveWriter {
@@ -42,30 +41,24 @@ export async function writeDiagnosticsArchive(destination: string, input: Diagno
     archive.on('error', reject);
   });
   archive.pipe(output);
-  archive.append(
-    `${JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        app: input.app,
-        os: { platform: process.platform, arch: process.arch },
-        runtime: process.versions,
-        state: input.state,
-        fleet: input.fleet,
-        doctors: input.doctors,
-        terminal: input.terminal,
-        wslRuntime: input.wslRuntime
-      },
-      null,
-      2
-    )}\n`,
-    { name: 'diagnostics.json' }
-  );
-  archive.append(
-    `${JSON.stringify(createContractDiagnosticReport('windows-app', input.app.version, input.doctors), null, 2)}\n`,
-    { name: 'contract-diagnostics.json' }
-  );
-  archive.append(`${JSON.stringify(input.settings, null, 2)}\n`, { name: 'settings.json' });
-  if (existsSync(input.logPath)) archive.file(input.logPath, { name: 'logs/main.log' });
+  const entries = createDiagnosticsEntries(input);
+  for (const [name, content] of Object.entries(entries)) archive.append(content, { name });
   await archive.finalize();
   await completion;
+}
+
+export function createDiagnosticsEntries(input: DiagnosticsInput): Record<string, string> {
+  const report = createDiagnosticsReport(input);
+  return { 'diagnostics-v2.json': `${JSON.stringify(report, null, 2)}\n` };
+}
+
+export function createDiagnosticsReport(input: DiagnosticsInput): LayeredDiagnosticReport {
+  return createWindowsLayeredDiagnostics({
+    clientVersion: input.app.version,
+    fleet: input.fleet,
+    doctors: input.doctors,
+    terminal: input.terminal,
+    wslRuntime: input.wslRuntime,
+    updateConfigured: input.updateConfigured
+  });
 }

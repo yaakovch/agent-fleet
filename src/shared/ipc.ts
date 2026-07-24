@@ -83,6 +83,7 @@ export const IPC_CHANNELS = {
   installClaudeIntegration: 'limits:installClaudeIntegration',
   removeClaudeIntegration: 'limits:removeClaudeIntegration',
   getAppInfo: 'limits:getAppInfo',
+  getDiagnostics: 'limits:getDiagnostics',
   exportDiagnostics: 'limits:exportDiagnostics',
   getUpdaterState: 'limits:getUpdaterState',
   checkForUpdates: 'limits:checkForUpdates',

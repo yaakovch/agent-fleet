@@ -12,7 +12,7 @@ describe('Agent Fleet canonical contract fixtures', () => {
     const lock = JSON.parse(fixture('contract-lock-v1.json')) as {
       schemaVersion: number; packageVersion: string; algorithm: string; files: Record<string, string>
     };
-    expect(lock).toMatchObject({ schemaVersion: 1, packageVersion: '1.6.0', algorithm: 'sha256' });
+    expect(lock).toMatchObject({ schemaVersion: 1, packageVersion: '1.7.0', algorithm: 'sha256' });
     const fixtures = {
       'fixtures/invalid/activation-journal-content-field-v1.json': 'activation-journal-content-field-v1.json',
       'fixtures/invalid/activation-journal-unknown-field-v1.json': 'activation-journal-unknown-field-v1.json',
