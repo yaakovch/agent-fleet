@@ -18,6 +18,8 @@ extraResources:
     to: resources
     filter:
       - "**/*"
+  - from: build/app-update.yml
+    to: app-update.yml
   - from: scripts/claude-statusline.ps1
     to: scripts/claude-statusline.ps1
 afterPack: build/afterPack.cjs

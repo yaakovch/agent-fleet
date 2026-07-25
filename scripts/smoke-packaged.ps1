@@ -1,6 +1,14 @@
 param([string]$Executable = (Join-Path $PSScriptRoot '..\dist\win-unpacked\Agent Fleet.exe'))
 
 if (-not (Test-Path -LiteralPath $Executable)) { throw "Packaged executable not found: $Executable" }
+$updateConfig = Join-Path (Split-Path -Parent $Executable) 'resources\app-update.yml'
+if (-not (Test-Path -LiteralPath $updateConfig)) { throw 'Packaged app update configuration is missing.' }
+$updateConfigText = Get-Content -LiteralPath $updateConfig -Raw
+if ($updateConfigText -notmatch '(?m)^provider: github$' -or
+  $updateConfigText -notmatch '(?m)^repo: agent-fleet$' -or
+  $updateConfigText -notmatch '(?m)^  - SignPath Foundation$') {
+  throw 'Packaged app update configuration is invalid.'
+}
 $root = Join-Path ([System.IO.Path]::GetTempPath()) "ai-limits-smoke-$PID"
 $previousDataDir = $env:AI_LIMITS_DATA_DIR
 $process = $null

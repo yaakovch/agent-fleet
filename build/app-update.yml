@@ -1,0 +1,7 @@
+owner: yaakovch
+repo: agent-fleet
+provider: github
+releaseType: draft
+updaterCacheDirName: agent-fleet-updater
+publisherName:
+  - SignPath Foundation
