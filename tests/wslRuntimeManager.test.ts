@@ -14,6 +14,9 @@ function resources(): { root: string; bundle: string; descriptor: Record<string,
   const payload = Buffer.from('verified runtime bundle');
   const bundle = join(runtime, 'wtmux-runtime-git-deadbee.tar');
   writeFileSync(bundle, payload);
+  const registryPayload = Buffer.from('verified registry bundle');
+  const registryBundle = join(runtime, 'wtmux-registry-deadbee.tar');
+  writeFileSync(registryBundle, registryPayload);
   const descriptor = {
     schemaVersion: 1,
     baselineVersion: 'git-deadbee',
@@ -32,6 +35,12 @@ function resources(): { root: string; bundle: string; descriptor: Record<string,
       size: payload.length,
       sbomSha256: '2'.repeat(64),
       licenseSha256: '3'.repeat(64)
+    },
+    registry: {
+      file: 'wtmux-registry-deadbee.tar',
+      sha256: createHash('sha256').update(registryPayload).digest('hex'),
+      size: registryPayload.length,
+      records: 3
     }
   };
   writeFileSync(join(runtime, 'embedded-runtime-v1.json'), JSON.stringify(descriptor));
@@ -68,6 +77,11 @@ describe('app-owned WSL runtime manager', () => {
       expect(args).not.toContain('--');
       expect(args.join(' ')).toContain('wslpath');
       const shell = args[args.indexOf('-lc') + 1];
+      if (shell.includes('install-registry')) {
+        expect(shell).toContain('wtmux-registry-deadbee.tar');
+        expect(shell).toContain(" --config '.config/wtmux/wtmux.conf'");
+        return { stdout: '{}', stderr: '' };
+      }
       expect(shell.split('; ')).toHaveLength(6);
       expect(shell).toContain('; tar -xf "$bundle"');
       expect(shell).toContain('; python3 "$staging/scripts/wtmux-runtime"');
@@ -81,7 +95,7 @@ describe('app-owned WSL runtime manager', () => {
       status: 'ready', current: 'git-deadbee', contractPackageVersion: '1.3.0'
     });
     expect(manager.runtimeCommand('wtmux')).toBe('.local/share/agent-fleet/wtmux/current/scripts/wtmux');
-    expect(run).toHaveBeenCalledTimes(3);
+    expect(run).toHaveBeenCalledTimes(4);
   });
 
   it('reports selected-version skew before clients use the runtime', async () => {
@@ -105,6 +119,18 @@ describe('app-owned WSL runtime manager', () => {
     const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu', run });
     await expect(manager.ensure()).rejects.toThrow('wrong size');
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('repairs a missing registry even when the selected runtime is already compatible', async () => {
+    const fixture = resources();
+    const run = vi.fn(async (_command: string, args: string[]) => ({
+      stdout: JSON.stringify(args.includes('status') ? readyStatus() : {}),
+      stderr: ''
+    }));
+    const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu', run });
+    await expect(manager.ensure()).resolves.toMatchObject({ status: 'ready', current: 'git-deadbee' });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(run.mock.calls[1]?.[1].at(-1)).toContain('install-registry');
   });
 
   it('rolls back through the activated immutable manager', async () => {

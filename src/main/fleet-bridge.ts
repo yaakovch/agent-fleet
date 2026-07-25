@@ -310,13 +310,20 @@ export class FleetBridgeSupervisor extends EventEmitter {
     this.options.processOwnership?.own('control:bridge', child);
     this.processStarts += 1;
     this.connectionStartedAt = Date.now();
+    let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => this.acceptData(chunk));
-    child.stderr.on('data', () => undefined);
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4_096);
+    });
     child.once('error', (error) => {
       this.options.logger.warn('Fleet bridge process error', error);
       this.disconnect('bridge_unavailable');
     });
-    child.once('exit', () => this.disconnect(this.errorCode || 'bridge_disconnected'));
+    child.once('exit', (code, signal) => {
+      const diagnostic = stderr.replaceAll('\u0000', '').trim();
+      if (diagnostic) this.options.logger.warn('Fleet bridge exited', { code, signal, diagnostic });
+      this.disconnect(this.errorCode || 'bridge_disconnected');
+    });
     this.requestSnapshot();
   }
 

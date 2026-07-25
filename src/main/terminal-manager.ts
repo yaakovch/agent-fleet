@@ -118,6 +118,7 @@ export class TerminalManager {
           label: sessionIdentityPresentation(session).primary,
           tool: session.tool,
           backend: session.backend === 'windows' ? 'windows' as const : 'linux' as const,
+          viewMode: viewModeForTool(session.tool, descriptor.viewMode),
           status: 'connecting' as const,
           statusMessage: 'Restoring session…'
         } : session?.internalName
@@ -184,12 +185,16 @@ export class TerminalManager {
         label: sessionIdentityPresentation(session).primary,
         tool: session.tool,
         backend: session.backend === 'windows' ? 'windows' : 'linux',
+        viewMode: viewModeForTool(session.tool, tab.descriptor.viewMode),
         status: 'connecting',
         statusMessage: 'Session found · connecting…'
       };
+      const pane = paneForSession(this.layout, tab.descriptor.sessionId);
+      if (pane) this.layout = setWorkspacePaneView(this.layout, pane.id, tab.descriptor.viewMode);
       reconnected += 1;
       this.start(tab);
     }
+    if (reconnected) this.persist();
     return reconnected;
   }
 
@@ -198,7 +203,12 @@ export class TerminalManager {
     const existing = [...this.tabs.values()].find((tab) => tab.descriptor.sessionId === session.id && !tab.closed);
     if (existing) {
       const pane = paneForSession(this.layout, session.id);
-      if (pane) this.layout = focusWorkspacePane(this.layout, pane.id);
+      const viewMode = viewModeForTool(session.tool, existing.descriptor.viewMode);
+      existing.descriptor.viewMode = viewMode;
+      if (pane) {
+        this.layout = focusWorkspacePane(this.layout, pane.id);
+        this.layout = setWorkspacePaneView(this.layout, pane.id, viewMode);
+      }
       if (!existing.process && existing.descriptor.status !== 'connecting') this.retry(existing.descriptor.id);
       this.persist();
       return { ...existing.descriptor };
@@ -221,7 +231,7 @@ export class TerminalManager {
       label: sessionIdentityPresentation(session).primary,
       tool: session.tool,
       backend: session.backend === 'windows' ? 'windows' : 'linux',
-      viewMode: 'native',
+      viewMode: viewModeForTool(session.tool, 'native'),
       status: 'connecting',
       statusMessage: 'Connecting…'
     };
@@ -308,9 +318,10 @@ export class TerminalManager {
   setViewMode(tabId: string, viewMode: SessionViewMode): TerminalTabDescriptor | null {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.closed) return null;
-    tab.descriptor.viewMode = viewMode;
+    const normalized = viewModeForTool(tab.descriptor.tool, viewMode);
+    tab.descriptor.viewMode = normalized;
     const pane = paneForSession(this.layout, tab.descriptor.sessionId);
-    if (pane) this.layout = setWorkspacePaneView(this.layout, pane.id, viewMode);
+    if (pane) this.layout = setWorkspacePaneView(this.layout, pane.id, normalized);
     this.persist();
     this.emitStatus(tab);
     return { ...tab.descriptor };
@@ -331,8 +342,9 @@ export class TerminalManager {
       const pane = workspacePanes(this.layout).find((item) => item.id === command.paneId);
       const tab = pane?.sessionId ? this.tabForSession(pane.sessionId) : undefined;
       if (pane && tab) {
-        tab.descriptor.viewMode = command.viewMode;
-        this.layout = setWorkspacePaneView(this.layout, pane.id, command.viewMode);
+        const normalized = viewModeForTool(tab.descriptor.tool, command.viewMode);
+        tab.descriptor.viewMode = normalized;
+        this.layout = setWorkspacePaneView(this.layout, pane.id, normalized);
         this.emitStatus(tab);
       }
     } else if (command.type === 'preset') {
@@ -438,10 +450,13 @@ export class TerminalManager {
       label: sessionIdentityPresentation(session).primary,
       tool: session.tool,
       backend: session.backend === 'windows' ? 'windows' : 'linux',
+      viewMode: viewModeForTool(session.tool, tab.descriptor.viewMode),
       status: tab.reconnectIndex ? 'reconnecting' : 'connecting',
       statusMessage: tab.reconnectIndex ? 'Reconnecting…' : 'Connecting…',
       failure: undefined
     };
+    const pane = paneForSession(this.layout, tab.descriptor.sessionId);
+    if (pane) this.layout = setWorkspacePaneView(this.layout, pane.id, tab.descriptor.viewMode);
     this.emitStatus(tab);
     const launch = buildFleetWslAttachCommand({
       id: session.id,
@@ -616,7 +631,11 @@ export function readWorkspaceState(
     const value = raw as Record<string, unknown>;
     const tabs = Array.isArray(value.tabs) ? value.tabs.map(parseDescriptor).filter((tab): tab is TerminalTabDescriptor => Boolean(tab)) : [];
     if (value.version === 2) {
-      const layout = normalizeWorkspaceLayout(value.layout, ids);
+      let layout = normalizeWorkspaceLayout(value.layout, ids);
+      for (const pane of workspacePanes(layout)) {
+        const tab = tabs.find((item) => item.sessionId === pane.sessionId);
+        if (tab) layout = setWorkspacePaneView(layout, pane.id, viewModeForTool(tab.tool, pane.viewMode));
+      }
       const assigned = new Set(workspacePanes(layout).map((pane) => pane.sessionId).filter((id): id is string => Boolean(id)));
       return {
         version: 2,
@@ -658,10 +677,17 @@ function parseDescriptor(value: unknown): TerminalTabDescriptor | null {
     label: raw.label as string,
     tool: raw.tool as TerminalTabDescriptor['tool'],
     backend: raw.backend,
-    viewMode: raw.viewMode === 'terminal' ? 'terminal' : 'native',
+    viewMode: viewModeForTool(
+      raw.tool as TerminalTabDescriptor['tool'],
+      raw.viewMode === 'terminal' ? 'terminal' : 'native'
+    ),
     status: 'connecting',
     statusMessage: 'Restoring session…'
   };
+}
+
+function viewModeForTool(tool: TerminalTabDescriptor['tool'], requested: SessionViewMode): SessionViewMode {
+  return tool === 'shell' ? 'terminal' : requested;
 }
 
 function writeWorkspaceState(path: string, state: TerminalWorkspaceState): void {

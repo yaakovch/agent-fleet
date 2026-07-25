@@ -44,7 +44,7 @@ export function verifyEmbeddedRuntime(root) {
   if (!existsSync(descriptorPath)) throw new Error('embedded WSL runtime descriptor is missing');
   const descriptor = exact(JSON.parse(readFileSync(descriptorPath, 'utf8')), [
     'schemaVersion', 'baselineVersion', 'sourceRepository', 'sourceCommit',
-    'contractPackageVersion', 'components', 'runtime'
+    'contractPackageVersion', 'components', 'runtime', 'registry'
   ], 'embedded WSL runtime descriptor');
   if (descriptor.schemaVersion !== 1 || !/^git-[a-f0-9]{7}$/u.test(descriptor.baselineVersion)
     || !/^[a-f0-9]{40}$/u.test(descriptor.sourceCommit)
@@ -109,8 +109,51 @@ export function verifyEmbeddedRuntime(root) {
   if (sbom?.sha256 !== runtime.sbomSha256 || license?.sha256 !== runtime.licenseSha256) {
     throw new Error('embedded WSL runtime SBOM or license identity does not match');
   }
+  const registry = exact(descriptor.registry, [
+    'file', 'sha256', 'size', 'records'
+  ], 'embedded machine registry artifact');
+  if (!/^wtmux-registry-[a-f0-9]{7}\.tar$/u.test(registry.file)
+    || !/^[a-f0-9]{64}$/u.test(registry.sha256)
+    || !Number.isSafeInteger(registry.size) || registry.size < 1 || registry.size > 32 * 1024 * 1024
+    || !Number.isSafeInteger(registry.records) || registry.records < 1 || registry.records > 256) {
+    throw new Error('embedded machine registry artifact identity is invalid');
+  }
+  const registryPayload = readFileSync(join(root, registry.file));
+  if (registryPayload.length !== registry.size || sha256(registryPayload) !== registry.sha256) {
+    throw new Error('embedded machine registry artifact checksum does not match');
+  }
+  const registryFiles = tarFiles(registryPayload);
+  const registryManifestPayload = registryFiles.get('registry-manifest.json');
+  if (!registryManifestPayload) throw new Error('embedded machine registry manifest is missing');
+  const registryManifest = exact(JSON.parse(registryManifestPayload.toString('utf8')), [
+    'formatVersion', 'schemaVersion', 'records'
+  ], 'embedded machine registry manifest');
+  if (registryManifest.formatVersion !== 1 || registryManifest.schemaVersion !== 1
+    || !Array.isArray(registryManifest.records) || registryManifest.records.length !== registry.records) {
+    throw new Error('embedded machine registry manifest identity is invalid');
+  }
+  const expectedRegistryFiles = new Set(['registry-manifest.json']);
+  for (const item of registryManifest.records) {
+    exact(item, ['id', 'path', 'sha256', 'size'], 'embedded machine registry record');
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(item.id)
+      || item.path !== `machines/${item.id}.json`
+      || expectedRegistryFiles.has(item.path)
+      || !/^[a-f0-9]{64}$/u.test(item.sha256)
+      || !Number.isSafeInteger(item.size) || item.size < 1 || item.size > 64 * 1024) {
+      throw new Error(`embedded machine registry record identity is invalid: ${item.id || 'unknown'}`);
+    }
+    const file = registryFiles.get(item.path);
+    if (!file || file.length !== item.size || sha256(file) !== item.sha256) {
+      throw new Error(`embedded machine registry member verification failed: ${item.path}`);
+    }
+    expectedRegistryFiles.add(item.path);
+  }
+  if (expectedRegistryFiles.size !== registryFiles.size
+    || [...registryFiles.keys()].some((name) => !expectedRegistryFiles.has(name))) {
+    throw new Error('embedded machine registry tar contents do not match its manifest');
+  }
   const sourceFiles = readdirSync(root).filter((name) => statSync(join(root, name)).isFile()).sort();
-  if (JSON.stringify(sourceFiles) !== JSON.stringify(['embedded-runtime-v1.json', runtime.file].sort())) {
+  if (JSON.stringify(sourceFiles) !== JSON.stringify(['embedded-runtime-v1.json', runtime.file, registry.file].sort())) {
     throw new Error('embedded WSL runtime directory contains stale inputs');
   }
   return {
@@ -119,7 +162,9 @@ export function verifyEmbeddedRuntime(root) {
     contractPackageVersion: descriptor.contractPackageVersion,
     components: descriptor.components,
     sha256: runtime.sha256,
-    size: runtime.size
+    size: runtime.size,
+    registrySha256: registry.sha256,
+    registryRecords: registry.records
   };
 }
 

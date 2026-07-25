@@ -127,6 +127,31 @@ describe('embedded terminal manager', () => {
     expect(state.layout.focusedPaneId).toBe('migrated-pane');
   });
 
+  it('opens shell sessions only in Terminal and repairs stale Native persistence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    const shellSession = { ...session, tool: 'shell' as const };
+    const manager = new TerminalManager({
+      statePath, logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: (id) => id === shellSession.id ? shellSession : undefined,
+      onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: vi.fn(() => new FakePty()),
+      resolveWslExecutable: () => WINDOWS_WSL
+    });
+    const opened = manager.open(shellSession);
+    expect(opened.viewMode).toBe('terminal');
+    expect(manager.setViewMode(opened.id, 'native')?.viewMode).toBe('terminal');
+    expect(manager.getWorkspaceState().layout.root).toMatchObject({ viewMode: 'terminal' });
+    manager.dispose();
+
+    const persisted = JSON.parse(readFileSync(statePath, 'utf8'));
+    persisted.tabs[0].viewMode = 'native';
+    persisted.layout.root.viewMode = 'native';
+    writeFileSync(statePath, JSON.stringify(persisted));
+    const restored = readWorkspaceState(statePath);
+    expect(restored.tabs[0]?.viewMode).toBe('terminal');
+    expect(restored.layout.root).toMatchObject({ viewMode: 'terminal' });
+  });
+
   it('emits output for every visible terminal and buffers hidden terminals', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const firstProcess = new FakePty();

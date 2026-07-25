@@ -27,6 +27,12 @@ interface RuntimeDescriptor {
     sbomSha256: string;
     licenseSha256: string;
   };
+  registry: {
+    file: string;
+    sha256: string;
+    size: number;
+    records: number;
+  };
 }
 
 interface RuntimeToolStatus {
@@ -70,11 +76,14 @@ export class WslRuntimeManager {
 
   async ensure(): Promise<WslRuntimeState> {
     const descriptor = this.descriptor();
-    this.verifyEmbeddedArtifact(descriptor);
+    this.verifyEmbeddedArtifacts(descriptor);
     const inspected = await this.inspect();
-    if (inspected.status === 'ready') return inspected;
-    this.state = this.initialState('Installing the verified app-owned WSL runtime…', 'busy');
-    await this.bootstrap('install', descriptor);
+    if (inspected.status !== 'ready') {
+      this.state = this.initialState('Installing the verified app-owned WSL runtime…', 'busy');
+      await this.bootstrap('install', descriptor);
+    }
+    this.state = this.initialState('Activating the verified machine registry…', 'busy');
+    await this.installRegistry(descriptor);
     const activated = await this.inspect();
     if (activated.status !== 'ready') {
       throw new Error(activated.error || activated.detail || 'The WSL runtime failed its compatibility check.');
@@ -84,9 +93,10 @@ export class WslRuntimeManager {
 
   async repair(): Promise<WslRuntimeState> {
     const descriptor = this.descriptor();
-    this.verifyEmbeddedArtifact(descriptor);
+    this.verifyEmbeddedArtifacts(descriptor);
     this.state = this.initialState('Repairing the verified app-owned WSL runtime…', 'busy');
     await this.bootstrap('install', descriptor);
+    await this.installRegistry(descriptor);
     return this.inspect();
   }
 
@@ -118,7 +128,7 @@ export class WslRuntimeManager {
     const value = raw as Record<string, unknown>;
     exactFields(value, [
       'schemaVersion', 'baselineVersion', 'sourceRepository', 'sourceCommit',
-      'contractPackageVersion', 'components', 'runtime'
+      'contractPackageVersion', 'components', 'runtime', 'registry'
     ], 'runtime descriptor');
     if (value.schemaVersion !== 1 || !safeVersion(value.baselineVersion) || !commit(value.sourceCommit)
       || !safeVersion(value.contractPackageVersion) || !httpsUrl(value.sourceRepository)) {
@@ -141,6 +151,15 @@ export class WslRuntimeManager {
       || (runtime.size as number) < 1 || (runtime.size as number) > 32 * 1024 * 1024) {
       throw new Error('The embedded WSL runtime artifact identity is invalid.');
     }
+    const registry = object(value.registry, 'registry artifact');
+    exactFields(registry, ['file', 'sha256', 'size', 'records'], 'registry artifact');
+    if (!safeFile(registry.file) || !digest(registry.sha256)
+      || !Number.isSafeInteger(registry.size) || (registry.size as number) < 1
+      || (registry.size as number) > 32 * 1024 * 1024
+      || !Number.isSafeInteger(registry.records) || (registry.records as number) < 1
+      || (registry.records as number) > 256) {
+      throw new Error('The embedded machine registry artifact identity is invalid.');
+    }
     if (components.contracts.version !== value.contractPackageVersion
       || COMPONENTS.slice(0, 3).some((name) => components[name].version !== value.baselineVersion)) {
       throw new Error('The embedded WSL runtime component versions disagree.');
@@ -152,17 +171,23 @@ export class WslRuntimeManager {
       sourceCommit: value.sourceCommit as string,
       contractPackageVersion: value.contractPackageVersion as string,
       components,
-      runtime: runtime as unknown as RuntimeDescriptor['runtime']
+      runtime: runtime as unknown as RuntimeDescriptor['runtime'],
+      registry: registry as unknown as RuntimeDescriptor['registry']
     };
   }
 
-  private verifyEmbeddedArtifact(descriptor: RuntimeDescriptor): void {
-    const path = join(this.options.resourcesRoot, 'runtime', descriptor.runtime.file);
-    if (!existsSync(path) || statSync(path).size !== descriptor.runtime.size) {
-      throw new Error('The embedded WSL runtime artifact is missing or has the wrong size.');
+  private verifyEmbeddedArtifacts(descriptor: RuntimeDescriptor): void {
+    for (const [label, artifact] of [
+      ['WSL runtime', descriptor.runtime],
+      ['machine registry', descriptor.registry]
+    ] as const) {
+      const path = join(this.options.resourcesRoot, 'runtime', artifact.file);
+      if (!existsSync(path) || statSync(path).size !== artifact.size) {
+        throw new Error(`The embedded ${label} artifact is missing or has the wrong size.`);
+      }
+      const digestValue = createHash('sha256').update(readFileSync(path)).digest('hex');
+      if (digestValue !== artifact.sha256) throw new Error(`The embedded ${label} artifact checksum does not match.`);
     }
-    const digestValue = createHash('sha256').update(readFileSync(path)).digest('hex');
-    if (digestValue !== descriptor.runtime.sha256) throw new Error('The embedded WSL runtime artifact checksum does not match.');
   }
 
   private async bootstrap(action: 'install', descriptor: RuntimeDescriptor): Promise<void> {
@@ -181,6 +206,21 @@ export class WslRuntimeManager {
     await this.run('wsl.exe', [
       '-d', this.options.distro(), '--cd', '~', '--exec', 'sh', '-lc', shell
     ], 120_000);
+  }
+
+  private async installRegistry(descriptor: RuntimeDescriptor): Promise<void> {
+    const bundle = join(this.options.resourcesRoot, 'runtime', descriptor.registry.file);
+    const shell = [
+      'set -eu',
+      `bundle="$(wslpath -a ${shellQuote(bundle)})"`,
+      `${activatedRuntimeCommand('wtmux-runtime')} install-registry`
+        + ` --bundle "$bundle" --sha256 ${shellQuote(descriptor.registry.sha256)}`
+        + ` --root ${shellQuote(ACTIVATED_RUNTIME_ROOT)}`
+        + ` --config ${shellQuote('.config/wtmux/wtmux.conf')}`
+    ].join('; ');
+    await this.run('wsl.exe', [
+      '-d', this.options.distro(), '--cd', '~', '--exec', 'sh', '-lc', shell
+    ], 30_000);
   }
 
   private async toolStatus(): Promise<RuntimeToolStatus> {

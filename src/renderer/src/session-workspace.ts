@@ -1541,7 +1541,7 @@ export class SessionWorkspace {
   }
 
   private renderNative(tab: TerminalTabDescriptor): string {
-    if (tab.tool === 'shell') return `<div class="native-shell"><div class="native-shell-intro"><strong>Friendly shell</strong><span>Use short navigation commands here. Switch to Terminal for full-screen programs.</span></div>${this.renderComposer(tab, this.nativeState(tab.id))}</div>`;
+    if (tab.tool === 'shell') return '<div class="native-shell"><div class="native-shell-intro"><strong>Shell sessions use Terminal</strong><span>Open Codex, Claude Code, or Copilot from the shell.</span></div></div>';
     const state = this.nativeState(tab.id);
     const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
     const feedItems = pending ? state.items.filter((item) => item.id !== pending.id) : state.items;

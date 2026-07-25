@@ -8,10 +8,19 @@ $terminalProcess = $null
 try {
   $env:AI_LIMITS_DATA_DIR = $root
   $process = Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru
-  Start-Sleep -Seconds 5
-  if ($process.HasExited) { throw "Packaged app exited with code $($process.ExitCode)" }
   $logPath = Join-Path $root 'logs\main.log'
+  $fleetReady = $false
+  for ($attempt = 0; $attempt -lt 40; $attempt += 1) {
+    Start-Sleep -Seconds 1
+    if ($process.HasExited) { throw "Packaged app exited with code $($process.ExitCode)" }
+    if ((Test-Path -LiteralPath $logPath) -and
+      (Select-String -LiteralPath $logPath -Quiet -Pattern 'Embedded workspace restored')) {
+      $fleetReady = $true
+      break
+    }
+  }
   if (-not (Test-Path -LiteralPath $logPath)) { throw 'Packaged app did not initialize its isolated data directory.' }
+  if (-not $fleetReady) { throw 'Packaged app did not receive a real fleet snapshot from the embedded runtime.' }
   $renderer = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $process.Id -and $_.CommandLine -match '--type=renderer' }
   if (-not $renderer -or $renderer.CommandLine -notmatch '--enable-sandbox') { throw 'Packaged renderer sandbox was not enabled.' }
   $terminalResult = Join-Path $root 'terminal-smoke.json'
