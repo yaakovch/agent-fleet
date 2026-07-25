@@ -6,11 +6,19 @@ $previousDataDir = $env:AI_LIMITS_DATA_DIR
 $process = $null
 $terminalProcess = $null
 try {
+  $requireFleet = $false
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if ($wsl) {
+    $distributions = (& $wsl.Source --list --quiet 2>$null) -join "`n"
+    $requireFleet = $LASTEXITCODE -eq 0 -and
+      (($distributions -replace "`0", '') -split "`r?`n" | Where-Object { $_.Trim() -eq 'Ubuntu' }).Count -gt 0
+  }
   $env:AI_LIMITS_DATA_DIR = $root
   $process = Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru
   $logPath = Join-Path $root 'logs\main.log'
   $fleetReady = $false
-  for ($attempt = 0; $attempt -lt 40; $attempt += 1) {
+  $startupAttempts = if ($requireFleet) { 40 } else { 5 }
+  for ($attempt = 0; $attempt -lt $startupAttempts; $attempt += 1) {
     Start-Sleep -Seconds 1
     if ($process.HasExited) { throw "Packaged app exited with code $($process.ExitCode)" }
     if ((Test-Path -LiteralPath $logPath) -and
@@ -20,7 +28,9 @@ try {
     }
   }
   if (-not (Test-Path -LiteralPath $logPath)) { throw 'Packaged app did not initialize its isolated data directory.' }
-  if (-not $fleetReady) { throw 'Packaged app did not receive a real fleet snapshot from the embedded runtime.' }
+  if ($requireFleet -and -not $fleetReady) {
+    throw 'Packaged app did not receive a real fleet snapshot from the embedded runtime.'
+  }
   $renderer = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $process.Id -and $_.CommandLine -match '--type=renderer' }
   if (-not $renderer -or $renderer.CommandLine -notmatch '--enable-sandbox') { throw 'Packaged renderer sandbox was not enabled.' }
   $terminalResult = Join-Path $root 'terminal-smoke.json'
@@ -33,10 +43,12 @@ try {
   if ($terminalStatus.status -ne 'ok' -or -not $terminalStatus.marker -or $terminalStatus.backend -notin @('wsl', 'conpty')) {
     throw 'Packaged ConPTY terminal did not return the expected marker.'
   }
-  if (Select-String -LiteralPath $logPath -Quiet -Pattern 'Verified WSL runtime provisioning failed|WSL runtime provisioning failed after distribution change') {
+  if ($requireFleet -and
+    (Select-String -LiteralPath $logPath -Quiet -Pattern 'Verified WSL runtime provisioning failed|WSL runtime provisioning failed after distribution change')) {
     throw 'Packaged app failed to provision its verified WSL runtime.'
   }
-  Write-Output "Packaged smoke test passed: PID $($process.Id), terminal $($terminalStatus.backend)"
+  $fleetStatus = if ($requireFleet) { 'fleet live' } else { 'fleet skipped (Ubuntu unavailable)' }
+  Write-Output "Packaged smoke test passed: PID $($process.Id), terminal $($terminalStatus.backend), $fleetStatus"
 } finally {
   Remove-Item Env:AGENT_FLEET_ENABLE_TERMINAL_SMOKE -ErrorAction SilentlyContinue
   if ($process) {
