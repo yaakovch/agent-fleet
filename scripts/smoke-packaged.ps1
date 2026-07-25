@@ -4,9 +4,9 @@ if (-not (Test-Path -LiteralPath $Executable)) { throw "Packaged executable not 
 $updateConfig = Join-Path (Split-Path -Parent $Executable) 'resources\app-update.yml'
 if (-not (Test-Path -LiteralPath $updateConfig)) { throw 'Packaged app update configuration is missing.' }
 $updateConfigText = Get-Content -LiteralPath $updateConfig -Raw
-if ($updateConfigText -notmatch '(?m)^provider: github$' -or
-  $updateConfigText -notmatch '(?m)^repo: agent-fleet$' -or
-  $updateConfigText -notmatch '(?m)^  - SignPath Foundation$') {
+if ($updateConfigText -notmatch '(?m)^provider: github\r?$' -or
+  $updateConfigText -notmatch '(?m)^repo: agent-fleet\r?$' -or
+  $updateConfigText -notmatch '(?m)^  - SignPath Foundation\r?$') {
   throw 'Packaged app update configuration is invalid.'
 }
 $root = Join-Path ([System.IO.Path]::GetTempPath()) "ai-limits-smoke-$PID"
