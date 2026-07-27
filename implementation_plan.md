@@ -534,3 +534,19 @@ Beta.18 remains available locally for rollback. The repository still has no
 SignPath secrets, so beta.19 is unsigned and an installed build enforcing the
 configured publisher may require a one-time manual installation; signature
 verification was not weakened.
+
+## 30. Preserve Compatible WSL Runtime Hotfixes
+
+1. Treat an activated WSL runtime hotfix as ready when the embedded recovery
+   baseline is still installed, activation is committed, the source repository
+   and contract package match, and every runtime component is internally
+   coherent.
+2. Keep the embedded runtime as the recovery baseline. Do not preserve a
+   hotfix across a baseline change, an activation-recovery failure, malformed
+   component metadata, or a different source/contract identity.
+3. Cover both preservation and baseline-change rejection in the WSL runtime
+   manager regression suite.
+4. Release `0.11.0-beta.25` after TypeScript lint, the complete Windows suite,
+   production build/package, release validation, and packaged ConPTY/WSL smoke.
+   Reactivate the checksum-verified runtime only after the installed app can no
+   longer replace it on restart.

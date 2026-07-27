@@ -49,6 +49,7 @@ function resources(): { root: string; bundle: string; descriptor: Record<string,
 
 function readyStatus() {
   return {
+    baseline: 'git-deadbee',
     current: 'git-deadbee',
     previous: '',
     activationPhase: 'committed',
@@ -59,7 +60,11 @@ function readyStatus() {
       providerAdapters: { sequence: 13, version: 'git-deadbee' },
       contracts: { sequence: 13, version: '1.3.0' }
     },
-    source: { commit: '1'.repeat(40), contractPackageVersion: '1.3.0' }
+    source: {
+      repository: 'https://github.com/yaakovch/wtmux',
+      commit: '1'.repeat(40),
+      contractPackageVersion: '1.3.0'
+    }
   };
 }
 
@@ -131,6 +136,48 @@ describe('app-owned WSL runtime manager', () => {
     await expect(manager.ensure()).resolves.toMatchObject({ status: 'ready', current: 'git-deadbee' });
     expect(run).toHaveBeenCalledTimes(3);
     expect(run.mock.calls[1]?.[1].at(-1)).toContain('install-registry');
+  });
+
+  it('preserves a coherent hotfix when the embedded recovery baseline is unchanged', async () => {
+    const fixture = resources();
+    const status = readyStatus();
+    status.current = 'git-hotfix1';
+    status.previous = 'git-deadbee';
+    status.source.commit = '4'.repeat(40);
+    for (const name of ['clientRuntime', 'hostRuntime', 'providerAdapters'] as const) {
+      status.components[name] = { sequence: 1, version: 'git-hotfix1' };
+    }
+    const run = vi.fn(async (_command: string, args: string[]) => ({
+      stdout: JSON.stringify(args.includes('status') ? status : {}),
+      stderr: ''
+    }));
+    const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu', run });
+
+    await expect(manager.ensure()).resolves.toMatchObject({
+      status: 'ready', current: 'git-hotfix1', embeddedVersion: 'git-deadbee'
+    });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(run.mock.calls.some(([, args]) => args.at(-1)?.includes('python3 "$staging/scripts/wtmux-runtime"'))).toBe(false);
+  });
+
+  it('does not preserve a hotfix across an embedded recovery-baseline change', async () => {
+    const fixture = resources();
+    const status = readyStatus();
+    status.current = 'git-hotfix1';
+    status.baseline = 'git-oldbase';
+    status.source.commit = '4'.repeat(40);
+    for (const name of ['clientRuntime', 'hostRuntime', 'providerAdapters'] as const) {
+      status.components[name] = { sequence: 1, version: 'git-hotfix1' };
+    }
+    const manager = new WslRuntimeManager({
+      resourcesRoot: fixture.root,
+      distro: () => 'Ubuntu',
+      run: async () => ({ stdout: JSON.stringify(status), stderr: '' })
+    });
+
+    await expect(manager.inspect()).resolves.toMatchObject({
+      status: 'incompatible', current: 'git-hotfix1', embeddedVersion: 'git-deadbee'
+    });
   });
 
   it('rolls back through the activated immutable manager', async () => {

@@ -36,12 +36,13 @@ interface RuntimeDescriptor {
 }
 
 interface RuntimeToolStatus {
+  baseline: string;
   current: string;
   previous: string;
   activationPhase?: string;
   activationFailureCode?: string;
   components?: Record<string, { sequence: number; version: string }>;
-  source?: { commit?: string; contractPackageVersion?: string };
+  source?: { repository?: string; commit?: string; contractPackageVersion?: string };
 }
 
 export interface WslCommandResult { stdout: string; stderr: string }
@@ -238,8 +239,28 @@ export class WslRuntimeManager {
       && status.components?.[name]?.version === descriptor.components[name].version);
     const sourceMatches = status.source?.commit === descriptor.sourceCommit
       && status.source?.contractPackageVersion === descriptor.contractPackageVersion;
-    const ready = status.current === descriptor.baselineVersion && componentsMatch && sourceMatches
-      && status.activationPhase === 'committed';
+    const embeddedReady = status.current === descriptor.baselineVersion
+      && status.baseline === descriptor.baselineVersion
+      && componentsMatch && sourceMatches
+      && status.activationPhase === 'committed'
+      && !status.activationFailureCode;
+    const coherentHotfix = status.current !== descriptor.baselineVersion
+      && status.baseline === descriptor.baselineVersion
+      && safeVersion(status.current)
+      && status.activationPhase === 'committed'
+      && !status.activationFailureCode
+      && status.source?.repository === descriptor.sourceRepository
+      && commit(status.source?.commit)
+      && status.source.contractPackageVersion === descriptor.contractPackageVersion
+      && COMPONENTS.slice(0, 3).every((name) => {
+        const component = status.components?.[name];
+        return component?.version === status.current
+          && Number.isSafeInteger(component.sequence) && component.sequence >= 1;
+      })
+      && status.components?.contracts?.version === descriptor.contractPackageVersion
+      && Number.isSafeInteger(status.components.contracts.sequence)
+      && status.components.contracts.sequence >= 1;
+    const ready = embeddedReady || coherentHotfix;
     return {
       status: ready ? 'ready' : status.current ? 'incompatible' : 'repair-needed',
       current: status.current || '',
@@ -247,7 +268,9 @@ export class WslRuntimeManager {
       embeddedVersion: descriptor.baselineVersion,
       contractPackageVersion: descriptor.contractPackageVersion,
       sourceCommit: descriptor.sourceCommit,
-      detail: ready
+      detail: coherentHotfix
+        ? `Runtime ${status.current} is active with recovery baseline ${descriptor.baselineVersion}.`
+        : ready
         ? `Runtime ${status.current} is verified and compatible.`
         : status.current
           ? `Runtime ${status.current} does not match the app's signed component set.`
