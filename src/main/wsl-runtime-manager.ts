@@ -201,6 +201,7 @@ export class WslRuntimeManager {
       'tar -xf "$bundle" -C "$staging" scripts/wtmux-runtime',
       `python3 "$staging/scripts/wtmux-runtime" ${shellQuote(action)}`
         + ` --bundle "$bundle" --sha256 ${shellQuote(descriptor.runtime.sha256)}`
+        + ' --baseline'
         + ` --root ${shellQuote(ACTIVATED_RUNTIME_ROOT)}`
         + ` --bin-dir ${shellQuote('.local/share/agent-fleet/bin')}`
     ].join('; ');

@@ -90,6 +90,7 @@ describe('app-owned WSL runtime manager', () => {
       expect(shell.split('; ')).toHaveLength(6);
       expect(shell).toContain('; tar -xf "$bundle"');
       expect(shell).toContain('; python3 "$staging/scripts/wtmux-runtime"');
+      expect(shell).toContain(' --baseline');
       expect(shell).toContain(' --root \'.local/share/agent-fleet/wtmux\'');
       expect(args.at(-1)).toBe(shell);
       installed = true;
@@ -178,6 +179,28 @@ describe('app-owned WSL runtime manager', () => {
     await expect(manager.inspect()).resolves.toMatchObject({
       status: 'incompatible', current: 'git-hotfix1', embeddedVersion: 'git-deadbee'
     });
+  });
+
+  it('promotes an already-installed matching runtime to the embedded recovery baseline', async () => {
+    const fixture = resources();
+    const status = readyStatus();
+    status.baseline = 'git-oldbase';
+    const run = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes('status')) return { stdout: JSON.stringify(status), stderr: '' };
+      const shell = args.at(-1) ?? '';
+      if (shell.includes('python3 "$staging/scripts/wtmux-runtime"')) {
+        expect(shell).toContain(' --baseline');
+        status.baseline = 'git-deadbee';
+      }
+      return { stdout: '{}', stderr: '' };
+    });
+    const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu', run });
+
+    await expect(manager.ensure()).resolves.toMatchObject({
+      status: 'ready', current: 'git-deadbee', embeddedVersion: 'git-deadbee'
+    });
+    expect(run.mock.calls.some(([, args]) =>
+      args.at(-1)?.includes('python3 "$staging/scripts/wtmux-runtime"'))).toBe(true);
   });
 
   it('rolls back through the activated immutable manager', async () => {
