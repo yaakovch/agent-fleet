@@ -1484,7 +1484,8 @@ handle(IPC_CHANNELS.getDiagnostics, () => createDiagnosticsReport({
   doctors: [...lastDoctorResults.values()],
   terminal: terminalManager.getHealth(),
   wslRuntime: wslRuntimeManager.getState(),
-  updateConfigured: appSettings.automaticUpdates
+  updateConfigured: appSettings.automaticUpdates,
+  processOwnership: wslProcessOwnership.snapshot()
 }));
 handle(IPC_CHANNELS.exportDiagnostics, async () => {
   const result = await dialog.showSaveDialog(getDialogOwner(), {
@@ -1499,7 +1500,8 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
     doctors: [...lastDoctorResults.values()],
     terminal: terminalManager.getHealth(),
     wslRuntime: wslRuntimeManager.getState(),
-    updateConfigured: appSettings.automaticUpdates
+    updateConfigured: appSettings.automaticUpdates,
+    processOwnership: wslProcessOwnership.snapshot()
   });
   return { canceled: false, message: `Diagnostics exported to ${basename(result.filePath)}`, path: result.filePath };
 });

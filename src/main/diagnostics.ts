@@ -6,6 +6,7 @@ import type { AppInfo } from '../shared/app';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import type { TerminalHealth } from '../shared/terminal';
 import type { WslRuntimeState } from '../shared/runtime';
+import type { WslProcessOwnershipSnapshot } from './wsl-process-ownership';
 import {
   createWindowsLayeredDiagnostics,
   type LayeredDiagnosticReport
@@ -18,6 +19,7 @@ interface DiagnosticsInput {
   terminal: TerminalHealth;
   wslRuntime: WslRuntimeState;
   updateConfigured: boolean;
+  processOwnership: WslProcessOwnershipSnapshot;
 }
 
 interface ArchiveWriter {
@@ -59,6 +61,7 @@ export function createDiagnosticsReport(input: DiagnosticsInput): LayeredDiagnos
     doctors: input.doctors,
     terminal: input.terminal,
     wslRuntime: input.wslRuntime,
-    updateConfigured: input.updateConfigured
+    updateConfigured: input.updateConfigured,
+    processOwnership: input.processOwnership
   });
 }

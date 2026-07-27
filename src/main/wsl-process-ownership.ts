@@ -6,7 +6,8 @@ export type WslProcessReleaseCause =
   | 'host_restart'
   | 'app_shutdown'
   | 'timeout'
-  | 'protocol_failure';
+  | 'protocol_failure'
+  | 'superseded';
 
 export interface KillableWslProcess {
   kill(signal?: 'SIGTERM'): unknown;
@@ -21,7 +22,7 @@ export interface WslProcessOwnershipSnapshot {
 
 const CAUSES: WslProcessReleaseCause[] = [
   'detach', 'cancel', 'tmux_kill', 'wsl_shutdown', 'host_restart',
-  'app_shutdown', 'timeout', 'protocol_failure'
+  'app_shutdown', 'timeout', 'protocol_failure', 'superseded'
 ];
 
 /**
@@ -37,6 +38,10 @@ export class WslProcessOwnership {
   own(owner: string, child: KillableWslProcess): void {
     if (!/^[a-z][a-z0-9._:-]{0,127}$/u.test(owner)) throw new Error('WSL process owner is invalid');
     if (this.active.has(child)) throw new Error('WSL process is already owned');
+    // A UI slot may replace its WSL process before the old exit event arrives.
+    // Supersede only that exact owner; distinct tabs and deliberate duplicate
+    // session attachments use distinct owner keys and remain independent.
+    this.releaseOwner(owner, 'superseded');
     this.active.set(child, owner);
     child.once?.('exit', () => this.forget(child));
     child.once?.('error', () => this.forget(child));

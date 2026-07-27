@@ -13,7 +13,7 @@ function child(): KillableWslProcess & EventEmitter {
 describe('WSL interop process ownership', () => {
   it.each<WslProcessReleaseCause>([
     'detach', 'cancel', 'tmux_kill', 'wsl_shutdown', 'host_restart',
-    'app_shutdown', 'timeout', 'protocol_failure'
+    'app_shutdown', 'timeout', 'protocol_failure', 'superseded'
   ])('converges fifty %s cleanup generations without an owned orphan', (cause) => {
     const ownership = new WslProcessOwnership();
     for (let generation = 0; generation < 50; generation += 1) {
@@ -42,5 +42,24 @@ describe('WSL interop process ownership', () => {
     expect(ownership.snapshot()).toMatchObject({ active: 1, owners: { 'control:bridge': 1 } });
     expect(ownership.releaseAll('app_shutdown')).toBe(1);
     expect(ownership.snapshot().active).toBe(0);
+  });
+
+  it('supersedes only the previous generation of the same owner', () => {
+    const ownership = new WslProcessOwnership();
+    const first = child();
+    const independent = child();
+    const replacement = child();
+    ownership.own('conversation:tab-a', first);
+    ownership.own('conversation:tab-b', independent);
+    ownership.own('conversation:tab-a', replacement);
+
+    expect(first.kill).toHaveBeenCalledOnce();
+    expect(independent.kill).not.toHaveBeenCalled();
+    expect(replacement.kill).not.toHaveBeenCalled();
+    expect(ownership.snapshot()).toMatchObject({
+      active: 2,
+      owners: { 'conversation:tab-a': 1, 'conversation:tab-b': 1 },
+      releases: { superseded: 1 }
+    });
   });
 });

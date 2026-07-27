@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FleetBridgeView, FleetDoctorResult } from './fleet-protocol';
 import type { TerminalHealth } from './terminal';
 import type { WslRuntimeState } from './runtime';
+import type { WslProcessOwnershipSnapshot } from '../main/wsl-process-ownership';
 
 export const DIAGNOSTIC_LAYERS = [
   'client_app', 'platform_adapter', 'client_runtime', 'tailnet', 'ssh',
@@ -79,6 +80,7 @@ export interface WindowsLayeredDiagnosticsInput {
   terminal: TerminalHealth;
   wslRuntime: WslRuntimeState;
   updateConfigured: boolean;
+  processOwnership?: WslProcessOwnershipSnapshot;
   legacyUsage?: LegacyUsageInput;
 }
 
@@ -120,11 +122,15 @@ export function createWindowsLayeredDiagnostics(input: WindowsLayeredDiagnostics
   const providerAvailable = input.fleet.snapshot.sessions.some((session) => session.tool !== 'shell');
   const sshEvidence = doctorEvidence(input.doctors, ['ssh', 'transport', 'connection']);
   const runtimeEvidence = doctorEvidence(input.doctors, ['compatibility', 'runtime']);
-  const tmuxEvidence = doctorEvidence(input.doctors, ['tmux', 'session-service']);
+  const tmuxEvidence = doctorEvidence(input.doctors, ['tmux', 'session-service', 'resource-budget']);
+  const ownedProcesses = input.processOwnership?.active ?? 0;
+  const duplicateOwners = Object.values(input.processOwnership?.owners ?? {}).filter((count) => count > 1).length;
   const checks: LayeredDiagnosticCheck[] = [
     healthy('client_app', input.clientVersion, 'Client metadata is readable'),
-    input.terminal.wslAvailable
-      ? healthy('platform_adapter', process.platform, 'Windows integration is ready')
+    input.terminal.wslAvailable && duplicateOwners > 0
+      ? attention('platform_adapter', 'STALE_CONNECTIONS_DETECTED', process.platform, `${duplicateOwners} app connection owners need review`)
+      : input.terminal.wslAvailable
+      ? healthy('platform_adapter', process.platform, `Windows integration is ready with ${ownedProcesses} app owned processes`)
       : failed('platform_adapter', 'PLATFORM_ADAPTER_UNAVAILABLE', process.platform, 'Windows integration is unavailable'),
     runtimeHealthy
       ? healthy('client_runtime', safeVersion(input.wslRuntime.current || input.wslRuntime.embeddedVersion), 'Verified runtime is active')
@@ -272,11 +278,12 @@ function assertLegacyUsage(input: unknown): asserts input is LegacyUsage {
     || value.blockers.some((blocker, index) => blocker !== expected.blockers[index])) invalid();
 }
 
-function doctorEvidence(doctors: readonly FleetDoctorResult[], ids: readonly string[]): 'healthy' | 'failure' | 'missing' {
+function doctorEvidence(doctors: readonly FleetDoctorResult[], ids: readonly string[]): 'healthy' | 'attention' | 'failure' | 'missing' {
   const checks = doctors.flatMap((doctor) => doctor.checks)
     .filter((check) => ids.some((id) => check.id.toLowerCase().includes(id)));
   if (checks.length === 0) return 'missing';
-  return checks.some((check) => check.status === 'failure') ? 'failure' : 'healthy';
+  return checks.some((check) => check.status === 'failure') ? 'failure'
+    : checks.some((check) => check.status === 'attention') ? 'attention' : 'healthy';
 }
 
 function healthy(layer: DiagnosticLayer, version: string, summary: string): LayeredDiagnosticCheck {
@@ -284,6 +291,9 @@ function healthy(layer: DiagnosticLayer, version: string, summary: string): Laye
 }
 function failed(layer: DiagnosticLayer, code: string, version: string, summary: string): LayeredDiagnosticCheck {
   return diagnostic(layer, 'failure', code, version, summary);
+}
+function attention(layer: DiagnosticLayer, code: string, version: string, summary: string): LayeredDiagnosticCheck {
+  return diagnostic(layer, 'attention', code, version, summary);
 }
 function notRun(layer: DiagnosticLayer, code: string, version: string, summary: string): LayeredDiagnosticCheck {
   return diagnostic(layer, 'not-run', code, version, summary);
@@ -294,10 +304,11 @@ function stateCheck(
   return failure ? failed(layer, code, version, summary) : notRun(layer, `${code}_NOT_OBSERVED`, version, summary);
 }
 function evidenceCheck(
-  layer: DiagnosticLayer, evidence: 'healthy' | 'failure' | 'missing',
+  layer: DiagnosticLayer, evidence: 'healthy' | 'attention' | 'failure' | 'missing',
   code: string, version: string, summary: string
 ): LayeredDiagnosticCheck {
   return evidence === 'healthy' ? healthy(layer, version, summary.replace('unavailable', 'ready'))
+    : evidence === 'attention' ? attention(layer, 'RESOURCE_BUDGET_EXCEEDED', version, 'Connection resources need review')
     : evidence === 'failure' ? failed(layer, code, version, summary)
       : notRun(layer, `${code}_NOT_OBSERVED`, version, summary.replace('unavailable', 'not checked'));
 }

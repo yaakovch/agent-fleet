@@ -567,3 +567,17 @@ Beta.25 was installed replace-in-place on gaming-desktop. After reactivating
 `git-b8901a2`, a complete app restart left the activation journal unchanged,
 kept `git-b8901a2` current with `git-b42c6a0` as recovery/rollback, preserved
 all five tmux sessions, and produced the grouped fleet first menu locally.
+
+## 31. App-Owned WSL Connection Convergence
+
+1. Treat bridge, Native conversation, embedded terminal, and download child
+   processes as generations of stable app-owned UI slots.
+2. When a slot starts a replacement, release only the previous process with
+   the same owner key. Preserve distinct tabs and deliberate duplicate
+   attachments to one tmux session.
+3. Add the bounded ownership snapshot to layered Diagnostics and surface host
+   resource-budget attention from the shared doctor without exporting owner
+   keys.
+4. Cover fifty-generation cleanup, same-owner replacement, independent owners,
+   diagnostic privacy, and resource attention before the full Windows
+   type-check, test, build, runtime-verification, packaging, and smoke gates.

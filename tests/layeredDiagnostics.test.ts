@@ -36,7 +36,15 @@ const input = () => ({
     sourceCommit: 'fixture',
     detail: 'ready'
   },
-  updateConfigured: true
+  updateConfigured: true,
+  processOwnership: {
+    active: 2,
+    owners: { 'control:bridge': 1, 'conversation:tab-a': 1 } as Record<string, number>,
+    releases: {
+      detach: 0, cancel: 0, tmux_kill: 0, wsl_shutdown: 0, host_restart: 0,
+      app_shutdown: 0, timeout: 0, protocol_failure: 0, superseded: 0
+    }
+  }
 });
 
 describe('layered diagnostics v2', () => {
@@ -97,11 +105,29 @@ describe('layered diagnostics v2', () => {
       doctors: value.doctors,
       terminal: value.terminal,
       wslRuntime: value.wslRuntime,
-      updateConfigured: value.updateConfigured
+      updateConfigured: value.updateConfigured,
+      processOwnership: value.processOwnership
     });
     expect(Object.keys(entries)).toEqual(['diagnostics-v2.json']);
     expect(JSON.stringify(entries)).not.toContain('secret-canary');
     expect(JSON.stringify(entries)).not.toContain('C:\\Users');
+  });
+
+  it('surfaces duplicate app-owned process generations without exposing owner IDs', () => {
+    const value = input();
+    value.processOwnership = {
+      ...value.processOwnership,
+      active: 2,
+      owners: { 'conversation:private-tab': 2 }
+    };
+    const report = createWindowsLayeredDiagnostics(value);
+    const platform = report.checks.find((check) => check.layer === 'platform_adapter');
+    expect(platform).toMatchObject({
+      status: 'attention',
+      errorCode: 'STALE_CONNECTIONS_DETECTED',
+      summary: '1 app connection owners need review'
+    });
+    expect(JSON.stringify(report)).not.toContain('private-tab');
   });
 });
 
