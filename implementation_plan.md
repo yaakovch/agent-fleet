@@ -581,3 +581,29 @@ all five tmux sessions, and produced the grouped fleet first menu locally.
 4. Cover fifty-generation cleanup, same-owner replacement, independent owners,
    diagnostic privacy, and resource attention before the full Windows
    type-check, test, build, runtime-verification, packaging, and smoke gates.
+
+Acceptance record (2026-07-27): commit `23aa8c2` makes each stable UI owner
+supersede only its preceding app-owned WSL process generation and adds
+metadata-only ownership/resource counts to layered Diagnostics. Independent
+tabs and deliberate attachments remain independent. Fifty-generation,
+same-owner, unrelated-owner, privacy, and resource-attention regressions
+passed.
+
+The first real packaged smoke then exposed an embedded-baseline promotion
+gap: runtime `git-4837665` was already current after the staged rollout, but
+the recovery baseline still named the previous APK runtime, so exact component
+verification rejected startup. Commit `23f1d73` installs changed embedded
+runtimes with `--baseline`, while the existing coherent-hotfix path continues
+to preserve a newer runtime when the embedded baseline is unchanged. The new
+preinstalled-current/older-baseline regression failed before the correction
+and passed afterward.
+
+TypeScript lint, all 224 Windows tests, embedded-runtime verification,
+production build, SBOM generation, native Windows NSIS/portable packaging, and
+two real packaged ConPTY/WSL smoke runs passed. Beta.26 was installed
+replace-in-place on gaming-desktop and work-m; both restored their existing
+workspaces and retained all tmux sessions. The installer SHA-256 is
+`ec466a62b71894e2b16e972d2d44e36d2718a39b6db2e47892c718d1ae81dd66`;
+the portable SHA-256 is
+`b347f7b12b054acd5c3eb7d4cd7e643a611a7c64a12d63edf94e7043af289d18`.
+Beta.25 and signed release set 1088 remain available for rollback.
