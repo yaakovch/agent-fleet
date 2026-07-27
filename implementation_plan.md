@@ -550,3 +550,20 @@ verification was not weakened.
    production build/package, release validation, and packaged ConPTY/WSL smoke.
    Reactivate the checksum-verified runtime only after the installed app can no
    longer replace it on restart.
+
+Acceptance record (2026-07-27): commit `73069f4` preserves a coherent current
+runtime only while the embedded recovery baseline remains installed and the
+activation, source, contracts, and component identities are valid. A changed
+baseline remains incompatible and follows the existing embedded-install path.
+TypeScript lint, embedded-runtime verification, all 220 Windows tests,
+production NSIS/portable packaging, release validation, SBOM generation, and
+packaged ConPTY/WSL smoke passed.
+
+The beta.25 installer SHA-256 is
+`54185fd5c0eeeadc0eeb74da907068c086f342425b17e9675a3b134034dd69c1`;
+the portable SHA-256 is
+`0761037e9336e0fec511a93880bb7e764c34e621c74bfb79a903887a944290bb`.
+Beta.25 was installed replace-in-place on gaming-desktop. After reactivating
+`git-b8901a2`, a complete app restart left the activation journal unchanged,
+kept `git-b8901a2` current with `git-b42c6a0` as recovery/rollback, preserved
+all five tmux sessions, and produced the grouped fleet first menu locally.
