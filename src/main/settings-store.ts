@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import {
   cloneSettings,
@@ -12,6 +12,22 @@ import {
   type WidgetSettings
 } from '../shared/settings';
 import { getWidgetDataDir } from './app-paths';
+import {
+  ConcurrentFileModificationError,
+  durableAtomicWrite,
+  durablePublishExclusive,
+  matchesFileSnapshot,
+  quarantineFile,
+  quarantinePath,
+  quarantineUnreadablePath,
+  readFileSnapshot,
+  readOptionalFileSnapshot,
+  readPathIdentity,
+  syncDirectory,
+  withCrossProcessLock,
+  type FileSnapshot,
+  type PathIdentity
+} from './durable-file';
 
 export const MAX_SETTINGS_IMPORT_BYTES = 1024 * 1024;
 const MAX_SETTINGS_BACKUPS = 5;
@@ -20,26 +36,60 @@ export function getSettingsPath(dataDir = getWidgetDataDir()): string {
   return join(dataDir, 'settings.json');
 }
 
-export function loadSettings(settingsPath = getSettingsPath()): SettingsLoadResult {
-  if (!existsSync(settingsPath)) return { settings: createDefaultSettings(), recovered: false };
-
-  try {
-    const raw = readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
-    const result = normalizeSettings(JSON.parse(raw));
-    if (result.migrated) saveSettings(result.settings, settingsPath);
-    return result;
-  } catch {
-    return {
-      settings: createDefaultSettings(),
-      recovered: true,
-      message: 'Settings file could not be read; defaults loaded'
-    };
+export function loadSettings(settingsPath = getSettingsPath(), now = new Date()): SettingsLoadResult {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let snapshot: FileSnapshot | null;
+    try {
+      snapshot = readOptionalFileSnapshot(settingsPath, MAX_SETTINGS_IMPORT_BYTES);
+    } catch (error) {
+      if (error instanceof ConcurrentFileModificationError) continue;
+      const observed = observedPathIdentity(settingsPath);
+      if (!observed) continue;
+      const quarantined = withCrossProcessLock(settingsPath, () =>
+        quarantineUnreadablePath(
+          settingsPath,
+          observed,
+          MAX_SETTINGS_IMPORT_BYTES,
+          'corrupt-settings',
+          now
+        ));
+      if (!quarantined) continue;
+      return {
+        settings: createDefaultSettings(),
+        recovered: true,
+        message: `Settings were unreadable; evidence was preserved as ${basename(quarantined)} and defaults loaded`
+      };
+    }
+    if (!snapshot) return { settings: createDefaultSettings(), recovered: false };
+    try {
+      const result = parseStoredSettings(snapshot);
+      if (result.migrated && !persistSettingsMigration(settingsPath, snapshot, result.settings, now)) continue;
+      return result;
+    } catch (error) {
+      if (error instanceof ConcurrentFileModificationError) continue;
+      const quarantined = withCrossProcessLock(settingsPath, () =>
+        quarantineFile(settingsPath, snapshot, 'corrupt-settings', now));
+      if (!quarantined) continue;
+      return {
+        settings: createDefaultSettings(),
+        recovered: true,
+        message: `Settings were invalid; evidence was preserved as ${basename(quarantined)} and defaults loaded`
+      };
+    }
   }
+  throw new ConcurrentFileModificationError(settingsPath);
 }
 
 export function saveSettings(settings: WidgetSettings, settingsPath = getSettingsPath()): WidgetSettings {
   const normalized = normalizeSettings(settings).settings;
-  atomicWriteJson(settingsPath, normalized);
+  withCrossProcessLock(settingsPath, () => {
+    const current = currentSettingsForReplacement(settingsPath);
+    durableAtomicWrite(settingsPath, serializeJson(normalized), {
+      expected: current,
+      checkExpected: true,
+      mode: 0o600
+    });
+  });
   return cloneSettings(normalized);
 }
 
@@ -78,17 +128,49 @@ export function parseSettingsImport(content: string | Buffer, fileName = 'settin
 }
 
 export function applyImportedSettings(settings: WidgetSettings, settingsPath = getSettingsPath(), now = new Date()): WidgetSettings {
-  createSettingsBackup(settingsPath, now);
-  return saveSettings(settings, settingsPath);
+  const normalized = normalizeSettings(settings).settings;
+  withCrossProcessLock(settingsPath, () => {
+    const current = currentSettingsForReplacement(settingsPath, now);
+    if (current) createSettingsBackup(current, settingsPath, now);
+    durableAtomicWrite(settingsPath, serializeJson(normalized), {
+      expected: current,
+      checkExpected: true,
+      mode: 0o600
+    });
+    pruneSettingsBackups(settingsPath);
+  });
+  return cloneSettings(normalized);
 }
 
 export function rollbackLatestSettings(settingsPath = getSettingsPath()): WidgetSettings | null {
-  const backups = listSettingsBackups(settingsPath);
-  const latest = backups[0];
-  if (!latest) return null;
-  const restored = loadSettings(latest).settings;
-  createSettingsBackup(settingsPath);
-  return saveSettings(restored, settingsPath);
+  return withCrossProcessLock(settingsPath, () => {
+    let restored: WidgetSettings | null = null;
+    for (const backupPath of listSettingsBackups(settingsPath)) {
+      let snapshot: FileSnapshot;
+      try {
+        snapshot = readFileSnapshot(backupPath, MAX_SETTINGS_IMPORT_BYTES);
+      } catch {
+        quarantinePath(backupPath, 'corrupt-backup');
+        continue;
+      }
+      try {
+        restored = parseStoredSettings(snapshot).settings;
+        break;
+      } catch {
+        quarantineFile(backupPath, snapshot, 'corrupt-backup');
+      }
+    }
+    if (!restored) return null;
+    const current = currentSettingsForReplacement(settingsPath);
+    if (current) createSettingsBackup(current, settingsPath);
+    durableAtomicWrite(settingsPath, serializeJson(restored), {
+      expected: current,
+      checkExpected: true,
+      mode: 0o600
+    });
+    pruneSettingsBackups(settingsPath);
+    return cloneSettings(restored);
+  });
 }
 
 export function listSettingsBackups(settingsPath = getSettingsPath()): string[] {
@@ -100,13 +182,24 @@ export function listSettingsBackups(settingsPath = getSettingsPath()): string[] 
     .map((name) => join(backupDir, name));
 }
 
-function createSettingsBackup(settingsPath: string, now = new Date()): void {
-  if (!existsSync(settingsPath)) return;
+function createSettingsBackup(snapshot: FileSnapshot, settingsPath: string, now = new Date()): string {
   const backupDir = join(dirname(settingsPath), 'backups');
-  mkdirSync(backupDir, { recursive: true });
   const stamp = now.toISOString().replace(/[:.]/g, '-');
-  writeFileSync(join(backupDir, `settings-${stamp}.json`), readFileSync(settingsPath));
+  let backupPath = join(backupDir, `settings-${stamp}.json`);
+  if (!durablePublishExclusive(backupPath, snapshot.data)) {
+    backupPath = join(backupDir, `settings-${stamp}-${snapshot.sha256.slice(0, 12)}.json`);
+    if (!durablePublishExclusive(backupPath, snapshot.data)) {
+      if (matchesFileSnapshot(backupPath, snapshot, MAX_SETTINGS_IMPORT_BYTES)) return backupPath;
+      throw new Error('A settings backup with the same name already exists');
+    }
+  }
+  return backupPath;
+}
+
+function pruneSettingsBackups(settingsPath: string): void {
   for (const oldBackup of listSettingsBackups(settingsPath).slice(MAX_SETTINGS_BACKUPS)) rmSync(oldBackup, { force: true });
+  const backupDir = join(dirname(settingsPath), 'backups');
+  if (existsSync(backupDir)) syncDirectory(backupDir);
 }
 
 function getImportWarnings(settings: WidgetSettings): string[] {
@@ -123,9 +216,64 @@ function getImportWarnings(settings: WidgetSettings): string[] {
   return warnings;
 }
 
-function atomicWriteJson(filePath: string, value: unknown): void {
-  mkdirSync(dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  renameSync(tempPath, filePath);
+function parseStoredSettings(snapshot: FileSnapshot): SettingsLoadResult {
+  const raw = snapshot.data.toString('utf8').replace(/^\uFEFF/u, '');
+  const result = normalizeSettings(JSON.parse(raw));
+  if (result.recovered) throw new Error(result.message ?? 'Settings are invalid');
+  return result;
+}
+
+function isValidStoredSettings(snapshot: FileSnapshot): boolean {
+  try {
+    parseStoredSettings(snapshot);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function currentSettingsForReplacement(settingsPath: string, now = new Date()): FileSnapshot | null {
+  let current: FileSnapshot | null;
+  try {
+    current = readOptionalFileSnapshot(settingsPath, MAX_SETTINGS_IMPORT_BYTES);
+  } catch {
+    const quarantined = quarantinePath(settingsPath, 'corrupt-settings', now);
+    if (!quarantined) throw new ConcurrentFileModificationError(settingsPath);
+    return null;
+  }
+  if (!current || isValidStoredSettings(current)) return current;
+  const quarantined = quarantineFile(settingsPath, current, 'corrupt-settings', now);
+  if (!quarantined) throw new ConcurrentFileModificationError(settingsPath);
+  return null;
+}
+
+function persistSettingsMigration(
+  settingsPath: string,
+  source: FileSnapshot,
+  settings: WidgetSettings,
+  now: Date
+): boolean {
+  return withCrossProcessLock(settingsPath, () => {
+    if (!matchesFileSnapshot(settingsPath, source, MAX_SETTINGS_IMPORT_BYTES)) return false;
+    createSettingsBackup(source, settingsPath, now);
+    durableAtomicWrite(settingsPath, serializeJson(settings), {
+      expected: source,
+      checkExpected: true,
+      mode: 0o600
+    });
+    pruneSettingsBackups(settingsPath);
+    return true;
+  });
+}
+
+function serializeJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function observedPathIdentity(path: string): PathIdentity | null {
+  try {
+    return readPathIdentity(path);
+  } catch {
+    return null;
+  }
 }

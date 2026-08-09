@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -44,7 +44,7 @@ export function verifyEmbeddedRuntime(root) {
   if (!existsSync(descriptorPath)) throw new Error('embedded WSL runtime descriptor is missing');
   const descriptor = exact(JSON.parse(readFileSync(descriptorPath, 'utf8')), [
     'schemaVersion', 'baselineVersion', 'sourceRepository', 'sourceCommit',
-    'contractPackageVersion', 'components', 'runtime', 'registry'
+    'contractPackageVersion', 'components', 'runtime', 'registry', 'trustedReleaseKeys'
   ], 'embedded WSL runtime descriptor');
   if (descriptor.schemaVersion !== 1 || !/^git-[a-f0-9]{7}$/u.test(descriptor.baselineVersion)
     || !/^[a-f0-9]{40}$/u.test(descriptor.sourceCommit)
@@ -62,10 +62,13 @@ export function verifyEmbeddedRuntime(root) {
     }
   }
   const runtime = exact(descriptor.runtime, [
-    'file', 'sha256', 'size', 'sbomSha256', 'licenseSha256'
+    'file', 'sha256', 'size', 'formatVersion', 'manifestSha256', 'sbomSha256', 'licenseSha256'
   ], 'embedded WSL runtime artifact');
   if (!/^wtmux-runtime-git-[a-f0-9]{7}\.tar$/u.test(runtime.file)
-    || ![runtime.sha256, runtime.sbomSha256, runtime.licenseSha256].every((value) => /^[a-f0-9]{64}$/u.test(value))
+    || runtime.formatVersion !== 2
+    || ![
+      runtime.sha256, runtime.manifestSha256, runtime.sbomSha256, runtime.licenseSha256
+    ].every((value) => /^[a-f0-9]{64}$/u.test(value))
     || !Number.isSafeInteger(runtime.size) || runtime.size < 1 || runtime.size > 32 * 1024 * 1024) {
     throw new Error('embedded WSL runtime artifact identity is invalid');
   }
@@ -77,6 +80,9 @@ export function verifyEmbeddedRuntime(root) {
   const files = tarFiles(payload);
   const manifestPayload = files.get('runtime-manifest.json');
   if (!manifestPayload) throw new Error('embedded WSL runtime manifest is missing');
+  if (sha256(manifestPayload) !== runtime.manifestSha256) {
+    throw new Error('embedded WSL runtime manifest checksum does not match its descriptor');
+  }
   const manifest = exact(JSON.parse(manifestPayload.toString('utf8')), [
     'formatVersion', 'version', 'components', 'source', 'target', 'files'
   ], 'embedded WSL runtime manifest');
@@ -152,8 +158,37 @@ export function verifyEmbeddedRuntime(root) {
     || [...registryFiles.keys()].some((name) => !expectedRegistryFiles.has(name))) {
     throw new Error('embedded machine registry tar contents do not match its manifest');
   }
+  if (!Array.isArray(descriptor.trustedReleaseKeys)
+    || descriptor.trustedReleaseKeys.length < 1 || descriptor.trustedReleaseKeys.length > 4) {
+    throw new Error('embedded trusted release keys are invalid');
+  }
+  const releaseKeyFiles = new Set();
+  const releaseKeyIds = new Set();
+  for (const value of descriptor.trustedReleaseKeys) {
+    const key = exact(value, ['keyId', 'file', 'sha256'], 'embedded trusted release key');
+    if (!/^[a-f0-9]{32}$/u.test(key.keyId)
+      || key.file !== `trusted-release-key-${key.keyId}.pem`
+      || !/^[a-f0-9]{64}$/u.test(key.sha256)
+      || releaseKeyIds.has(key.keyId) || releaseKeyFiles.has(key.file)) {
+      throw new Error('embedded trusted release key identity is invalid');
+    }
+    const keyPayload = readFileSync(join(root, key.file));
+    if (keyPayload.length < 1 || keyPayload.length > 4096 || sha256(keyPayload) !== key.sha256) {
+      throw new Error(`embedded trusted release key checksum does not match: ${key.keyId}`);
+    }
+    const publicKey = createPublicKey(keyPayload);
+    const derivedKeyId = sha256(publicKey.export({ type: 'spki', format: 'der' })).slice(0, 32);
+    if (publicKey.type !== 'public' || publicKey.asymmetricKeyType !== 'ed25519'
+      || derivedKeyId !== key.keyId) {
+      throw new Error(`embedded trusted release key is invalid: ${key.keyId}`);
+    }
+    releaseKeyIds.add(key.keyId);
+    releaseKeyFiles.add(key.file);
+  }
   const sourceFiles = readdirSync(root).filter((name) => statSync(join(root, name)).isFile()).sort();
-  if (JSON.stringify(sourceFiles) !== JSON.stringify(['embedded-runtime-v1.json', runtime.file, registry.file].sort())) {
+  if (JSON.stringify(sourceFiles) !== JSON.stringify([
+    'embedded-runtime-v1.json', runtime.file, registry.file, ...releaseKeyFiles
+  ].sort())) {
     throw new Error('embedded WSL runtime directory contains stale inputs');
   }
   return {
@@ -163,8 +198,10 @@ export function verifyEmbeddedRuntime(root) {
     components: descriptor.components,
     sha256: runtime.sha256,
     size: runtime.size,
+    manifestSha256: runtime.manifestSha256,
     registrySha256: registry.sha256,
-    registryRecords: registry.records
+    registryRecords: registry.records,
+    trustedReleaseKeyIds: [...releaseKeyIds].sort()
   };
 }
 

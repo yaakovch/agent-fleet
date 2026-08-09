@@ -147,13 +147,17 @@ function parsePolicy(input: unknown): FleetClientPolicy {
     'schemaVersion', 'policyRevision', 'apkManifestUrls', 'runtimeManifestUrls',
     'artifactOrigins', 'checkIntervalSeconds'
   ], 'client policy');
+  const origins = urls(value.artifactOrigins, 4, true);
+  const allowedOrigins = new Set(origins.map((origin) => new URL(origin).origin));
   const apk = urls(value.apkManifestUrls, 2, false);
   const runtime = urls(value.runtimeManifestUrls, 2, false);
-  const origins = urls(value.artifactOrigins, 4, true);
   if (value.schemaVersion !== 1 || !positiveInteger(value.policyRevision)
     || !Number.isInteger(value.checkIntervalSeconds)
     || (value.checkIntervalSeconds as number) < 3600 || (value.checkIntervalSeconds as number) > 604800) {
     fail('client policy is invalid');
+  }
+  if ([...apk, ...runtime].some((source) => !allowedOrigins.has(new URL(source).origin))) {
+    fail('client policy source origin is not approved');
   }
   return {
     schemaVersion: 1, policyRevision: value.policyRevision as number,
@@ -166,9 +170,12 @@ function urls(input: unknown, maximum: number, originOnly: boolean): string[] {
   if (!Array.isArray(input) || input.length < 1 || input.length > maximum
     || new Set(input).size !== input.length || input.some((value) => typeof value !== 'string')) fail('policy URLs are invalid');
   return input.map((value) => {
+    if ((value as string).length > 2048 || (value as string).includes('\\')
+      || /[\s\u0000-\u001f\u007f]/u.test(value as string)) fail('policy URL is invalid');
     let url: URL;
     try { url = new URL(value as string); } catch { fail('policy URL is invalid'); }
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash || !HTTPS_HOST.test(url.hostname)
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash
+      || !['', '443'].includes(url.port) || !HTTPS_HOST.test(url.hostname)
       || (originOnly && !['', '/'].includes(url.pathname)) || (originOnly && url.search)) fail('policy URL is invalid');
     return value as string;
   });

@@ -125,10 +125,14 @@ export function createWindowsLayeredDiagnostics(input: WindowsLayeredDiagnostics
   const tmuxEvidence = doctorEvidence(input.doctors, ['tmux', 'session-service', 'resource-budget']);
   const ownedProcesses = input.processOwnership?.active ?? 0;
   const duplicateOwners = Object.values(input.processOwnership?.owners ?? {}).filter((count) => count > 1).length;
+  const abandonedProcesses = input.processOwnership?.abandoned ?? 0;
+  const ownershipAttention = duplicateOwners > 0
+    ? `${duplicateOwners} app connection owners need review`
+    : `${abandonedProcesses} app processes exceeded their termination deadline`;
   const checks: LayeredDiagnosticCheck[] = [
     healthy('client_app', input.clientVersion, 'Client metadata is readable'),
-    input.terminal.wslAvailable && duplicateOwners > 0
-      ? attention('platform_adapter', 'STALE_CONNECTIONS_DETECTED', process.platform, `${duplicateOwners} app connection owners need review`)
+    input.terminal.wslAvailable && (duplicateOwners > 0 || abandonedProcesses > 0)
+      ? attention('platform_adapter', 'STALE_CONNECTIONS_DETECTED', process.platform, ownershipAttention)
       : input.terminal.wslAvailable
       ? healthy('platform_adapter', process.platform, `Windows integration is ready with ${ownedProcesses} app owned processes`)
       : failed('platform_adapter', 'PLATFORM_ADAPTER_UNAVAILABLE', process.platform, 'Windows integration is unavailable'),

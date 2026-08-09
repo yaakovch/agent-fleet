@@ -1,10 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyImportedSettings,
   createSettingsExport,
+  listSettingsBackups,
   loadSettings,
   parseSettingsImport,
   rollbackLatestSettings,
@@ -38,10 +41,56 @@ describe('settings store', () => {
     const root = makeTempDir();
     const settingsPath = join(root, 'settings.json');
     writeFileSync(settingsPath, '{not-json', 'utf8');
-    const result = loadSettings(settingsPath);
+    const result = loadSettings(settingsPath, new Date('2026-07-29T12:00:00Z'));
     expect(result.recovered).toBe(true);
     expect(result.message).toContain('defaults loaded');
     expect(result.settings.codexProfiles).toEqual([]);
+    expect(existsSync(settingsPath)).toBe(false);
+    const quarantined = readdirSync(root).find((name) => name.startsWith('settings.json.corrupt-settings-'));
+    expect(quarantined).toBeTruthy();
+    expect(readFileSync(join(root, quarantined!), 'utf8')).toBe('{not-json');
+    saveSettings(result.settings, settingsPath);
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).version).toBe(5);
+    expect(readFileSync(join(root, quarantined!), 'utf8')).toBe('{not-json');
+  });
+
+  it('moves an unsafe settings symlink without reading or changing its target', () => {
+    const root = makeTempDir();
+    const settingsPath = join(root, 'settings.json');
+    const targetPath = join(root, 'private-target.json');
+    writeFileSync(targetPath, '{"private":true}\n', 'utf8');
+    try {
+      symlinkSync(targetPath, settingsPath);
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) return;
+      throw error;
+    }
+
+    const result = loadSettings(settingsPath, new Date('2026-07-29T12:30:00Z'));
+    expect(result).toMatchObject({ recovered: true, settings: { onboardingComplete: false } });
+    expect(readFileSync(targetPath, 'utf8')).toBe('{"private":true}\n');
+    expect(existsSync(settingsPath)).toBe(false);
+    const evidence = readdirSync(root).find((name) => name.startsWith('settings.json.corrupt-settings-'));
+    expect(evidence).toBeTruthy();
+    expect(lstatSync(join(root, evidence!)).isSymbolicLink()).toBe(true);
+
+    saveSettings(result.settings, settingsPath);
+    expect(lstatSync(settingsPath).isFile()).toBe(true);
+    expect(readFileSync(targetPath, 'utf8')).toBe('{"private":true}\n');
+  });
+
+  it('preserves an unexpected settings directory and continues with defaults', () => {
+    const root = makeTempDir();
+    const settingsPath = join(root, 'settings.json');
+    mkdirSync(settingsPath);
+    writeFileSync(join(settingsPath, 'evidence.txt'), 'do not delete', 'utf8');
+
+    const result = loadSettings(settingsPath, new Date('2026-07-29T12:45:00Z'));
+    expect(result.recovered).toBe(true);
+    const evidence = readdirSync(root).find((name) => name.startsWith('settings.json.corrupt-settings-'));
+    expect(evidence).toBeTruthy();
+    expect(readFileSync(join(root, evidence!, 'evidence.txt'), 'utf8')).toBe('do not delete');
+    expect(existsSync(settingsPath)).toBe(false);
   });
 
   it('saves normalized settings atomically and allows opacity below 0.2', () => {
@@ -81,6 +130,9 @@ describe('settings store', () => {
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');
     expect(result.settings.codexSortMode).toBe('highestAverageLeft');
     expect(result.settings.onboardingComplete).toBe(true);
+    const backups = listSettingsBackups(settingsPath);
+    expect(backups).toHaveLength(1);
+    expect(JSON.parse(readFileSync(backups[0], 'utf8')).version).toBe(1);
   });
 
   it('previews an export, warns on machine startup changes, and rejects oversized input', () => {
@@ -108,6 +160,29 @@ describe('settings store', () => {
     applyImportedSettings(imported, settingsPath, new Date('2026-07-11T01:00:00Z'));
     expect(loadSettings(settingsPath).settings.passiveOpacity).toBe(0.9);
     expect(rollbackLatestSettings(settingsPath)?.passiveOpacity).toBe(0.4);
+  });
+
+  it('quarantines a corrupt newest backup and restores the next verified backup', () => {
+    const root = makeTempDir();
+    const settingsPath = join(root, 'settings.json');
+    const initial = createDefaultSettings();
+    initial.passiveOpacity = 0.4;
+    saveSettings(initial, settingsPath);
+    const middle = createDefaultSettings();
+    middle.passiveOpacity = 0.6;
+    applyImportedSettings(middle, settingsPath, new Date('2026-07-11T01:00:00Z'));
+    const latest = createDefaultSettings();
+    latest.passiveOpacity = 0.9;
+    applyImportedSettings(latest, settingsPath, new Date('2026-07-11T02:00:00Z'));
+    const newestBackup = listSettingsBackups(settingsPath)[0];
+    writeFileSync(newestBackup, '{corrupt-backup', 'utf8');
+
+    expect(rollbackLatestSettings(settingsPath)?.passiveOpacity).toBe(0.4);
+    expect(loadSettings(settingsPath).settings.passiveOpacity).toBe(0.4);
+    const evidence = readdirSync(join(root, 'backups'))
+      .find((name) => name.includes('corrupt-backup'));
+    expect(evidence).toBeTruthy();
+    expect(readFileSync(join(root, 'backups', evidence!), 'utf8')).toBe('{corrupt-backup');
   });
 });
 

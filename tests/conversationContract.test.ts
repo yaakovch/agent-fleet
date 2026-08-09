@@ -58,4 +58,51 @@ describe('canonical conversation v2 contract', () => {
       error: { code: 'large', message: 'x'.repeat(256 * 1024) }
     }))).toBeNull();
   });
+
+  it('rejects ambiguous identities and answer references', () => {
+    const baseline = JSON.parse(fixture('conversation-structured-work-v2.json'));
+
+    const duplicateItems = structuredClone(baseline);
+    duplicateItems.items.push({ ...duplicateItems.items[0], title: 'Conflicting board' });
+
+    const duplicateChoices = structuredClone(baseline);
+    duplicateChoices.items[2].choices = [
+      { id: 'approve', label: 'Approve' },
+      { id: 'approve', label: 'Different label' }
+    ];
+
+    const duplicateQuestions = structuredClone(baseline);
+    duplicateQuestions.items[2].questions.push({
+      ...duplicateQuestions.items[2].questions[0], prompt: 'Different prompt'
+    });
+
+    const duplicateOptions = structuredClone(baseline);
+    duplicateOptions.items[2].questions[0].options.push({
+      ...duplicateOptions.items[2].questions[0].options[0], label: 'Different label'
+    });
+
+    const duplicateTasks = structuredClone(baseline);
+    duplicateTasks.items[0].tasks.push({ ...duplicateTasks.items[0].tasks[0], title: 'Different task' });
+
+    const invalidAnswer = structuredClone(baseline);
+    invalidAnswer.items[2].answers = [{
+      questionId: invalidAnswer.items[2].questions[0].id,
+      choiceIds: ['unknown-option'],
+      text: ''
+    }];
+
+    const duplicateAnswers = structuredClone(baseline);
+    const questionId = duplicateAnswers.items[2].questions[0].id;
+    duplicateAnswers.items[2].answers = [
+      { questionId, choiceIds: [], text: 'First' },
+      { questionId, choiceIds: [], text: 'Second' }
+    ];
+
+    for (const candidate of [
+      duplicateItems, duplicateChoices, duplicateQuestions, duplicateOptions,
+      duplicateTasks, invalidAnswer, duplicateAnswers
+    ]) {
+      expect(parseConversationFrame(JSON.stringify(candidate))).toBeNull();
+    }
+  });
 });

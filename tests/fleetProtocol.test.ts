@@ -49,9 +49,58 @@ describe('fleet protocol v1', () => {
     inconsistent.sessions[0].executionTargetId = 'windows';
     expect(() => parseBridgeFleetSnapshot(inconsistent)).toThrow(/backend and execution target differ/i);
 
+    const collidingNamespace = JSON.parse(readFileSync(identityFixturePath, 'utf8'));
+    collidingNamespace.physicalHosts.push({
+      ...collidingNamespace.physicalHosts[0],
+      id: collidingNamespace.physicalHosts[0].legacyHostIds[0],
+      legacyHostIds: ['other-legacy-host']
+    });
+    expect(() => parseBridgeFleetSnapshot(collidingNamespace)).toThrow(/collides with another host legacy alias/i);
+
     const changedEvidence = JSON.parse(readFileSync(identityFixturePath, 'utf8'));
     changedEvidence.endpoints[0].identityState = 'reverify-required';
     expect(parseBridgeFleetSnapshot(changedEvidence).endpoints[0]?.identityState).toBe('reverify-required');
+  });
+
+  it('rejects duplicate schedule, attention, and pairing resource identities', () => {
+    const duplicateSchedule = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    duplicateSchedule.schedules.push({ ...duplicateSchedule.schedules[0], status: 'delivered' });
+    expect(() => parseBridgeFleetSnapshot(duplicateSchedule)).toThrow(/schedules contain a duplicate id/i);
+
+    const duplicateAttention = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const attention = {
+      id: 'limit-duplicate', hostId: duplicateAttention.hosts[0].id, kind: 'hard-limit',
+      sessionId: duplicateAttention.sessions[0].id, agent: 'codex', resetAt: null,
+      state: 'detected', detectedAt: '2026-07-12T05:00:00Z', updatedAt: '2026-07-12T05:00:00Z'
+    };
+    duplicateAttention.attention = [attention, { ...attention, state: 'resolved' }];
+    expect(() => parseBridgeFleetSnapshot(duplicateAttention)).toThrow(/attention items contain a duplicate id/i);
+
+    const duplicatePairing = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const pairingRequest = {
+      id: 'pair-duplicate', deviceName: 'phone', platform: 'termux', peer: 'phone.tailnet.ts.net',
+      requestedAt: '2026-07-12T04:00:00Z', expiresAt: '2026-07-12T04:10:00Z', status: 'awaiting-review'
+    };
+    duplicatePairing.pairingRequests = [pairingRequest, { ...pairingRequest, deviceName: 'other phone' }];
+    expect(() => parseBridgeFleetSnapshot(duplicatePairing)).toThrow(/pairing requests contain a duplicate id/i);
+
+    const duplicateLimit = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const limit = {
+      id: 'test-host:codex:default', hostId: duplicateLimit.hosts[0].id, provider: 'codex',
+      profileAlias: 'Codex', status: 'ready', primary: null, secondary: null,
+      updatedAt: '2026-07-12T04:00:00Z'
+    };
+    duplicateLimit.limits = [limit, { ...limit, profileAlias: 'Other profile' }];
+    expect(() => parseBridgeFleetSnapshot(duplicateLimit)).toThrow(/limits contain a duplicate id/i);
+
+    const duplicatePreset = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    const preset = {
+      id: 'favorite-duplicate', name: 'Demo Codex', hostId: duplicatePreset.hosts[0].id,
+      project: duplicatePreset.sessions[0].project, backend: duplicatePreset.sessions[0].backend,
+      tool: duplicatePreset.sessions[0].tool, profileAlias: ''
+    };
+    duplicatePreset.presets = [preset, { ...preset, name: 'Other preset' }];
+    expect(() => parseBridgeFleetSnapshot(duplicatePreset)).toThrow(/presets contain a duplicate id/i);
   });
 
   it('accepts negotiated smart titles but still rejects unnegotiated titles and prompt fields', () => {
@@ -163,6 +212,10 @@ describe('fleet protocol v1', () => {
     expect(() => parseFleetRepositoryPage({ ...page, entries: [{ ...page.entries[1], size: null }] })).toThrow(/size/i);
     expect(() => parseFleetRepositoryPage({ ...page, entries: [{ ...page.entries[1], prompt: 'secret' }] })).toThrow(/fields/i);
     expect(() => parseFleetRepositoryPage({ ...page, relativePath: '../secret' })).toThrow(/invalid/i);
+    expect(() => parseFleetRepositoryPage({
+      ...page,
+      entries: [page.entries[0], { ...page.entries[0], name: 'conflicting-name' }]
+    })).toThrow(/duplicate path/i);
   });
 
   it('parses strict resource-revisioned session model state', () => {
@@ -185,5 +238,25 @@ describe('fleet protocol v1', () => {
     expect(() => parseFleetModelControlState({
       ...payload, catalog: { ...payload.catalog, models: [{ ...payload.catalog.models[0], id: 'bad model; echo secret' }] }
     })).toThrow(/model id/i);
+    expect(() => parseFleetModelControlState({
+      ...payload,
+      catalog: {
+        ...payload.catalog,
+        models: [payload.catalog.models[0], { ...payload.catalog.models[0], label: 'Conflicting model' }]
+      }
+    })).toThrow(/duplicate model id/i);
+    expect(() => parseFleetModelControlState({
+      ...payload,
+      catalog: {
+        ...payload.catalog,
+        models: [{
+          ...payload.catalog.models[0],
+          efforts: [
+            payload.catalog.models[0].efforts[0],
+            { ...payload.catalog.models[0].efforts[0], label: 'Conflicting effort' }
+          ]
+        }]
+      }
+    })).toThrow(/duplicate effort id/i);
   });
 });

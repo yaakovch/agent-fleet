@@ -41,6 +41,8 @@ export class LimitStateManager extends EventEmitter {
   private readonly saveCache: (snapshots: readonly ProviderLimitSnapshot[]) => void;
   private codexProviders: Partial<Record<CodexProfileId, ProviderLimitSnapshot>> = {};
   private claudeProvider: ProviderLimitSnapshot;
+  private settingsGeneration = 0;
+  private started = false;
   private refreshing = false;
   private codexRefreshPromise: Promise<void> | null = null;
   private codexTimer: NodeJS.Timeout | null = null;
@@ -64,6 +66,8 @@ export class LimitStateManager extends EventEmitter {
   }
 
   start(): void {
+    if (this.started) return;
+    this.started = true;
     void this.refreshAll();
     this.codexTimer = setInterval(() => void this.refreshCodex(), CODEX_REFRESH_MS);
     this.claudeTimer = setInterval(() => {
@@ -73,6 +77,7 @@ export class LimitStateManager extends EventEmitter {
   }
 
   stop(): void {
+    this.started = false;
     if (this.codexTimer) clearInterval(this.codexTimer);
     if (this.claudeTimer) clearInterval(this.claudeTimer);
     this.codexTimer = null;
@@ -81,7 +86,10 @@ export class LimitStateManager extends EventEmitter {
 
   getState(): CombinedLimitState {
     const providers = sortProviderSnapshots([
-      ...this.profiles.map((profile) => withFreshness(this.codexProviders[profile.id]!)),
+      ...this.profiles.map((profile) => withFreshness(
+        this.codexProviders[profile.id]
+          ?? emptyProvider(profile.id, 'codex', profile.label, 'WSL Codex collector has not run yet')
+      )),
       ...(this.claudeEnabled ? [withFreshness(this.claudeProvider)] : [])
     ], this.profiles.map((profile) => profile.id), this.codexSortMode);
     return {
@@ -118,6 +126,7 @@ export class LimitStateManager extends EventEmitter {
   }
 
   applySettings(settings: WidgetSettings, settingsDiagnostic?: string): void {
+    this.settingsGeneration += 1;
     this.profiles = codexProfilesFromSettings(settings);
     this.codexSortMode = settings.codexSortMode;
     this.claudeEnabled = settings.claudeEnabled;
@@ -130,31 +139,43 @@ export class LimitStateManager extends EventEmitter {
   }
 
   private async performCodexRefresh(): Promise<void> {
-    const nextProviders: Partial<Record<CodexProfileId, ProviderLimitSnapshot>> = {};
-    for (const profile of this.profiles) {
-      let result: ProviderLimitSnapshot;
-      try {
-        result = await this.collectCodexProfile(profile);
-      } catch (error) {
-        result = {
-          id: profile.id,
-          provider: 'codex',
-          label: profile.label,
-          status: 'error',
-          source: 'WSL Codex app-server',
-          fetchedAt: null,
-          message: error instanceof Error ? error.message : String(error),
-          windows: {}
-        };
+    while (true) {
+      const generation = this.settingsGeneration;
+      const profiles = this.profiles;
+      const previousProviders = this.codexProviders;
+      const nextProviders: Partial<Record<CodexProfileId, ProviderLimitSnapshot>> = {};
+      const nextSnapshots: ProviderLimitSnapshot[] = [];
+      for (const profile of profiles) {
+        let result: ProviderLimitSnapshot;
+        try {
+          result = await this.collectCodexProfile(profile);
+        } catch (error) {
+          result = {
+            id: profile.id,
+            provider: 'codex',
+            label: profile.label,
+            status: 'error',
+            source: 'WSL Codex app-server',
+            fetchedAt: null,
+            message: error instanceof Error ? error.message : String(error),
+            windows: {}
+          };
+        }
+        if (generation !== this.settingsGeneration) break;
+        const snapshot = mergeCodexResult(result, previousProviders[profile.id]);
+        nextProviders[profile.id] = snapshot;
+        nextSnapshots.push(snapshot);
       }
-      nextProviders[profile.id] = mergeCodexResult(result, this.codexProviders[profile.id]);
-    }
 
-    this.codexProviders = nextProviders;
-    try {
-      this.saveCache(this.profiles.map((profile) => nextProviders[profile.id]!));
-    } catch (error) {
-      console.error('Could not save Codex profile cache:', error);
+      if (generation !== this.settingsGeneration) continue;
+
+      this.codexProviders = nextProviders;
+      try {
+        this.saveCache(nextSnapshots);
+      } catch (error) {
+        console.error('Could not save Codex profile cache:', error);
+      }
+      return;
     }
   }
 

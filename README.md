@@ -53,15 +53,23 @@ npm run dev
 Verification and packaging:
 
 ```powershell
-npm run lint
-npm test
-npm run build
-npm run package:dir
+npm run quality
+npm run package:dir:built
 npm run smoke:packaged
-npm run package
+npm run package:built
 npm run sbom
 npm run finalize:release
 ```
+
+`npm run quality` is the canonical local and CI gate. It validates project and
+license metadata, verifies that third-party workflow actions are pinned to
+immutable commits, verifies the embedded WSL runtime, blocks high or critical
+findings in shipped dependencies and critical findings in development tooling,
+type-checks, runs every test, and creates the production application build.
+Packaging and packaged smoke checks require Windows and remain explicit
+acceptance steps. The `:built` package commands reuse a successful quality-gate
+build; `npm run package` and `npm run package:dir` remain self-contained
+alternatives.
 
 Artifacts are written to `dist/`. Local and private-beta builds may be
 unsigned. Stable public releases require Authenticode signing.

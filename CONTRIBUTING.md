@@ -2,7 +2,18 @@
 
 ## Local Checks
 
-Run `npm ci`, `npm run lint`, `npm test`, `npm run build`, `npm run package:dir`, and `npm run smoke:packaged` before opening a pull request.
+Run `npm ci` and `npm run quality` before opening a pull request. This is the
+same source-quality gate CI runs. On Windows, also run
+`npm run package:dir:built` and `npm run smoke:packaged` for changes that can
+affect packaging, startup, the embedded runtime, or terminal behavior. The
+`:built` command reuses the quality gate's production build; use
+`npm run package:dir` when packaging without running that gate first.
+
+The quality gate blocks high or critical vulnerabilities in shipped
+dependencies and critical vulnerabilities anywhere in the complete dependency
+graph. `npm run audit:release` raises that complete-graph gate to high severity
+for releases. Findings in build-only tooling require the same reviewed,
+time-bounded exception process as runtime findings.
 
 Keep provider authentication outside this repository. Tests and documentation must use generic users and paths such as `/home/testuser`.
 

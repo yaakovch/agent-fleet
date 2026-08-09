@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "alerts": {
+    "categories": [
+      {
+        "id": "hardLimits",
+        "sources": ["attention.hard-limit"],
+        "target": "session-or-dashboard"
+      },
+      {
+        "id": "deliveryFailures",
+        "sources": ["schedule.failed", "schedule.interrupted"],
+        "target": "session-or-dashboard"
+      },
+      {
+        "id": "deliverySuccess",
+        "sources": ["schedule.delivered"],
+        "target": "session-or-dashboard"
+      },
+      {
+        "id": "hostState",
+        "sources": ["host.offline", "host.recovered"],
+        "target": "host-or-dashboard"
+      },
+      {
+        "id": "versionDrift",
+        "sources": ["host-runtime.mismatch-verified-expected"],
+        "target": "host-or-dashboard"
+      },
+      {
+        "id": "pairing",
+        "sources": ["pairing.awaiting-review"],
+        "target": "pairing-review"
+      }
+    ],
+    "pause": {
+      "durationSeconds": 3600,
+      "initialBaseline": "consume-without-delivery",
+      "whilePaused": "consume-without-delivery",
+      "onResume": "new-transitions-only"
+    },
+    "transitions": {
+      "unchangedResource": "consume-once",
+      "resolvedResource": "prune",
+      "sameIdRecurrence": "deliver-again"
+    },
+    "bounds": {
+      "hostStates": 256,
+      "scheduleStates": 500,
+      "attentionIds": 500,
+      "pairingRequestStates": 256,
+      "deliveriesPerUpdate": 16,
+      "concreteDeliveriesBeforeSummary": 15
+    },
+    "platforms": {
+      "windows": {
+        "observation": "foreground-and-background",
+        "delivery": "system-notification"
+      },
+      "android": {
+        "observation": "foreground-only",
+        "delivery": "in-app",
+        "notificationPermission": "explicit-user-action-only"
+      }
+    }
+  },
+  "externalLinks": {
+    "maxCharacters": 2048,
+    "lengthMetric": "utf16-code-units",
+    "automaticSchemes": ["http", "https"],
+    "blockedSchemes": [
+      "about",
+      "android-app",
+      "blob",
+      "cmd",
+      "content",
+      "data",
+      "file",
+      "intent",
+      "javascript",
+      "ms-appinstaller",
+      "ms-msdt",
+      "ms-settings",
+      "package",
+      "powershell",
+      "shell",
+      "ssh",
+      "termux",
+      "wtmux"
+    ],
+    "otherRegisteredSchemes": "confirm-every-time",
+    "cases": [
+      {
+        "id": "https-web",
+        "value": "https://example.com/docs?q=agent-fleet",
+        "decision": "open",
+        "scheme": "https"
+      },
+      {
+        "id": "http-web",
+        "value": "http://example.com/status",
+        "decision": "open",
+        "scheme": "http"
+      },
+      {
+        "id": "ipv6-web",
+        "value": "https://[::1]:8443/status",
+        "decision": "open",
+        "scheme": "https"
+      },
+      {
+        "id": "encoded-web-path",
+        "value": "https://example.com/a%20b",
+        "decision": "open",
+        "scheme": "https"
+      },
+      {
+        "id": "mailto-confirm",
+        "value": "mailto:team@example.com",
+        "decision": "confirm",
+        "scheme": "mailto"
+      },
+      {
+        "id": "custom-confirm",
+        "value": "web+fleet://status/healthy",
+        "decision": "confirm",
+        "scheme": "web+fleet"
+      },
+      {
+        "id": "embedded-credentials",
+        "value": "https://user:example@example.com/private",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "unicode-web-host",
+        "value": "https://éxample.com/status",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "underscore-web-host",
+        "value": "https://exa_mple.com/status",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "encoded-web-host",
+        "value": "https://%65xample.com/status",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "out-of-range-web-port",
+        "value": "https://example.com:99999/status",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "non-numeric-web-port",
+        "value": "https://example.com:bad/status",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "malformed-percent-escape",
+        "value": "https://example.com/a%zzb",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "script-scheme",
+        "value": "javascript:alert(1)",
+        "decision": "block",
+        "scheme": "javascript"
+      },
+      {
+        "id": "data-scheme",
+        "value": "data:text/html,example",
+        "decision": "block",
+        "scheme": "data"
+      },
+      {
+        "id": "local-file",
+        "value": "file:///private/example.txt",
+        "decision": "block",
+        "scheme": "file"
+      },
+      {
+        "id": "pairing-control",
+        "value": "wtmux://pair",
+        "decision": "block",
+        "scheme": "wtmux"
+      },
+      {
+        "id": "execution-scheme",
+        "value": "ssh://example.com",
+        "decision": "block",
+        "scheme": "ssh"
+      },
+      {
+        "id": "internal-browser-scheme",
+        "value": "about:blank",
+        "decision": "block",
+        "scheme": "about"
+      },
+      {
+        "id": "missing-scheme",
+        "value": "/private/example.txt",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "windows-local-path",
+        "value": "C:\\Users\\example\\private.txt",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "windows-drive-relative-path",
+        "value": "C:private.txt",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "unc-local-path",
+        "value": "\\\\server\\share\\private.txt",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "control-character",
+        "value": "https://example.com/line\nbreak",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "c1-control-character",
+        "value": "https://example.com/a\u0080b",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "interior-ascii-whitespace",
+        "value": "https://example.com/a b",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "interior-non-breaking-space",
+        "value": "https://example.com/a\u00a0b",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "interior-zero-width-no-break-space",
+        "value": "https://example.com/a\ufeffb",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "unpaired-surrogate",
+        "value": "https://example.com/a\ud800b",
+        "decision": "block",
+        "scheme": ""
+      },
+      {
+        "id": "missing-web-host",
+        "value": "https:///private/example.txt",
+        "decision": "block",
+        "scheme": "https"
+      },
+      {
+        "id": "backslash-confusion",
+        "value": "https://example.com\\@other.example",
+        "decision": "block",
+        "scheme": ""
+      }
+    ]
+  }
+}

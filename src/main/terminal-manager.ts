@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import * as nodePty from 'node-pty';
 import type { Logger } from 'electron-log';
 import { sessionIdentityPresentation, type FleetSession } from '../shared/fleet';
@@ -40,12 +39,26 @@ import {
   type WorkspaceRailState
 } from '../shared/workspace-layout';
 import { buildFleetWslAttachCommand, resolveWslExecutable, WindowsExecutableError } from './fleet-terminal';
-import type { WslProcessOwnership } from './wsl-process-ownership';
+import { wslProcessOwner, type WslProcessOwnership } from './wsl-process-ownership';
+import {
+  ConcurrentFileModificationError,
+  durableAtomicWrite,
+  quarantineFile,
+  quarantinePath,
+  quarantineUnreadablePath,
+  readFileSnapshot,
+  readOptionalFileSnapshot,
+  readPathIdentity,
+  withCrossProcessLock,
+  type FileSnapshot,
+  type PathIdentity
+} from './durable-file';
 
 const MAX_TABS = 4;
 const MAX_INPUT_CHARS = 64 * 1024;
 const MAX_OUTPUT_CHARS = 64 * 1024;
 const MAX_PENDING_OUTPUT_CHARS = 1024 * 1024;
+const MAX_WORKSPACE_STATE_BYTES = 2 * 1024 * 1024;
 const RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000] as const;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,320}$/u;
 const SAFE_SESSION = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -466,6 +479,7 @@ export class TerminalManager {
       label: sessionIdentityPresentation(session).primary
     }, this.options.getDistro());
     const generation = ++tab.generation;
+    let spawnedProcess: PtyProcess | null = null;
     try {
       const executable = this.options.resolveWslExecutable?.() ?? resolveWslExecutable();
       const spawn = this.options.spawnPty ?? ((command, args, options) => nodePty.spawn(command, args, options));
@@ -476,8 +490,15 @@ export class TerminalManager {
         cwd: processCwd(),
         env: terminalEnvironment()
       });
+      spawnedProcess = process;
+      try {
+        this.options.processOwnership?.own(wslProcessOwner('terminal', tab.descriptor.id), process);
+      } catch (error) {
+        try { process.kill(); } catch { /* the failed registration still owns cleanup */ }
+        spawnedProcess = null;
+        throw error;
+      }
       tab.process = process;
-      this.options.processOwnership?.own(`terminal:${tab.descriptor.id}`, process);
       tab.reconnectIndex = 0;
       tab.descriptor.status = 'live';
       tab.descriptor.statusMessage = 'Live';
@@ -503,6 +524,13 @@ export class TerminalManager {
       this.persist();
       this.options.logger.info('Embedded terminal connected', tab.descriptor.id, tab.descriptor.sessionId);
     } catch (error) {
+      if (spawnedProcess && tab.process === spawnedProcess) {
+        tab.process = null;
+        tab.generation += 1;
+        if (!this.options.processOwnership?.release(spawnedProcess, 'protocol_failure')) {
+          try { spawnedProcess.kill(); } catch { /* process already exited */ }
+        }
+      }
       const failure = terminalFailure(error);
       tab.descriptor.status = 'unavailable';
       tab.descriptor.statusMessage = failure.message;
@@ -621,53 +649,158 @@ function persistedDescriptor(tab: TerminalTabDescriptor): TerminalTabDescriptor 
 export function readWorkspaceState(
   path: string,
   legacyPath?: string,
-  ids: WorkspaceIds = { pane: () => `pane-${randomUUID()}`, split: () => `split-${randomUUID()}` }
+  ids: WorkspaceIds = { pane: () => `pane-${randomUUID()}`, split: () => `split-${randomUUID()}` },
+  now = new Date()
 ): TerminalWorkspaceState {
-  const candidate = existsSync(path) ? path : legacyPath && existsSync(legacyPath) ? legacyPath : '';
-  if (!candidate) return { version: 2, layout: emptyWorkspaceLayout(ids), rail: defaultRailState(), tabs: [] };
-  try {
-    const raw = JSON.parse(readFileSync(candidate, 'utf8')) as unknown;
-    if (!raw || typeof raw !== 'object') throw new Error('state is not an object');
-    const value = raw as Record<string, unknown>;
-    const tabs = Array.isArray(value.tabs) ? value.tabs.map(parseDescriptor).filter((tab): tab is TerminalTabDescriptor => Boolean(tab)) : [];
-    if (value.version === 2) {
-      let layout = normalizeWorkspaceLayout(value.layout, ids);
-      for (const pane of workspacePanes(layout)) {
-        const tab = tabs.find((item) => item.sessionId === pane.sessionId);
-        if (tab) layout = setWorkspacePaneView(layout, pane.id, viewModeForTool(tab.tool, pane.viewMode));
-      }
-      const assigned = new Set(workspacePanes(layout).map((pane) => pane.sessionId).filter((id): id is string => Boolean(id)));
-      return {
-        version: 2,
-        layout,
-        rail: normalizeRailState(value.rail),
-        tabs: tabs.filter((tab) => assigned.has(tab.sessionId)).slice(0, MAX_TABS)
-      };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const candidate = existsSync(path) ? path : legacyPath && existsSync(legacyPath) ? legacyPath : '';
+    if (!candidate) return emptyWorkspaceState(ids);
+    let snapshot: FileSnapshot;
+    try {
+      snapshot = readFileSnapshot(candidate, MAX_WORKSPACE_STATE_BYTES);
+    } catch (error) {
+      if (error instanceof ConcurrentFileModificationError) continue;
+      const observed = observedWorkspacePathIdentity(candidate);
+      if (!observed) continue;
+      const quarantined = withCrossProcessLock(candidate, () =>
+        quarantineUnreadablePath(
+          candidate,
+          observed,
+          MAX_WORKSPACE_STATE_BYTES,
+          'corrupt-workspace',
+          now
+        ));
+      if (!quarantined) continue;
+      return emptyWorkspaceState(ids);
     }
-    const selectedTabId = typeof value.selectedTabId === 'string' && tabs.some((tab) => tab.id === value.selectedTabId)
-      ? value.selectedTabId : tabs.at(-1)?.id ?? '';
-    const legacy: TerminalWorkspaceStateV1 = { version: 1, selectedTabId, tabs };
-    const selected = legacy.tabs.find((tab) => tab.id === legacy.selectedTabId);
-    let layout = emptyWorkspaceLayout(ids);
-    if (selected) {
-      layout = assignWorkspaceSession(layout, layout.focusedPaneId, selected.sessionId);
-      layout = setWorkspacePaneView(layout, layout.focusedPaneId, selected.viewMode);
+    try {
+      return parseWorkspaceSnapshot(snapshot, ids);
+    } catch {
+      const quarantined = withCrossProcessLock(candidate, () =>
+        quarantineFile(candidate, snapshot, 'corrupt-workspace', now));
+      if (!quarantined) continue;
+      return emptyWorkspaceState(ids);
     }
-    return { version: 2, layout, rail: defaultRailState(), tabs: selected ? [selected] : [] };
-  } catch {
-    return { version: 2, layout: emptyWorkspaceLayout(ids), rail: defaultRailState(), tabs: [] };
   }
+  throw new ConcurrentFileModificationError(path);
+}
+
+function parseWorkspaceSnapshot(snapshot: FileSnapshot, ids: WorkspaceIds): TerminalWorkspaceState {
+  const raw = JSON.parse(snapshot.data.toString('utf8')) as unknown;
+  if (!raw || typeof raw !== 'object') throw new Error('state is not an object');
+  const value = raw as Record<string, unknown>;
+  if (!Array.isArray(value.tabs)) throw new Error('workspace tabs are invalid');
+  const parsedTabs = value.tabs.map(parseDescriptor);
+  if (parsedTabs.some((tab) => !tab)) throw new Error('workspace contains an invalid tab');
+  const tabs = parsedTabs as TerminalTabDescriptor[];
+  if (value.version === 2) {
+    assertExactFields(value, ['version', 'layout', 'rail', 'tabs'], 'workspace state');
+    assertValidWorkspaceLayout(value.layout);
+    assertValidRailState(value.rail);
+    let layout = normalizeWorkspaceLayout(value.layout, ids);
+    for (const pane of workspacePanes(layout)) {
+      const tab = tabs.find((item) => item.sessionId === pane.sessionId);
+      if (tab) layout = setWorkspacePaneView(layout, pane.id, viewModeForTool(tab.tool, pane.viewMode));
+    }
+    const assigned = new Set(workspacePanes(layout).map((pane) => pane.sessionId).filter((id): id is string => Boolean(id)));
+    return {
+      version: 2,
+      layout,
+      rail: normalizeRailState(value.rail),
+      tabs: tabs.filter((tab) => assigned.has(tab.sessionId)).slice(0, MAX_TABS)
+    };
+  }
+  if (value.version !== 1) throw new Error('workspace version is unsupported');
+  const selectedTabId = typeof value.selectedTabId === 'string' && tabs.some((tab) => tab.id === value.selectedTabId)
+    ? value.selectedTabId : tabs.at(-1)?.id ?? '';
+  const legacy: TerminalWorkspaceStateV1 = { version: 1, selectedTabId, tabs };
+  const selected = legacy.tabs.find((tab) => tab.id === legacy.selectedTabId);
+  let layout = emptyWorkspaceLayout(ids);
+  if (selected) {
+    layout = assignWorkspaceSession(layout, layout.focusedPaneId, selected.sessionId);
+    layout = setWorkspacePaneView(layout, layout.focusedPaneId, selected.viewMode);
+  }
+  return { version: 2, layout, rail: defaultRailState(), tabs: selected ? [selected] : [] };
+}
+
+function observedWorkspacePathIdentity(path: string): PathIdentity | null {
+  try {
+    return readPathIdentity(path);
+  } catch {
+    return null;
+  }
+}
+
+function assertValidWorkspaceLayout(input: unknown): void {
+  const fallbackId = '!invalid-workspace-layout';
+  const parsed = normalizeWorkspaceLayout(input, { pane: () => fallbackId, split: () => fallbackId });
+  if (parsed.root.id === fallbackId) throw new Error('workspace layout is invalid');
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.focusedPaneId !== 'string'
+    || !workspacePanes(parsed).some((pane) => pane.id === raw.focusedPaneId)
+    || !Array.isArray(raw.sessionMru) || raw.sessionMru.length > 64
+    || raw.sessionMru.some((item) => typeof item !== 'string' || !SAFE_ID.test(item))
+    || new Set(raw.sessionMru).size !== raw.sessionMru.length) {
+    throw new Error('workspace layout focus or history is invalid');
+  }
+}
+
+function assertValidRailState(input: unknown): void {
+  if (!input || typeof input !== 'object') throw new Error('workspace rail is invalid');
+  const raw = input as Record<string, unknown>;
+  assertExactFields(raw, [
+    'width', 'collapsed', 'status', 'hostIds', 'tools', 'showIdle', 'hiddenUnavailableSessionIds'
+  ], 'workspace rail');
+  if (typeof raw.width !== 'number' || !Number.isFinite(raw.width)
+    || raw.width < 180 || raw.width > 360 || typeof raw.collapsed !== 'boolean'
+    || !['all', 'active', 'waiting', 'favorites'].includes(String(raw.status))
+    || typeof raw.showIdle !== 'boolean'
+    || !validUniqueIdArray(raw.hostIds, 32)
+    || !validUniqueIdArray(raw.hiddenUnavailableSessionIds, 64)
+    || !Array.isArray(raw.tools) || raw.tools.length > 4
+    || raw.tools.some((tool) => !['shell', 'codex', 'claude', 'copilot'].includes(String(tool)))
+    || new Set(raw.tools).size !== raw.tools.length) {
+    throw new Error('workspace rail is invalid');
+  }
+}
+
+function validUniqueIdArray(value: unknown, max: number): boolean {
+  return Array.isArray(value) && value.length <= max
+    && value.every((item) => typeof item === 'string' && SAFE_ID.test(item))
+    && new Set(value).size === value.length;
+}
+
+function assertExactFields(value: Record<string, unknown>, expected: string[], label: string): void {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((item, index) => item !== wanted[index])) {
+    throw new Error(`${label} fields are invalid`);
+  }
+}
+
+function emptyWorkspaceState(ids: WorkspaceIds): TerminalWorkspaceState {
+  return { version: 2, layout: emptyWorkspaceLayout(ids), rail: defaultRailState(), tabs: [] };
 }
 
 function parseDescriptor(value: unknown): TerminalTabDescriptor | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
+  try {
+    assertExactFields(raw, [
+      'id', 'sessionId', 'hostId', 'project', 'internalName', 'label',
+      'tool', 'backend', 'viewMode', 'status', 'statusMessage'
+    ], 'workspace tab');
+  } catch {
+    return null;
+  }
   if (![raw.id, raw.sessionId, raw.hostId].every((item) => typeof item === 'string' && SAFE_ID.test(item))) return null;
   if (typeof raw.internalName !== 'string' || !SAFE_SESSION.test(raw.internalName)) return null;
   if (![raw.project, raw.label].every((item) => typeof item === 'string' && item.length > 0 && item.length <= 256
     && !/[\u0000-\u001f\u007f]/u.test(item))) return null;
   if (!['codex', 'claude', 'copilot', 'shell'].includes(String(raw.tool))) return null;
   if (raw.backend !== 'linux' && raw.backend !== 'windows') return null;
+  if (raw.viewMode !== 'native' && raw.viewMode !== 'terminal') return null;
+  if (typeof raw.status !== 'string' || typeof raw.statusMessage !== 'string') return null;
   return {
     id: raw.id as string,
     sessionId: raw.sessionId as string,
@@ -691,10 +824,33 @@ function viewModeForTool(tool: TerminalTabDescriptor['tool'], requested: Session
 }
 
 function writeWorkspaceState(path: string, state: TerminalWorkspaceState): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  renameSync(temporary, path);
+  withCrossProcessLock(path, () => {
+    let current: FileSnapshot | null;
+    try {
+      current = readOptionalFileSnapshot(path, MAX_WORKSPACE_STATE_BYTES);
+    } catch {
+      const quarantined = quarantinePath(path, 'corrupt-workspace');
+      if (!quarantined) throw new ConcurrentFileModificationError(path);
+      current = null;
+    }
+    if (current) {
+      try {
+        parseWorkspaceSnapshot(current, {
+          pane: () => `validation-pane-${randomUUID()}`,
+          split: () => `validation-split-${randomUUID()}`
+        });
+      } catch {
+        const quarantined = quarantineFile(path, current, 'corrupt-workspace');
+        if (!quarantined) throw new ConcurrentFileModificationError(path);
+        current = null;
+      }
+    }
+    durableAtomicWrite(path, `${JSON.stringify(state, null, 2)}\n`, {
+      expected: current,
+      checkExpected: true,
+      mode: 0o600
+    });
+  });
 }
 
 function terminalEnvironment(): Record<string, string> {

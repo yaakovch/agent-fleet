@@ -26,6 +26,8 @@
     "file": "wtmux-runtime-git-4837665.tar",
     "sha256": "bbdaebe8c53d192f955f31951fa1646917ee0d0bc16e6699660a4a72f7778283",
     "size": 1617920,
+    "formatVersion": 2,
+    "manifestSha256": "55aa4b369aca3a79626926d032efbd49a004124bcf05d7299526d611263f40b0",
     "sbomSha256": "6b9a2994b828adef6184fd57fbc883765a90ba9287ce03ee116dfcb0bcae69ec",
     "licenseSha256": "310e11bdb197359d572065bce79cffcc2d37e43024bc00e64d417d32d859ac0d"
   },
@@ -34,5 +36,12 @@
     "sha256": "03dd58e64da5f4ad6966d5c5fec5fe0601a2f8482ede4120f8d686261172ce2d",
     "size": 10240,
     "records": 3
-  }
+  },
+  "trustedReleaseKeys": [
+    {
+      "keyId": "ef1aa26c21be89f9ac220e41ae28a865",
+      "file": "trusted-release-key-ef1aa26c21be89f9ac220e41ae28a865.pem",
+      "sha256": "a3500746ab5f70c708741dd8f3c41b0dc66fabb7a47b43b726bceb6cf9108364"
+    }
+  ]
 }

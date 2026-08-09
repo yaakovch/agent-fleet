@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +22,31 @@ class FakePty implements PtyProcess {
 }
 
 describe('embedded terminal manager', () => {
+  it('kills a spawned PTY when ownership registration fails', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const pty = new FakePty();
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'),
+      logger: { info: vi.fn(), warn: vi.fn() },
+      getDistro: () => 'Ubuntu',
+      resolveSession: () => session,
+      onData: vi.fn(),
+      onStatus: vi.fn(),
+      onClosed: vi.fn(),
+      spawnPty: vi.fn(() => pty),
+      resolveWslExecutable: () => WINDOWS_WSL,
+      processOwnership: {
+        own: () => { throw new Error('ownership unavailable'); }
+      } as never
+    });
+
+    manager.open(session);
+    expect(pty.killed).toBe(true);
+    expect(manager.list()[0]).toMatchObject({ status: 'unavailable' });
+    expect(manager.getHealth().activePtys).toBe(0);
+    manager.dispose();
+  });
+
   it('spawns validated WSL attaches and persists descriptors without terminal content', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const statePath = join(root, 'workspace.json');
@@ -125,6 +150,67 @@ describe('embedded terminal manager', () => {
     expect(state.tabs).toHaveLength(1);
     expect(state.layout.root).toMatchObject({ kind: 'pane', id: 'migrated-pane', sessionId: session.id, viewMode: 'terminal' });
     expect(state.layout.focusedPaneId).toBe('migrated-pane');
+  });
+
+  it('quarantines corrupt workspace evidence before persisting an empty recovery state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    writeFileSync(statePath, '{broken-workspace', 'utf8');
+    const recovered = readWorkspaceState(
+      statePath,
+      undefined,
+      { pane: () => 'recovery-pane', split: () => 'recovery-split' },
+      new Date('2026-07-29T12:00:00Z')
+    );
+    expect(recovered.tabs).toEqual([]);
+    expect(existsSync(statePath)).toBe(false);
+    const evidence = readdirSync(root).find((name) => name.startsWith('workspace.json.corrupt-workspace-'));
+    expect(evidence).toBeTruthy();
+    expect(readFileSync(join(root, evidence!), 'utf8')).toBe('{broken-workspace');
+
+    const manager = makeManager(statePath).manager;
+    expect(manager.restore()).toEqual([]);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).version).toBe(2);
+    expect(readFileSync(join(root, evidence!), 'utf8')).toBe('{broken-workspace');
+    manager.dispose();
+  });
+
+  it('preserves an unsafe workspace directory and restores an empty workspace', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    mkdirSync(statePath);
+    writeFileSync(join(statePath, 'evidence.txt'), 'unexpected directory', 'utf8');
+
+    expect(readWorkspaceState(
+      statePath,
+      undefined,
+      { pane: () => 'recovery-pane', split: () => 'recovery-split' },
+      new Date('2026-07-29T13:00:00Z')
+    ).tabs).toEqual([]);
+    const evidence = readdirSync(root).find((name) => name.startsWith('workspace.json.corrupt-workspace-'));
+    expect(evidence).toBeTruthy();
+    expect(readFileSync(join(root, evidence!, 'evidence.txt'), 'utf8')).toBe('unexpected directory');
+
+    const manager = makeManager(statePath).manager;
+    expect(manager.restore()).toEqual([]);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).version).toBe(2);
+    manager.dispose();
+  });
+
+  it('does not silently normalize an invalid persisted layout into defaults', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    writeFileSync(statePath, JSON.stringify({
+      version: 2,
+      layout: { schemaVersion: 1, root: { kind: 'pane', id: '../bad', sessionId: null, viewMode: 'native' },
+        focusedPaneId: '../bad', sessionMru: [] },
+      rail: {},
+      tabs: []
+    }), 'utf8');
+
+    expect(readWorkspaceState(statePath).tabs).toEqual([]);
+    expect(existsSync(statePath)).toBe(false);
+    expect(readdirSync(root).some((name) => name.includes('corrupt-workspace'))).toBe(true);
   });
 
   it('opens shell sessions only in Terminal and repairs stale Native persistence', () => {

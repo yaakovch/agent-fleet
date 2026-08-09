@@ -76,7 +76,7 @@ export function parseConversationFrame(line: string): ConversationFrame | null {
       ['timestamp', 'providerActivity', 'providerState'])
       || !safe(input.session, 160) || !safe(input.adapter, 32) || !safe(input.mode, 32)
       || !member(input.interactionMode, ['plan', 'default', 'unknown']) || !safe(input.revision, 160)
-      || !boundedArray(input.items, 200, validConversationItem)
+      || !boundedArray(input.items, 200, validConversationItem) || !uniqueRecordField(input.items, 'id')
       || !(input.nextCursor === null || safe(input.nextCursor, 2048)) || typeof input.hasMore !== 'boolean'
       || !optionalTimestamp(input) || !optionalProviderActivity(input) || !optionalProviderState(input)) return null;
   } else if (type === 'conversation.event') {
@@ -111,14 +111,14 @@ export function parseConversationProtocolFrame(line: string): ConversationProtoc
   }
   if (input.type === 'question.response') {
     if (!shape(input, ['protocolVersion', 'type', 'timestamp', 'session', 'questionId', 'status'])
-      || !timestamp(input.timestamp) || !safe(input.session, 160) || !safe(input.questionId, 160)
+      || !timestamp(input.timestamp) || !safe(input.session, 160) || !nonEmptySafe(input.questionId, 160)
       || input.status !== 'delivered') return null;
     return input as unknown as ConversationActionResponse;
   }
   if (input.type === 'approval.response') {
     if (!shape(input, ['protocolVersion', 'type', 'timestamp', 'session', 'approvalId', 'choice', 'status'])
-      || !timestamp(input.timestamp) || !safe(input.session, 160) || !safe(input.approvalId, 160)
-      || !safe(input.choice, 32) || input.status !== 'delivered') return null;
+      || !timestamp(input.timestamp) || !safe(input.session, 160) || !nonEmptySafe(input.approvalId, 160)
+      || !nonEmptySafe(input.choice, 32) || input.status !== 'delivered') return null;
     return input as unknown as ConversationActionResponse;
   }
   return null;
@@ -129,47 +129,77 @@ function validConversationItem(input: unknown): boolean {
     ['id', 'kind', 'timestamp', 'role', 'title', 'text', 'detail', 'state', 'tool', 'attachments', 'choices'],
     ['revision', 'action', 'target', 'input', 'result', 'startedAt', 'completedAt', 'questions', 'answers',
       'presentation', 'source', 'turnId', 'taskListId', 'updateMode', 'tasks'])) return false;
-  if (!safe(input.id, 160) || typeof input.kind !== 'string' || !ITEM_KINDS.has(input.kind)
+  if (!nonEmptySafe(input.id, 160) || typeof input.kind !== 'string' || !ITEM_KINDS.has(input.kind)
     || !timestamp(input.timestamp) || !safe(input.role, 16) || !safe(input.title, 240)
     || !safe(input.text, 65_536, true) || !safe(input.detail, 131_072, true)
     || typeof input.state !== 'string' || !ITEM_STATES.has(input.state) || !safe(input.tool, 120)
     || !boundedArray(input.attachments, 16, (item) => safe(item, 512))
-    || !boundedArray(input.choices, 8, validChoice)) return false;
+    || !boundedArray(input.choices, 8, validChoice) || !uniqueRecordField(input.choices, 'id')) return false;
   if (!optionalSafe(input, 'revision', 160) || !optionalSafe(input, 'action', 32)
     || !optionalSafe(input, 'target', 160) || !optionalSafe(input, 'input', 131_072, true)
     || !optionalSafe(input, 'result', 131_072, true) || !optionalSafe(input, 'startedAt', 64)
     || !optionalSafe(input, 'completedAt', 64) || !optionalSafe(input, 'source', 64)
     || !optionalSafe(input, 'turnId', 160) || !optionalSafe(input, 'taskListId', 160)) return false;
   if ('updateMode' in input && !member(input.updateMode, ['replace', 'merge'])) return false;
-  if ('questions' in input && !boundedArray(input.questions, 8, validQuestion)) return false;
-  if ('answers' in input && !boundedArray(input.answers, 8, validAnswer)) return false;
-  if ('tasks' in input && !boundedArray(input.tasks, 64, validTask)) return false;
+  if ('questions' in input && (!boundedArray(input.questions, 8, validQuestion)
+    || !uniqueRecordField(input.questions, 'id'))) return false;
+  if ('answers' in input && (!boundedArray(input.answers, 8, validAnswer)
+    || !uniqueRecordField(input.answers, 'questionId'))) return false;
+  if ('tasks' in input && (!boundedArray(input.tasks, 64, validTask)
+    || !uniqueRecordField(input.tasks, 'id'))) return false;
+  if (!validAnswerReferences(input.questions, input.answers)) return false;
   return !('presentation' in input) || validPresentation(input.presentation);
 }
 
 function validChoice(input: unknown): boolean {
-  return record(input) && shape(input, ['id', 'label']) && safe(input.id, 64) && safe(input.label, 120);
+  return record(input) && shape(input, ['id', 'label']) && nonEmptySafe(input.id, 64) && safe(input.label, 120);
 }
 
 function validQuestion(input: unknown): boolean {
   return record(input) && shape(input, ['id', 'header', 'prompt', 'type', 'required', 'allowOther', 'options'])
-    && safe(input.id, 80) && safe(input.header, 120) && safe(input.prompt, 2_000, true)
+    && nonEmptySafe(input.id, 80) && safe(input.header, 120) && safe(input.prompt, 2_000, true)
     && member(input.type, ['single', 'multi', 'text', 'boolean'])
     && typeof input.required === 'boolean' && typeof input.allowOther === 'boolean'
     && boundedArray(input.options, 16, (candidate) => record(candidate)
-      && shape(candidate, ['id', 'label', 'description']) && safe(candidate.id, 80)
-      && safe(candidate.label, 160) && safe(candidate.description, 320, true));
+      && shape(candidate, ['id', 'label', 'description']) && nonEmptySafe(candidate.id, 80)
+      && safe(candidate.label, 160) && safe(candidate.description, 320, true))
+    && uniqueRecordField(input.options, 'id');
 }
 
 function validAnswer(input: unknown): boolean {
-  return record(input) && shape(input, ['questionId', 'choiceIds', 'text']) && safe(input.questionId, 80)
-    && boundedArray(input.choiceIds, 16, (value) => safe(value, 80)) && safe(input.text, 8_192, true);
+  return record(input) && shape(input, ['questionId', 'choiceIds', 'text']) && nonEmptySafe(input.questionId, 80)
+    && boundedArray(input.choiceIds, 16, (value) => nonEmptySafe(value, 80))
+    && uniqueStrings(input.choiceIds) && safe(input.text, 8_192, true);
 }
 
 function validTask(input: unknown): boolean {
   return record(input) && shape(input, ['id', 'title', 'activeTitle', 'detail', 'state'])
-    && safe(input.id, 160) && safe(input.title, 1_000, true) && safe(input.activeTitle, 1_000, true)
+    && nonEmptySafe(input.id, 160) && safe(input.title, 1_000, true) && safe(input.activeTitle, 1_000, true)
     && safe(input.detail, 4_000, true) && member(input.state, ['pending', 'in_progress', 'completed']);
+}
+
+function validAnswerReferences(questionsInput: unknown, answersInput: unknown): boolean {
+  if (!Array.isArray(answersInput) || answersInput.length === 0 || !Array.isArray(questionsInput)
+    || questionsInput.length === 0) return true;
+  const questions = new Map<string, Record<string, unknown>>();
+  for (const question of questionsInput) {
+    if (!record(question) || typeof question.id !== 'string') return false;
+    questions.set(question.id, question);
+  }
+  for (const answer of answersInput) {
+    if (!record(answer) || typeof answer.questionId !== 'string' || !Array.isArray(answer.choiceIds)) return false;
+    const question = questions.get(answer.questionId);
+    if (!question || !Array.isArray(question.options)) return false;
+    const allowed = new Set(question.options.flatMap((option) =>
+      record(option) && typeof option.id === 'string' ? [option.id] : []
+    ));
+    if (question.type === 'boolean' && allowed.size === 0) {
+      allowed.add('true');
+      allowed.add('false');
+    }
+    if (answer.choiceIds.some((id) => typeof id !== 'string' || !allowed.has(id))) return false;
+  }
+  return true;
 }
 
 function validPresentation(input: unknown): boolean {
@@ -233,11 +263,26 @@ function boundedArray(input: unknown, maximum: number, validate: (value: unknown
   return Array.isArray(input) && input.length <= maximum && input.every(validate);
 }
 
+function uniqueRecordField(input: unknown, field: string): boolean {
+  if (!Array.isArray(input)) return false;
+  const values = input.map((value) => record(value) ? value[field] : undefined);
+  return values.every((value) => typeof value === 'string' && value.length > 0)
+    && new Set(values).size === values.length;
+}
+
+function uniqueStrings(input: unknown): boolean {
+  return Array.isArray(input) && new Set(input).size === input.length;
+}
+
 function timestamp(input: unknown): boolean { return safe(input, 64) && input.length > 0; }
 
 function safe(input: unknown, maximum: number, multiline = false): input is string {
   return typeof input === 'string' && input.length <= maximum && !input.includes('\u0000')
     && (multiline || !/[\u0000-\u001f\u007f]/u.test(input));
+}
+
+function nonEmptySafe(input: unknown, maximum: number): input is string {
+  return safe(input, maximum) && input.length > 0;
 }
 
 function member(input: unknown, values: readonly string[]): boolean {

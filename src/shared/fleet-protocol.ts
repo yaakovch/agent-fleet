@@ -292,12 +292,23 @@ export function parseBridgeFleetSnapshot(input: unknown): BridgeFleetSnapshot {
   ));
   if (new Set(sessions.map((session) => session.id)).size !== sessions.length) fail('sessions contain a duplicate id');
   const schedules = array(root.schedules, 'schedules', 500).map((value) => parseSchedule(value, hostIds));
+  if (new Set(schedules.map((schedule) => schedule.id)).size !== schedules.length) {
+    fail('schedules contain a duplicate id');
+  }
   const attention = array(root.attention, 'attention', 500).map((value) => parseAttention(value, hostIds));
+  if (new Set(attention.map((item) => item.id)).size !== attention.length) {
+    fail('attention items contain a duplicate id');
+  }
   const limits = 'limits' in root ? array(root.limits, 'limits', 100).map((value) => parseLimit(value, hostIds)) : [];
   const presets = 'presets' in root ? array(root.presets, 'presets', 100).map((value) => parsePreset(value, hostIds)) : [];
+  if (new Set(limits.map((limit) => limit.id)).size !== limits.length) fail('limits contain a duplicate id');
+  if (new Set(presets.map((preset) => preset.id)).size !== presets.length) fail('presets contain a duplicate id');
   const pairingRequests = 'pairingRequests' in root
     ? array(root.pairingRequests, 'pairingRequests', 256).map(parsePairingRequest)
     : [];
+  if (new Set(pairingRequests.map((request) => request.id)).size !== pairingRequests.length) {
+    fail('pairing requests contain a duplicate id');
+  }
   const identity = includesIdentityGraph
     ? parseIdentityGraph(root, hosts, sessions)
     : legacyIdentityGraph(hosts, sessions);
@@ -401,6 +412,9 @@ export function parseFleetRepositoryPage(input: unknown): FleetRepositoryPage {
       isLink: boolean(item.isLink, 'repository.isLink')
     };
   });
+  if (new Set(entries.map((entry) => entry.relativePath)).size !== entries.length) {
+    fail('repository entries contain a duplicate path');
+  }
   return {
     rootName: text(value.rootName, 'repository.rootName', 255, false),
     relativePath: repositoryPath(value.relativePath, 'repository.relativePath', true),
@@ -436,15 +450,17 @@ export function parseFleetModelControlState(input: unknown): FleetModelControlSt
     expiresAt: instant(pendingValue.expiresAt, 'pending model expiresAt', false) as string
   };
   const catalogValue = value.catalog === null ? null : exactObject(value.catalog, ['models', 'customAllowed'], 'model catalog');
-  const catalog = catalogValue === null ? null : {
-    customAllowed: boolean(catalogValue.customAllowed, 'model catalog custom flag'),
-    models: array(catalogValue.models, 'model catalog models', 128).map((candidate) => {
+  const catalog = catalogValue === null ? null : (() => {
+    const models = array(catalogValue.models, 'model catalog models', 128).map((candidate) => {
       const item = exactObject(candidate, ['id', 'label', 'description', 'isDefault', 'efforts', 'defaultEffort'], 'model catalog entry');
       const efforts = array(item.efforts, 'model efforts', 16).map((candidateEffort) => {
         const effort = exactObject(candidateEffort, ['id', 'label'], 'model effort');
         return { id: effortIdentifier(effort.id, 'model effort id'), label: text(effort.label, 'model effort label', 80, false) };
       });
       if (!efforts.length) fail('model catalog entry has no efforts');
+      if (new Set(efforts.map((effort) => effort.id)).size !== efforts.length) {
+        fail('model catalog entry has a duplicate effort id');
+      }
       const defaultEffort = effortIdentifier(item.defaultEffort, 'model default effort');
       if (!efforts.some((effort) => effort.id === defaultEffort)) fail('model default effort is unavailable');
       return {
@@ -453,8 +469,15 @@ export function parseFleetModelControlState(input: unknown): FleetModelControlSt
         description: text(item.description, 'model description', 240),
         isDefault: boolean(item.isDefault, 'model default flag'), efforts, defaultEffort
       };
-    })
-  };
+    });
+    if (new Set(models.map((model) => model.id)).size !== models.length) {
+      fail('model catalog has a duplicate model id');
+    }
+    return {
+      customAllowed: boolean(catalogValue.customAllowed, 'model catalog custom flag'),
+      models
+    };
+  })();
   if (catalog && !catalog.models.length) fail('model catalog is empty');
   return {
     sessionId: token(value.sessionId, 'model control session', 320),
@@ -539,6 +562,10 @@ function parseIdentityGraph(
   if (physicalIds.size !== physicalHosts.length) fail('physical hosts contain a duplicate id');
   const legacyAliases = physicalHosts.flatMap((host) => host.legacyHostIds);
   if (new Set(legacyAliases).size !== legacyAliases.length) fail('physical hosts contain a duplicate legacy alias');
+  if (physicalHosts.some((owner) => owner.legacyHostIds.some((alias) =>
+    physicalIds.has(alias) && alias !== owner.id))) {
+    fail('physical host id collides with another host legacy alias');
+  }
   const rawHostIds = new Set(hosts.map((host) => host.id));
   if ([...rawHostIds].some((id) => !legacyAliases.includes(id))) fail('legacy host is missing from the identity graph');
 

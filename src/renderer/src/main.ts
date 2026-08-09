@@ -31,7 +31,6 @@ import type {
   WslDiscoveryResult
 } from '../../shared/app';
 import type { CombinedLimitState, ProviderLimitSnapshot, ProviderStatus } from '../../shared/limits';
-import { DashboardPrototype } from './dashboard-view';
 import {
   cloneSettings,
   createDefaultSettings,
@@ -48,6 +47,7 @@ import type {
   LayeredDiagnosticRecovery,
   LayeredDiagnosticReport
 } from '../../shared/layered-diagnostics';
+import type { FleetNotificationTarget } from '../../shared/notification';
 
 const iconSet = {
   ArrowDown,
@@ -99,12 +99,14 @@ let runtimeState: WslRuntimeState | null = null;
 let layeredDiagnostics: LayeredDiagnosticReport | null = null;
 let onboardingStep = 0;
 const profileTestMessages = new Map<string, string>();
-const dashboard = isDashboardView ? new DashboardPrototype(appRoot) : null;
+let dashboard: import('./dashboard-view').DashboardPrototype | null = null;
+let pendingFleetNotificationTarget: FleetNotificationTarget | null = null;
 
 appRoot.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
   if (!action) return;
+  event.preventDefault();
   void handleAction(action, target);
 });
 
@@ -125,6 +127,11 @@ window.limitsWidget.onStateUpdated((state) => {
 window.limitsWidget.onFleetStateUpdated((state) => {
   if (isDashboardView) dashboard?.setFleetState(state);
 });
+window.limitsWidget.onFleetNotificationTarget((target: FleetNotificationTarget) => {
+  if (!isDashboardView) return;
+  if (dashboard) dashboard.openNotificationTarget(target);
+  else pendingFleetNotificationTarget = target;
+});
 window.limitsWidget.onInteractionModeUpdated((mode) => {
   interactionMode = mode;
   if (!isConfigView && !isDashboardView && latestState) renderWidget(latestState);
@@ -138,10 +145,8 @@ window.limitsWidget.onTerminalOpened((tab) => {
 });
 
 if (isDashboardView) {
-  dashboard?.render();
-  void Promise.all([window.limitsWidget.getFleetState(), window.limitsWidget.getSettings()]).then(([state, settings]) => {
-    dashboard?.setSettings(settings.settings);
-    dashboard?.setFleetState(state);
+  void initializeDashboard().catch(() => {
+    appRoot.textContent = 'Dashboard could not be loaded. Reopen Agent Fleet to retry.';
   });
 }
 else if (isConfigView) void loadConfigView();
@@ -154,6 +159,23 @@ else {
     latestState = state;
     renderWidget(state);
   });
+}
+
+async function initializeDashboard(): Promise<void> {
+  const { DashboardPrototype } = await import('./dashboard-view');
+  if (!isDashboardView) return;
+  dashboard = new DashboardPrototype(appRoot);
+  dashboard.render();
+  const [state, settings] = await Promise.all([
+    window.limitsWidget.getFleetState(),
+    window.limitsWidget.getSettings()
+  ]);
+  dashboard.setSettings(settings.settings);
+  dashboard.setFleetState(state);
+  if (pendingFleetNotificationTarget) {
+    dashboard.openNotificationTarget(pendingFleetNotificationTarget);
+    pendingFleetNotificationTarget = null;
+  }
 }
 
 async function handleAction(action: string, target: HTMLElement): Promise<void> {
