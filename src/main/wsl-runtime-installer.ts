@@ -209,7 +209,7 @@ def parse_runtime_manifest(payload, expected_version, expected_manifest_digest):
         source["schemaVersion"] != 1 or not isinstance(source["repository"], str)
         or not source["repository"].startswith("https://")
         or not re.fullmatch(r"[a-f0-9]{40}", source["commit"] if isinstance(source["commit"], str) else "")
-        or source["license"] != "NOASSERTION"
+        or source["license"] not in {"MIT", "NOASSERTION"}
     ):
         fail("runtime source provenance is invalid")
     safe_version(source["contractPackageVersion"], "runtime contract package version")
