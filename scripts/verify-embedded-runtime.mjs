@@ -39,6 +39,39 @@ function tarFiles(payload) {
   return files;
 }
 
+export function assertRuntimeManifestIdentity(value, descriptor) {
+  const manifest = exact(value, [
+    'formatVersion', 'version', 'components', 'source', 'target', 'files'
+  ], 'embedded WSL runtime manifest');
+  const components = exact(manifest.components, COMPONENTS, 'embedded WSL runtime manifest components');
+  for (const name of COMPONENTS) {
+    exact(components[name], ['sequence', 'version'], `embedded WSL runtime manifest ${name} component`);
+  }
+  const source = exact(manifest.source, [
+    'schemaVersion', 'repository', 'commit', 'license', 'contractPackageVersion'
+  ], 'embedded WSL runtime source');
+  const target = exact(manifest.target, [
+    'platform', 'architecture', 'prefix'
+  ], 'embedded WSL runtime target');
+  if (manifest.formatVersion !== 2 || manifest.version !== descriptor.baselineVersion
+    || source.schemaVersion !== 1
+    || source.repository !== descriptor.sourceRepository
+    || source.commit !== descriptor.sourceCommit
+    || source.license !== 'MIT'
+    || source.contractPackageVersion !== descriptor.contractPackageVersion
+    || target.platform !== 'linux'
+    || target.architecture !== 'universal'
+    || target.prefix !== '/home/agent-fleet/.local') {
+    throw new Error('embedded WSL runtime manifest identity does not match its descriptor');
+  }
+  if (!COMPONENTS.every((name) =>
+    components[name].sequence === descriptor.components[name].sequence
+    && components[name].version === descriptor.components[name].version)) {
+    throw new Error('embedded WSL runtime components do not match their descriptor');
+  }
+  return manifest;
+}
+
 export function verifyEmbeddedRuntime(root) {
   const descriptorPath = join(root, 'embedded-runtime-v1.json');
   if (!existsSync(descriptorPath)) throw new Error('embedded WSL runtime descriptor is missing');
@@ -83,21 +116,7 @@ export function verifyEmbeddedRuntime(root) {
   if (sha256(manifestPayload) !== runtime.manifestSha256) {
     throw new Error('embedded WSL runtime manifest checksum does not match its descriptor');
   }
-  const manifest = exact(JSON.parse(manifestPayload.toString('utf8')), [
-    'formatVersion', 'version', 'components', 'source', 'target', 'files'
-  ], 'embedded WSL runtime manifest');
-  if (manifest.formatVersion !== 2 || manifest.version !== descriptor.baselineVersion
-    || manifest.source?.repository !== descriptor.sourceRepository
-    || manifest.source?.commit !== descriptor.sourceCommit
-    || manifest.source?.contractPackageVersion !== descriptor.contractPackageVersion
-    || manifest.target?.platform !== 'linux') {
-    throw new Error('embedded WSL runtime manifest identity does not match its descriptor');
-  }
-  if (!COMPONENTS.every((name) =>
-    manifest.components?.[name]?.sequence === descriptor.components[name].sequence
-    && manifest.components?.[name]?.version === descriptor.components[name].version)) {
-    throw new Error('embedded WSL runtime components do not match their descriptor');
-  }
+  const manifest = assertRuntimeManifestIdentity(JSON.parse(manifestPayload.toString('utf8')), descriptor);
   const expected = new Set(['runtime-manifest.json']);
   for (const item of manifest.files) {
     exact(item, ['path', 'sha256', 'size', 'mode'], 'embedded WSL runtime file');
