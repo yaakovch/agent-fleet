@@ -25,6 +25,7 @@ const RUNTIME_PAYLOAD = Buffer.from('verified runtime bundle');
 const RUNTIME_SHA256 = createHash('sha256').update(RUNTIME_PAYLOAD).digest('hex');
 
 const roots: string[] = [];
+const posixIt = process.platform === 'win32' ? it.skip : it;
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
 
 function resources(): { root: string; bundle: string; descriptor: Record<string, unknown> } {
@@ -278,7 +279,7 @@ describe('app-owned WSL runtime manager', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('rejects a self-authored installed manifest and extra release files outside its receipt', async () => {
+  posixIt('rejects a self-authored installed manifest and extra release files outside its receipt', async () => {
     const fixture = resources();
     const home = join(fixture.root, 'home');
     const runtimeRoot = join(home, '.local/share/agent-fleet/wtmux');
@@ -676,7 +677,7 @@ describe('app-owned WSL runtime manager', () => {
     expect(events).not.toContain('finalize');
   });
 
-  it('uses the protected one-open snapshot and rejects replaced or symlinked artifact bytes', () => {
+  posixIt('uses the protected one-open snapshot and rejects replaced or symlinked artifact bytes', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-runtime-snapshot-'));
     roots.push(root);
     const productionRoot = join(__dirname, '..', 'resources', 'runtime');
@@ -716,7 +717,7 @@ describe('app-owned WSL runtime manager', () => {
   });
 
   // This integration path launches several protected subprocesses; match their timeout budget.
-  it('installs an admitted archive entirely through the protected exact-bytes program', () => {
+  posixIt('installs an admitted archive entirely through the protected exact-bytes program', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-runtime-protected-install-'));
     roots.push(root);
     const productionRoot = join(__dirname, '..', 'resources', 'runtime');
@@ -880,7 +881,7 @@ describe('app-owned WSL runtime manager', () => {
     expect(existsSync(join(runtimeRoot, 'activation-authority-v1.json'))).toBe(false);
   }, 30_000);
 
-  it('deterministically compensates an uncommitted activation after restart and remains idempotent', () => {
+  posixIt('deterministically compensates an uncommitted activation after restart and remains idempotent', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-runtime-crash-recovery-'));
     roots.push(root);
     const productionRoot = join(__dirname, '..', 'resources', 'runtime');

@@ -147,6 +147,10 @@ function verifyCiEntryPoints(root) {
     || !/^\s*run:\s+npm run audit:release\s*$/mu.test(release)) {
     fail('the signed release workflow must run quality and the complete dependency audit');
   }
+  if (!/^\s{2}wsl-runtime-security:\s*$/mu.test(ci)
+    || !/^\s*-\s+run:\s+npx vitest run tests\/wslRuntimeManager\.test\.ts\s*$/mu.test(ci)) {
+    fail('CI must exercise the POSIX-only WSL installer security program on Linux');
+  }
   const releaseRequirements = [
     /^\s{2}workflow_dispatch:\s*$/mu,
     /^\s{6}release_tag:\s*$/mu,

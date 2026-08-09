@@ -221,8 +221,13 @@ describe('native conversation streams', () => {
     expect(privateFiles[0]).not.toContain('private-original-name');
     expect(staged[0]).not.toHaveProperty('path');
     expect(staged[0]).not.toHaveProperty('sha256');
-    expect(statSync(join(root, run.name)).mode & 0o077).toBe(0);
-    expect(statSync(join(root, run.name, privateFiles[0])).mode & 0o077).toBe(0);
+    // POSIX exposes the owner-only mode bits directly. Windows inherits the
+    // current user's protected temporary-directory ACL and does not report
+    // meaningful Unix group/other bits through stat().
+    if (process.platform !== 'win32') {
+      expect(statSync(join(root, run.name)).mode & 0o077).toBe(0);
+      expect(statSync(join(root, run.name, privateFiles[0])).mode & 0o077).toBe(0);
+    }
 
     manager.dispose();
     expect(readdirSync(root, { withFileTypes: true }).some((entry) => entry.isDirectory())).toBe(false);

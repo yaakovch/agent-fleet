@@ -812,9 +812,24 @@ async function bindAndInstallPreparedDownload(
       }
     }
 
-    // Keep the verified handles and protected hard link live while the
-    // current admission is checked immediately before binding the updater's
-    // selected path to the verified inode.
+    // Windows cannot atomically replace a destination while this process
+    // still has that destination open. Keep the protected snapshot open, but
+    // close the updater-selected handle and re-prove both path identities
+    // before the admission check and rename.
+    if (replacementPath) {
+      await selected.handle.close();
+      selected = null;
+      const selectedAfterClose = await lstat(prepared.installerPath, { bigint: true });
+      const replacementAfterClose = await lstat(replacementPath, { bigint: true });
+      if (!sameFile(selectedAfterClose, prepared.installerIdentity)
+        || !sameFile(replacementAfterClose, snapshot.identity)) {
+        throw new Error('downloaded artifact changed immediately before installation');
+      }
+    }
+
+    // Keep the protected snapshot and hard link live while current signed
+    // admission is checked immediately before binding the updater's selected
+    // path to the verified inode.
     revalidateAdmission();
     if (replacementPath) {
       await rename(replacementPath, prepared.installerPath);
