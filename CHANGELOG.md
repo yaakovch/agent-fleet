@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0-beta.27 - 2026-08-09
+
+- Hardened runtime, updater, IPC, filesystem, pairing, external-link, and
+  protocol trust boundaries with bounded generation-scoped ownership and
+  exact release-set admission.
+- Added durable alert pause and recovery behavior, accessible pairing and host
+  routing, safe Markdown navigation, and strict cross-client identity handling.
+- Added local-equals-CI supply-chain gates, zero-vulnerability dependency
+  audits, packaged smoke coverage, and a signed non-publishing release-candidate
+  workflow before a production tag is permitted.
+
 ## 0.11.0-beta.22 - 2026-07-24
 
 - Adopted the canonical identity, supervisor, transport, host-runtime, fleet

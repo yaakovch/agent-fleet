@@ -10,7 +10,7 @@ describe('project quality policy', () => {
   it('keeps repository metadata, licensing, and CI entry points coherent', () => {
     expect(verifyRepositoryPolicy(resolve('.'))).toEqual({
       workflows: 2,
-      actions: 12
+      actions: 13
     });
   });
 

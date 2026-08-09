@@ -21,10 +21,17 @@ Keep provider authentication outside this repository. Tests and documentation mu
 
 1. Update `package.json` and `CHANGELOG.md`.
 2. Merge the release commit to `main` after CI passes.
-3. Create a matching `vX.Y.Z` or prerelease tag.
-4. The release workflow must sign the unpacked application and final artifacts through the configured SignPath project.
-5. Verify Authenticode signatures, updater metadata, checksums, SBOM, provenance, install/portable behavior, and the second-machine checklist.
-6. Publish the generated draft. `1.0.0` is first published as a prerelease, validated as an update from `0.9`, then promoted unchanged to stable.
+3. Manually dispatch the signed release workflow from the exact `main` commit
+   with the matching `vX.Y.Z` or prerelease identity. This produces a bounded,
+   non-publishing release-candidate artifact and proves both SignPath stages.
+4. Verify the candidate Authenticode signatures, updater metadata, checksums,
+   SBOM, provenance, install/portable behavior, and the second-machine
+   checklist. A manual candidate never creates a tag or GitHub Release.
+5. Create and push the matching tag only after that rehearsal passes. The tag
+   workflow repeats the signed build and creates a draft GitHub Release.
+6. Verify the draft and its served bytes, then publish it. `1.0.0` is first
+   published as a prerelease, validated as an update from `0.9`, then promoted
+   unchanged to stable.
 
 SignPath project identifiers and API tokens belong in GitHub Actions secrets. Stable releases must not bypass the signing job.
 

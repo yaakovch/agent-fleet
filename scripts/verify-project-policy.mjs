@@ -122,6 +122,20 @@ function verifyLicense(root) {
   }
 }
 
+function verifyHashBoundLineEndings(root) {
+  const attributes = read(root, '.gitattributes');
+  const required = [
+    'tests/fixtures/** text eol=lf',
+    'resources/runtime/*.json text eol=lf',
+    'resources/runtime/*.pem text eol=lf'
+  ];
+  for (const rule of required) {
+    if (!attributes.split(/\r?\n/u).includes(rule)) {
+      fail(`.gitattributes is missing hash-bound LF policy: ${rule}`);
+    }
+  }
+}
+
 function verifyCiEntryPoints(root) {
   const ci = read(root, join('.github', 'workflows', 'ci.yml'));
   const release = read(root, join('.github', 'workflows', 'release.yml'));
@@ -133,11 +147,26 @@ function verifyCiEntryPoints(root) {
     || !/^\s*run:\s+npm run audit:release\s*$/mu.test(release)) {
     fail('the signed release workflow must run quality and the complete dependency audit');
   }
+  const releaseRequirements = [
+    /^\s{2}workflow_dispatch:\s*$/mu,
+    /^\s{6}release_tag:\s*$/mu,
+    /^\s{2}contents:\s*read\s*$/mu,
+    /^\s{2}publish-draft:\s*$/mu,
+    /^\s{4}if:\s*github\.event_name == 'push'\s*$/mu,
+    /^\s{6}contents:\s*write\s*$/mu,
+    /Upload signed release bundle/u,
+    /A signed release candidate must use the exact pushed main commit\./u,
+    /Missing release-environment secrets:/u
+  ];
+  for (const pattern of releaseRequirements) {
+    if (!pattern.test(release)) fail('the signed release workflow is missing release-candidate policy: ' + pattern);
+  }
 }
 
 export function verifyRepositoryPolicy(root) {
   verifyPackageMetadata(root);
   verifyLicense(root);
+  verifyHashBoundLineEndings(root);
   verifyCiEntryPoints(root);
 
   const workflows = workflowFiles(root);

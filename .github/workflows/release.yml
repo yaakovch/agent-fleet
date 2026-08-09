@@ -4,18 +4,29 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact package tag to validate for a signed non-publishing release candidate
+        required: true
+        type: string
 
 permissions:
-  actions: read
-  contents: write
-  id-token: write
-  attestations: write
-  artifact-metadata: write
+  contents: read
 
 jobs:
   release:
     runs-on: windows-2025
     environment: release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    outputs:
+      artifact_name: ${{ steps.release-mode.outputs.artifact_name }}
+      release_tag: ${{ steps.release-mode.outputs.release_tag }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -24,13 +35,66 @@ jobs:
         with:
           node-version: 26
           cache: npm
-      - name: Validate tag and main ancestry
+      - name: Resolve release mode
+        id: release-mode
+        shell: pwsh
+        env:
+          DISPATCH_RELEASE_TAG: ${{ inputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          GIT_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:GIT_REF -ne 'refs/heads/main') {
+              throw 'A signed release candidate must run from the exact main branch.'
+            }
+            $releaseTag = $env:DISPATCH_RELEASE_TAG
+            $candidateOnly = 'true'
+          } else {
+            $releaseTag = $env:GIT_REF_NAME
+            $candidateOnly = 'false'
+          }
+          if (-not $releaseTag) { throw 'A release tag is required.' }
+          $artifactName = "signed-release-$releaseTag"
+          "RELEASE_TAG=$releaseTag" | Out-File $env:GITHUB_ENV -Append
+          "RELEASE_CANDIDATE_ONLY=$candidateOnly" | Out-File $env:GITHUB_ENV -Append
+          "artifact_name=$artifactName" | Out-File $env:GITHUB_OUTPUT -Append
+          "release_tag=$releaseTag" | Out-File $env:GITHUB_OUTPUT -Append
+      - name: Validate release identity and main ancestry
         shell: pwsh
         run: |
-          node scripts/validate-release.mjs "${{ github.ref_name }}"
+          node scripts/validate-release.mjs "$env:RELEASE_TAG"
           git fetch origin main
-          git merge-base --is-ancestor HEAD origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to main history.' }
+          if ($env:RELEASE_CANDIDATE_ONLY -eq 'true') {
+            if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) {
+              throw 'A signed release candidate must use the exact pushed main commit.'
+            }
+          } else {
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to main history.' }
+          }
+      - name: Verify SignPath configuration is present
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY: ${{ secrets.SIGNPATH_SIGNING_POLICY }}
+          SIGNPATH_APP_ARTIFACT_CONFIGURATION: ${{ secrets.SIGNPATH_APP_ARTIFACT_CONFIGURATION }}
+          SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION: ${{ secrets.SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION }}
+        run: |
+          $required = @(
+            'SIGNPATH_API_TOKEN',
+            'SIGNPATH_ORGANIZATION_ID',
+            'SIGNPATH_PROJECT_SLUG',
+            'SIGNPATH_SIGNING_POLICY',
+            'SIGNPATH_APP_ARTIFACT_CONFIGURATION',
+            'SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION'
+          )
+          $missing = @($required | Where-Object { -not (Get-Item "env:$_" -ErrorAction SilentlyContinue).Value })
+          if ($missing.Count -ne 0) {
+            throw "Missing release-environment secrets: $($missing -join ', ')"
+          }
       - run: npm ci
       - run: npm run quality
       - name: Enforce the complete release dependency policy
@@ -109,10 +173,45 @@ jobs:
             dist/Agent-Fleet-*-Portable-x64.exe
             dist/SHA256SUMS.txt
             dist/bom.json
+      - name: Upload signed release bundle
+        id: upload-signed-release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.release-mode.outputs.artifact_name }}
+          path: |
+            dist/Agent-Fleet-*-Setup-x64.exe
+            dist/Agent-Fleet-*-Portable-x64.exe
+            dist/Agent-Fleet-*-Setup-x64.exe.blockmap
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+            dist/bom.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-draft:
+    if: github.event_name == 'push'
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download the verified signed bundle
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ needs.release.outputs.artifact_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dist
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir dist
       - name: Create draft GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
           $assets = @(
             (Get-ChildItem dist/Agent-Fleet-*-Setup-x64.exe).FullName,
@@ -122,11 +221,11 @@ jobs:
             (Resolve-Path dist/SHA256SUMS.txt).Path,
             (Resolve-Path dist/bom.json).Path
           )
-          $releaseArgs = @('release', 'create', '${{ github.ref_name }}') + $assets + @(
+          $releaseArgs = @('release', 'create', $env:RELEASE_TAG) + $assets + @(
             '--draft',
             '--generate-notes',
             '--title',
-            'Agent Fleet ${{ github.ref_name }}'
+            "Agent Fleet $env:RELEASE_TAG"
           )
-          if ('${{ github.ref_name }}' -match '-') { $releaseArgs += '--prerelease' }
+          if ($env:RELEASE_TAG -match '-') { $releaseArgs += '--prerelease' }
           gh @releaseArgs
