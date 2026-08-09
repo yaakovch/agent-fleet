@@ -127,7 +127,8 @@ function verifyHashBoundLineEndings(root) {
   const required = [
     'tests/fixtures/** text eol=lf',
     'resources/runtime/*.json text eol=lf',
-    'resources/runtime/*.pem text eol=lf'
+    'resources/runtime/*.pem text eol=lf',
+    '*.mjs text eol=lf'
   ];
   for (const rule of required) {
     if (!attributes.split(/\r?\n/u).includes(rule)) {
