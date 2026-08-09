@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
-  "baselineVersion": "git-278aaa2",
+  "baselineVersion": "git-58fcb73",
   "sourceRepository": "https://github.com/yaakovch/wtmux",
-  "sourceCommit": "278aaa2e52402d7fa59b1d53c9467a2268c381cd",
+  "sourceCommit": "58fcb738b34ff3cd55c5bbf0d6d01ab79e576057",
   "contractPackageVersion": "1.10.0",
   "components": {
     "clientRuntime": {
-      "sequence": 54,
-      "version": "git-278aaa2"
+      "sequence": 55,
+      "version": "git-58fcb73"
     },
     "hostRuntime": {
-      "sequence": 48,
-      "version": "git-278aaa2"
+      "sequence": 49,
+      "version": "git-58fcb73"
     },
     "providerAdapters": {
-      "sequence": 21,
-      "version": "git-278aaa2"
+      "sequence": 22,
+      "version": "git-58fcb73"
     },
     "contracts": {
       "sequence": 20,
@@ -23,12 +23,12 @@
     }
   },
   "runtime": {
-    "file": "wtmux-runtime-git-278aaa2.tar",
-    "sha256": "da7d0211c67c13016b3afc67a19e73ad72eced7cbcc5ffbe76b9e3bb46c655d5",
-    "size": 1935360,
+    "file": "wtmux-runtime-git-58fcb73.tar",
+    "sha256": "1c8e2815b5a0d0ec161c2f934735761ec031eeb7295b5d403e66eb8c5d668623",
+    "size": 1894400,
     "formatVersion": 2,
-    "manifestSha256": "fdb81563ae9733ed581e869aaa6dbace5267d116314bbb5ad7cef852a2c27dff",
-    "sbomSha256": "412ebdd2005ae1f83aee6e3e0562b97e6a9ec646fa488eb89863023be2ca5057",
+    "manifestSha256": "06e0d830cc7924dc93bb6d3ee1a3fbd68f625d63da6e17204a624e0015d18f8f",
+    "sbomSha256": "d8bb6887a77d04b307a631f4df8b31799047b2c624b5bce97262df8fcd844311",
     "licenseSha256": "35f21b22ce50b6ff562c9223606a3f0681821cb67c6390543b25d742801ea7b1"
   },
   "registry": {
