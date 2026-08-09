@@ -89,6 +89,7 @@ function verifyPackageMetadata(root) {
     'audit:critical': 'npm audit --audit-level=critical',
     'audit:release': 'npm audit --audit-level=high',
     'build:production': 'electron-vite build',
+    sbom: 'cyclonedx-npm --package-lock-only --output-reproducible --validate --output-file dist/bom.json --spec-version 1.6',
     'package:built': 'electron-builder --win nsis portable --x64 --publish never',
     'package:dir:built': 'electron-builder --win dir --x64 --publish never'
   };

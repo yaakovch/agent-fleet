@@ -22,7 +22,7 @@
     "package:built": "electron-builder --win nsis portable --x64 --publish never",
     "package:dir": "npm run build && npm run package:dir:built",
     "package:dir:built": "electron-builder --win dir --x64 --publish never",
-    "sbom": "cyclonedx-npm --output-file dist/bom.json --spec-version 1.6",
+    "sbom": "cyclonedx-npm --package-lock-only --output-reproducible --validate --output-file dist/bom.json --spec-version 1.6",
     "preview": "electron-vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run --dir tests",
