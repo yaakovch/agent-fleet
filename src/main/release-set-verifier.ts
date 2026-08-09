@@ -25,6 +25,7 @@ export class ReleaseSetVerificationError extends Error {
 export interface ReleaseSetVerificationOptions {
   trustedKeys: ReadonlyMap<string, KeyObject>;
   allowedOrigins: ReadonlySet<string>;
+  trustedSourceOrigins?: ReadonlySet<string>;
   installedWindowsVersion: string;
   now?: Date;
   minimumReleaseSetSequence?: number;
@@ -71,13 +72,18 @@ export function verifyAgentFleetReleaseSet(
     }
   }
   for (const artifact of releaseSet.artifacts) {
-    for (const url of [artifact.url, artifact.sourceRepository]) {
-      if (!options.allowedOrigins.has(new URL(url).origin)) {
-        throw new ReleaseSetVerificationError(
-          'release_set_origin_unapproved',
-          `The release-set origin is not approved: ${new URL(url).origin}`
-        );
-      }
+    if (!options.allowedOrigins.has(new URL(artifact.url).origin)) {
+      throw new ReleaseSetVerificationError(
+        'release_set_origin_unapproved',
+        `The release-set artifact origin is not approved: ${new URL(artifact.url).origin}`
+      );
+    }
+    const sourceOrigins = options.trustedSourceOrigins ?? options.allowedOrigins;
+    if (!sourceOrigins.has(new URL(artifact.sourceRepository).origin)) {
+      throw new ReleaseSetVerificationError(
+        'release_set_origin_unapproved',
+        `The release-set source origin is not approved: ${new URL(artifact.sourceRepository).origin}`
+      );
     }
   }
   const trusted = options.trustedKeys.get(releaseSet.signature.keyId);

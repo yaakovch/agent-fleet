@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.9.0",
+  "packageVersion": "1.10.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,

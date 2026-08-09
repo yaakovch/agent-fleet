@@ -67,6 +67,7 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .native-markdown { line-height: 1.55; overflow-wrap: anywhere; }.native-markdown > :first-child { margin-top: 0; }.native-markdown > :last-child { margin-bottom: 0; }
 .native-markdown p { margin: 0 0 10px; }.native-markdown pre,.tool-detail pre { overflow: auto; padding: 12px; border-radius: 9px; background: #080c12; border: 1px solid #263443; color: #dfe9f5; }
 .native-markdown code { font-family: "Cascadia Mono",Consolas,monospace; font-size: .91em; }
+.native-markdown a { color: #72c7e6; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }.native-markdown a:focus-visible { outline: 2px solid #72c7e6; outline-offset: 2px; border-radius: 2px; }.native-markdown-image-omitted { color: #8798aa; font-style: italic; }
 .native-card { padding: 16px; background: #141e29; border: 1px solid #304156; }.native-card h3 { margin: 0 0 10px; font-size: 17px; }
 .question-card { min-height: 0; max-height: calc(90vh - 72px); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-color: #4971a4; box-shadow: inset 3px 0 #70a8ec; }.question-scroll { min-height: 0; overflow-y: auto; padding: 16px; }.question-part { border: 0; padding: 10px 0; margin: 0; }.question-part legend { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }.question-part legend small { color: #8da0b6; }.question-part legend strong { font-size: 15px; }
 .question-option { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 7px 0; padding: 12px 13px; text-align: left; color: #e8eef6; background: #0e151e; border: 1px solid #2b3a4c; border-radius: 9px; cursor: pointer; }.question-option:hover { border-color: #5686be; }.question-option.selected { border-color: #6e9fd8; background: #17283b; }.question-option span { display: flex; flex-direction: column; gap: 3px; }.question-option small { color: #8a99aa; }.question-option b { color: #6fd7b4; font-size: 17px; }.question-card.submitting .question-option { pointer-events: none; opacity: .7; }
@@ -1151,6 +1152,7 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .pairing-request strong { font-size: 10px; }
 .pairing-request p { margin: 3px 0 0; color: #a2937e; font-size: 8px; }
 .pairing-request button { border: 1px solid #806536; border-radius: 6px; padding: 7px 9px; color: #f2c77f; background: #2b2418; font-size: 8px; cursor: pointer; }
+.notification-target { outline: 2px solid #e6ae57; outline-offset: 3px; }
 .fleet-host-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
 .host-card { min-width: 0; padding: 13px; border-right: 1px solid #232e39; }
 .host-card:last-child { border-right: 0; }

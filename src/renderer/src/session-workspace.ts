@@ -3,7 +3,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import DOMPurify from 'dompurify';
-import { marked } from 'marked';
 import hljs from 'highlight.js';
 import type { WidgetSettings } from '../../shared/settings';
 import type { TerminalTabDescriptor, TerminalWorkspaceState } from '../../shared/terminal';
@@ -55,6 +54,7 @@ import {
   TERMINAL_HISTORY_QUIET_MS,
   type TerminalHistoryState
 } from './terminal-history';
+import { renderSafeMarkdownSource } from './safe-markdown';
 
 interface TerminalRuntime {
   terminal: Terminal;
@@ -631,6 +631,7 @@ export class SessionWorkspace {
       return true;
     }
     if (action === 'native-copy') { void this.copyFromControl(control); return true; }
+    if (action === 'native-open-external') { void this.openExternalLink(control); return true; }
     if (action === 'native-open-tool' || action === 'native-open-plan') {
       const item = this.itemFromControl(control);
       if (item) {
@@ -1893,6 +1894,23 @@ export class SessionWorkspace {
     window.setTimeout(() => { if (control.isConnected) control.textContent = previous; }, 1_500);
   }
 
+  private async openExternalLink(control: HTMLElement): Promise<void> {
+    const url = control.dataset.externalUrl;
+    if (!url) return;
+    const tabId = this.selectedId;
+    let result: { ok: boolean; message: string };
+    try {
+      result = await window.limitsWidget.openExternalLink(url);
+    } catch {
+      result = { ok: false, message: 'The external link could not be opened.' };
+    }
+    if (result.ok) return;
+    const state = this.nativeStates.get(tabId);
+    if (!state) return;
+    state.notice = result.message;
+    if (this.selectedId === tabId) this.renderSelectedNative();
+  }
+
   private scrollToLatest(): void {
     const root = this.element.querySelector<HTMLElement>(`[data-native-host="${CSS.escape(this.selectedId)}"]`);
     const messages = root?.querySelector<HTMLElement>('.native-messages');
@@ -2415,7 +2433,7 @@ function renderConversationViewer(item: ConversationItem, viewer: { itemId: stri
 }
 
 function markdown(value: string): string {
-  const raw = marked.parse(value, { async: false, gfm: true, breaks: true });
+  const raw = renderSafeMarkdownSource(value);
   return `<div class="native-markdown">${DOMPurify.sanitize(raw, {
     FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
     FORBID_ATTR: ['style', 'onerror', 'onclick']

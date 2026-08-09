@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,22 @@ import {
 
 const roots: string[] = [];
 const fixture = (): string => readFileSync(join(__dirname, 'fixtures/contracts/pairing-bundle-v1.json'), 'utf8');
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, canonical(item)]));
+}
+
+function withIntegrity(value: Record<string, any>): string {
+  const payload = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'integrity'));
+  value.integrity.digest = createHash('sha256')
+    .update(`${JSON.stringify(canonical(payload))}\n`)
+    .digest('hex');
+  return JSON.stringify(value);
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -39,6 +56,12 @@ describe('unified fleet configuration', () => {
       integrity: 'one-time-secret'
     });
     expect(JSON.stringify(review)).not.toContain('pAAAAAAAA');
+  });
+
+  it('rejects a configured metadata source outside the artifact origin allowlist', () => {
+    const value = JSON.parse(fixture()) as Record<string, any>;
+    value.clientPolicy.runtimeManifestUrls[0] = 'https://evil.example.invalid/runtime/manifest.json';
+    expect(() => parseFleetPairingBundle(withIntegrity(value))).toThrow('source origin is not approved');
   });
 
   it('activates atomically and rejects a corrupt replacement without losing healthy state', () => {

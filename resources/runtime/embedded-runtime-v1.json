@@ -1,38 +1,47 @@
 {
   "schemaVersion": 1,
-  "baselineVersion": "git-4837665",
+  "baselineVersion": "git-c09eca3",
   "sourceRepository": "https://github.com/yaakovch/wtmux",
-  "sourceCommit": "483766592a5b940183c799f3fe826c32afae3c98",
-  "contractPackageVersion": "1.9.0",
+  "sourceCommit": "c09eca3fd1ccfebc9710aa5ca5c4228ace3a3286",
+  "contractPackageVersion": "1.10.0",
   "components": {
     "clientRuntime": {
-      "sequence": 53,
-      "version": "git-4837665"
+      "sequence": 57,
+      "version": "git-c09eca3"
     },
     "hostRuntime": {
-      "sequence": 46,
-      "version": "git-4837665"
+      "sequence": 51,
+      "version": "git-c09eca3"
     },
     "providerAdapters": {
-      "sequence": 20,
-      "version": "git-4837665"
+      "sequence": 24,
+      "version": "git-c09eca3"
     },
     "contracts": {
-      "sequence": 19,
-      "version": "1.9.0"
+      "sequence": 20,
+      "version": "1.10.0"
     }
   },
   "runtime": {
-    "file": "wtmux-runtime-git-4837665.tar",
-    "sha256": "bbdaebe8c53d192f955f31951fa1646917ee0d0bc16e6699660a4a72f7778283",
-    "size": 1617920,
-    "sbomSha256": "6b9a2994b828adef6184fd57fbc883765a90ba9287ce03ee116dfcb0bcae69ec",
-    "licenseSha256": "310e11bdb197359d572065bce79cffcc2d37e43024bc00e64d417d32d859ac0d"
+    "file": "wtmux-runtime-git-c09eca3.tar",
+    "sha256": "e471b32a8406612c9d369e9790d9d61cf31ff5fc47f09e9aac9243753c11bb6a",
+    "size": 1894400,
+    "formatVersion": 2,
+    "manifestSha256": "c314024bef9e789575a242be2d8ea6e57352849d6d313a689ced9a8bd3af0610",
+    "sbomSha256": "bbf2a035ef8d528eab1d54ee79f5d5ce2f14cdafaa1764989dd8b976e3007369",
+    "licenseSha256": "35f21b22ce50b6ff562c9223606a3f0681821cb67c6390543b25d742801ea7b1"
   },
   "registry": {
     "file": "wtmux-registry-b42c6a0.tar",
     "sha256": "03dd58e64da5f4ad6966d5c5fec5fe0601a2f8482ede4120f8d686261172ce2d",
     "size": 10240,
     "records": 3
-  }
+  },
+  "trustedReleaseKeys": [
+    {
+      "keyId": "ef1aa26c21be89f9ac220e41ae28a865",
+      "file": "trusted-release-key-ef1aa26c21be89f9ac220e41ae28a865.pem",
+      "sha256": "a3500746ab5f70c708741dd8f3c41b0dc66fabb7a47b43b726bceb6cf9108364"
+    }
+  ]
 }

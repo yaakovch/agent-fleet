@@ -2,7 +2,18 @@
 
 ## Local Checks
 
-Run `npm ci`, `npm run lint`, `npm test`, `npm run build`, `npm run package:dir`, and `npm run smoke:packaged` before opening a pull request.
+Run `npm ci` and `npm run quality` before opening a pull request. This is the
+same source-quality gate CI runs. On Windows, also run
+`npm run package:dir:built` and `npm run smoke:packaged` for changes that can
+affect packaging, startup, the embedded runtime, or terminal behavior. The
+`:built` command reuses the quality gate's production build; use
+`npm run package:dir` when packaging without running that gate first.
+
+The quality gate blocks high or critical vulnerabilities in shipped
+dependencies and critical vulnerabilities anywhere in the complete dependency
+graph. `npm run audit:release` raises that complete-graph gate to high severity
+for releases. Findings in build-only tooling require the same reviewed,
+time-bounded exception process as runtime findings.
 
 Keep provider authentication outside this repository. Tests and documentation must use generic users and paths such as `/home/testuser`.
 
@@ -10,10 +21,17 @@ Keep provider authentication outside this repository. Tests and documentation mu
 
 1. Update `package.json` and `CHANGELOG.md`.
 2. Merge the release commit to `main` after CI passes.
-3. Create a matching `vX.Y.Z` or prerelease tag.
-4. The release workflow must sign the unpacked application and final artifacts through the configured SignPath project.
-5. Verify Authenticode signatures, updater metadata, checksums, SBOM, provenance, install/portable behavior, and the second-machine checklist.
-6. Publish the generated draft. `1.0.0` is first published as a prerelease, validated as an update from `0.9`, then promoted unchanged to stable.
+3. Manually dispatch the signed release workflow from the exact `main` commit
+   with the matching `vX.Y.Z` or prerelease identity. This produces a bounded,
+   non-publishing release-candidate artifact and proves both SignPath stages.
+4. Verify the candidate Authenticode signatures, updater metadata, checksums,
+   SBOM, provenance, install/portable behavior, and the second-machine
+   checklist. A manual candidate never creates a tag or GitHub Release.
+5. Create and push the matching tag only after that rehearsal passes. The tag
+   workflow repeats the signed build and creates a draft GitHub Release.
+6. Verify the draft and its served bytes, then publish it. `1.0.0` is first
+   published as a prerelease, validated as an update from `0.9`, then promoted
+   unchanged to stable.
 
 SignPath project identifiers and API tokens belong in GitHub Actions secrets. Stable releases must not bypass the signing job.
 

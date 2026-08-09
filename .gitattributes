@@ -1,2 +1,4 @@
 tests/fixtures/** text eol=lf
 resources/runtime/*.json text eol=lf
+resources/runtime/*.pem text eol=lf
+*.mjs text eol=lf

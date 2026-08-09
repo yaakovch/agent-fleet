@@ -13,6 +13,7 @@ directories:
 files:
   - out/**
   - package.json
+  - LICENSE
 extraResources:
   - from: resources
     to: resources

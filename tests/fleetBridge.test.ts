@@ -1,8 +1,15 @@
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { FleetBridgeSupervisor, fleetBridgeLaunchFromSettings, redactSessionTitles } from '../src/main/fleet-bridge';
+import { PassThrough, Writable } from 'node:stream';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  FleetBridgeSupervisor,
+  fleetBridgeLaunchFromSettings,
+  parsePairingProposalReview,
+  redactSessionTitles
+} from '../src/main/fleet-bridge';
 import { createDefaultSettings } from '../src/shared/settings';
 import type { FleetBridgeView } from '../src/shared/fleet-protocol';
 
@@ -15,6 +22,35 @@ afterEach(() => {
 });
 
 describe('fleet bridge supervisor', () => {
+  it('rejects bidi-format controls in an exact pairing proposal review', () => {
+    const proposal = pairingProposalReview();
+    proposal.proposal.hostCommand = 'safe\u202Etxt.exe';
+    expect(() => parsePairingProposalReview(proposal)).toThrow(/proposal field is invalid/i);
+    expect(() => parsePairingProposalReview({
+      ...pairingProposalReview(),
+      proposal: { ...pairingProposalReview().proposal, schemaVersion: 1.5 }
+    })).toThrow(/proposal schema is invalid/i);
+  });
+  it('binds an exact pairing proposal to its verified review envelope and peer', () => {
+    const valid = pairingProposalReview();
+    expect(parsePairingProposalReview(valid)?.id).toBe('pair-1');
+    expect(parsePairingProposalReview({
+      ...valid,
+      proposal: { ...valid.proposal, tailscaleNode: '' }
+    })?.id).toBe('pair-1');
+
+    for (const mismatched of [
+      { ...valid, deviceId: 'other-phone' },
+      { ...valid, deviceName: 'Other phone' },
+      { ...valid, platform: 'Other platform' },
+      { ...valid, reviewedAt: '2026-08-01T00:30:00Z' },
+      { ...valid, publicationRef: 'published' },
+      { ...valid, proposal: { ...valid.proposal, tailscaleNode: 'other.tailnet.ts.net' } },
+      { ...valid, proposal: { ...valid.proposal, roles: ['client', 'client'] } }
+    ]) {
+      expect(() => parsePairingProposalReview(mismatched)).toThrow(/pairing proposal/i);
+    }
+  });
   it('uses a direct WSL argv launch without interpolated shell text', () => {
     const launch = fleetBridgeLaunchFromSettings(createDefaultSettings());
     expect(launch).toEqual({
@@ -274,6 +310,137 @@ describe('fleet bridge supervisor', () => {
     expect(supervisor.getSupervisorState()).toMatchObject({ phase: 'stopped', controlProcessCount: 0 });
   }, 20_000);
 
+  it('ignores delayed events from a stopped child after a replacement starts', () => {
+    const directory = temporaryDirectory();
+    const first = createRespondingChild(fixture);
+    const second = createRespondingChild(fixture);
+    const spawnProcess = vi.fn()
+      .mockReturnValueOnce(first.child)
+      .mockReturnValueOnce(second.child);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: 'fake-bridge', args: [], distro: 'Test Linux' },
+      logger,
+      spawnProcess: spawnProcess as never
+    });
+
+    supervisor.start();
+    expect(supervisor.getView().status).toBe('live');
+    supervisor.stop();
+    supervisor.start();
+    expect(supervisor.getView().status).toBe('live');
+    const secondWrites = second.writes.mock.calls.length;
+
+    first.stdout.write('stale output\n');
+    first.child.emit('error', new Error('delayed old child error'));
+    first.child.emit('exit', 1, null);
+    supervisor.refresh();
+
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+    expect(second.writes).toHaveBeenCalledTimes(secondWrites + 1);
+    expect(supervisor.getSupervisorMetrics()).toMatchObject({
+      processStarts: 2,
+      currentControlProcesses: 1
+    });
+    expect(supervisor.getView().status).toBe('live');
+    supervisor.stop();
+  });
+
+  it('reconnects after a protocol-failed child ignores termination and never exits', async () => {
+    vi.useFakeTimers();
+    const directory = temporaryDirectory();
+    const first = createRespondingChild(fixture);
+    const second = createRespondingChild(fixture);
+    const spawnProcess = vi.fn()
+      .mockReturnValueOnce(first.child)
+      .mockReturnValueOnce(second.child);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: 'fake-bridge', args: [], distro: 'Test Linux' },
+      logger,
+      spawnProcess: spawnProcess as never,
+      terminationTimeoutMs: 10
+    });
+    try {
+      supervisor.start();
+      expect(supervisor.getView().status).toBe('live');
+      first.stdout.write('{}\n');
+      expect(first.child.kill).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_011);
+
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(supervisor.getView().status).toBe('live');
+      expect(supervisor.getSupervisorMetrics()).toMatchObject({
+        processStarts: 2,
+        currentControlProcesses: 1
+      });
+    } finally {
+      supervisor.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('never trusts later frames from a protocol-failed bridge generation', () => {
+    const directory = temporaryDirectory();
+    const controlled = createControlledChild();
+    const cachePath = join(directory, 'fleet-cache-v1.json');
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath,
+      launch: { command: 'fake-bridge', args: [], distro: 'Test Linux' },
+      logger,
+      spawnProcess: vi.fn(() => controlled.child) as never,
+      terminationTimeoutMs: 10_000
+    });
+    supervisor.start();
+    const initialRequest = controlled.requests[0];
+    controlled.respond(initialRequest, fixture);
+    expect(supervisor.getView().status).toBe('live');
+
+    supervisor.refresh();
+    const pendingRequest = controlled.requests[1];
+    const poisoned = structuredClone(fixture);
+    poisoned.revision = 'must-not-be-trusted';
+    const refreshOnFailure = vi.fn((view: FleetBridgeView) => {
+      if (view.status === 'error') supervisor.refresh();
+    });
+    supervisor.on('changed', refreshOnFailure);
+    controlled.stdout.write('{}\n');
+    controlled.respond(pendingRequest, poisoned);
+
+    expect(controlled.child.kill).toHaveBeenCalledOnce();
+    expect(controlled.requests).toHaveLength(2);
+    expect(supervisor.getView()).toMatchObject({
+      status: 'error',
+      errorCode: 'protocol_error',
+      snapshot: { revision: 'fixture-revision' }
+    });
+    expect(JSON.parse(readFileSync(cachePath, 'utf8')).snapshot.revision).toBe('fixture-revision');
+    supervisor.stop();
+  });
+
+  it('parses a highly fragmented frame with one bounded assembly', () => {
+    const directory = temporaryDirectory();
+    const controlled = createControlledChild();
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'fleet-cache-v1.json'),
+      launch: { command: 'fake-bridge', args: [], distro: 'Test Linux' },
+      logger,
+      spawnProcess: vi.fn(() => controlled.child) as never
+    });
+    const concat = vi.spyOn(Buffer, 'concat');
+    try {
+      supervisor.start();
+      const frame = controlled.responseFrame(controlled.requests[0], fixture);
+      for (const byte of frame) controlled.stdout.write(Buffer.from([byte]));
+      expect(supervisor.getView().status).toBe('live');
+      expect(concat.mock.calls.length).toBeLessThan(32);
+    } finally {
+      concat.mockRestore();
+      supervisor.stop();
+    }
+  });
+
   it('loads a previously verified snapshot when the bridge is offline', async () => {
     const directory = temporaryDirectory();
     const cachePath = join(directory, 'fleet-cache-v1.json');
@@ -320,6 +487,74 @@ describe('fleet bridge supervisor', () => {
     expect(supervisor.getView().snapshot.sessions).toHaveLength(1);
     expect(JSON.parse(readFileSync(cachePath, 'utf8')).snapshot.revision).toBe('fixture-revision');
     supervisor.stop();
+  });
+
+  it('accepts a validated connecting snapshot after the bounded settle budget and keeps refreshing', async () => {
+    vi.useFakeTimers();
+    const directory = temporaryDirectory();
+    const cachePath = join(directory, 'fleet-cache-v1.json');
+    writeFileSync(cachePath, JSON.stringify({
+      cacheVersion: 1, protocolVersion: 1, savedAt: '2026-07-12T04:01:00Z', snapshot: fixture
+    }));
+    const settling = structuredClone(fixture);
+    settling.revision = 'settling';
+    settling.hosts[0].status = 'connecting';
+    settling.hosts[0].lastSeenAt = null;
+    settling.sessions = [];
+    settling.schedules = [];
+    const healthy = structuredClone(fixture);
+    healthy.revision = 'healthy-after-settle';
+    let currentSnapshot = settling;
+    const stdout = new PassThrough();
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr: new PassThrough(),
+      stdin: new Writable({
+        write(chunk, _encoding, callback) {
+          const request = JSON.parse(chunk.toString('utf8'));
+          stdout.write(`${JSON.stringify({
+            protocolVersion: 1,
+            type: 'response',
+            requestId: request.requestId,
+            timestamp: new Date().toISOString(),
+            ok: true,
+            result: currentSnapshot
+          })}\n`);
+          callback();
+        }
+      }),
+      killed: false,
+      kill: vi.fn(() => true)
+    });
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath,
+      launch: { command: 'fake-bridge', args: [], distro: 'Test Linux' },
+      logger,
+      spawnProcess: vi.fn(() => child) as never
+    });
+    try {
+      supervisor.start();
+      expect(supervisor.getView().status).toBe('cached');
+
+      await vi.advanceTimersByTimeAsync(10_001);
+
+      expect(supervisor.getView()).toMatchObject({
+        status: 'live',
+        snapshot: { revision: 'settling', sessions: [] }
+      });
+      expect(JSON.parse(readFileSync(cachePath, 'utf8')).snapshot.revision).toBe('fixture-revision');
+
+      currentSnapshot = healthy;
+      supervisor.refresh();
+      expect(supervisor.getView()).toMatchObject({
+        status: 'live',
+        snapshot: { revision: 'healthy-after-settle' }
+      });
+      expect(JSON.parse(readFileSync(cachePath, 'utf8')).snapshot.revision).toBe('healthy-after-settle');
+    } finally {
+      supervisor.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a privacy-expanding frame without replacing cache', async () => {
@@ -416,6 +651,84 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   return script;
 }
 
+function createRespondingChild(snapshot: unknown): {
+  child: EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: Writable;
+    killed: boolean;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  stdout: PassThrough;
+  writes: ReturnType<typeof vi.fn>;
+} {
+  const stdout = new PassThrough();
+  const writes = vi.fn((chunk: Buffer | string, _encoding: BufferEncoding, callback: (error?: Error | null) => void) => {
+    const request = JSON.parse(chunk.toString()) as { requestId: string };
+    stdout.write(`${JSON.stringify({
+      protocolVersion: 1,
+      type: 'response',
+      requestId: request.requestId,
+      timestamp: new Date().toISOString(),
+      ok: true,
+      result: snapshot
+    })}\n`);
+    callback();
+  });
+  const child = Object.assign(new EventEmitter(), {
+    stdout,
+    stderr: new PassThrough(),
+    stdin: new Writable({ write: writes }),
+    killed: false,
+    kill: vi.fn(() => true)
+  });
+  return { child, stdout, writes };
+}
+
+function createControlledChild(): {
+  child: EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: Writable;
+    killed: boolean;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  stdout: PassThrough;
+  requests: string[];
+  responseFrame(requestId: string, result: unknown): Buffer;
+  respond(requestId: string, result: unknown): void;
+} {
+  const stdout = new PassThrough();
+  const requests: string[] = [];
+  const child = Object.assign(new EventEmitter(), {
+    stdout,
+    stderr: new PassThrough(),
+    stdin: new Writable({
+      write(chunk, _encoding, callback) {
+        requests.push((JSON.parse(chunk.toString()) as { requestId: string }).requestId);
+        callback();
+      }
+    }),
+    killed: false,
+    kill: vi.fn(() => true)
+  });
+  const responseFrame = (requestId: string, result: unknown): Buffer => Buffer.from(`${JSON.stringify({
+    protocolVersion: 1,
+    type: 'response',
+    requestId,
+    timestamp: new Date().toISOString(),
+    ok: true,
+    result
+  })}\n`);
+  return {
+    child,
+    stdout,
+    requests,
+    responseFrame,
+    respond: (requestId, result) => stdout.write(responseFrame(requestId, result))
+  };
+}
+
 function waitForStatus(supervisor: FleetBridgeSupervisor, status: FleetBridgeView['status']): Promise<FleetBridgeView> {
   return waitForAnyStatus(supervisor, [status]);
 }
@@ -431,4 +744,35 @@ function waitForAnyStatus(supervisor: FleetBridgeSupervisor, statuses: FleetBrid
       resolve(view);
     });
   });
+}
+
+function pairingProposalReview() {
+  return {
+    id: 'pair-1',
+    invitationId: 'invite-1',
+    deviceId: 'phone-1',
+    deviceName: 'Phone',
+    platform: 'Android',
+    peer: 'phone.tailnet.ts.net',
+    peerIp: '100.64.0.10',
+    requestedAt: '2026-08-01T00:00:00Z',
+    expiresAt: '2026-08-01T01:00:00Z',
+    reviewedAt: null,
+    status: 'awaiting-review',
+    publicationRef: null,
+    proposal: {
+      schemaVersion: 1,
+      id: 'phone-1',
+      name: 'Phone',
+      roles: ['client'],
+      platform: 'Android',
+      linuxUsername: '',
+      tailscaleNode: 'phone.tailnet.ts.net',
+      projectsRoot: '',
+      transport: 'tailscale',
+      wslDistro: '',
+      fallback: { sshHost: '', ip: '' },
+      hostCommand: ''
+    }
+  };
 }

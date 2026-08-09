@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LimitStateManager, mergeCodexResult } from '../src/main/state-manager';
 import type { WslCodexProfile } from '../src/main/collectors/codex';
-import { createLimitWindow, emptyProvider, sortProviderSnapshots, type ProviderLimitSnapshot } from '../src/shared/limits';
+import {
+  CODEX_REFRESH_MS,
+  createLimitWindow,
+  emptyProvider,
+  sortProviderSnapshots,
+  type ProviderLimitSnapshot
+} from '../src/shared/limits';
 import { createDefaultSettings } from '../src/shared/settings';
 
 describe('multi-profile state manager', () => {
@@ -121,6 +127,77 @@ describe('multi-profile state manager', () => {
 
     expect(sorted.map((provider) => provider.id)).toEqual(['codex3', 'codex1', 'codex4', 'codex2']);
   });
+
+  it('discards an in-flight profile generation and refreshes the newest settings', async () => {
+    const oldResult = deferred<ProviderLimitSnapshot>();
+    const newResult = deferred<ProviderLimitSnapshot>();
+    const newRefreshStarted = deferred<void>();
+    const saved: ProviderLimitSnapshot[][] = [];
+    const oldSettings = settingsWithProfile('old-profile', '/home/old');
+    const newSettings = settingsWithProfile('new-profile', '/home/new');
+    const manager = new LimitStateManager({
+      settings: oldSettings,
+      collectCodexProfile: (profile) => {
+        if (profile.id === 'old-profile') return oldResult.promise;
+        newRefreshStarted.resolve();
+        return newResult.promise;
+      },
+      loadCache: () => ({}),
+      saveCache: (providers) => saved.push([...providers])
+    });
+
+    const refresh = manager.refreshCodex();
+    manager.applySettings(newSettings);
+    expect(manager.getState().providers).toMatchObject([
+      { id: 'new-profile', status: 'loading' }
+    ]);
+
+    oldResult.resolve(makeCodexSnapshot('old-profile', 10));
+    await newRefreshStarted.promise;
+    expect(manager.getState().providers).toMatchObject([
+      { id: 'new-profile', status: 'loading' }
+    ]);
+    expect(saved).toEqual([]);
+
+    newResult.resolve(makeCodexSnapshot('new-profile', 20));
+    await refresh;
+
+    expect(manager.getState().providers).toMatchObject([
+      { id: 'new-profile', status: 'ok' }
+    ]);
+    expect(saved.map((providers) => providers.map((provider) => provider.id))).toEqual([
+      ['new-profile']
+    ]);
+    expect(saved.flat().every(Boolean)).toBe(true);
+  });
+
+  it('starts only one timer set and stop clears all scheduled refreshes', async () => {
+    vi.useFakeTimers();
+    let collections = 0;
+    const manager = new LimitStateManager({
+      profiles: [TEST_PROFILES[0]],
+      claudeEnabled: false,
+      collectCodexProfile: async (profile) => {
+        collections += 1;
+        return makeCodexSnapshot(profile.id, 10);
+      },
+      loadCache: () => ({}),
+      saveCache: () => undefined
+    });
+    try {
+      manager.start();
+      manager.start();
+      await manager.refreshCodex();
+      expect(collections).toBe(1);
+
+      manager.stop();
+      await vi.advanceTimersByTimeAsync(CODEX_REFRESH_MS);
+      expect(collections).toBe(1);
+    } finally {
+      manager.stop();
+      vi.useRealTimers();
+    }
+  });
 });
 
 const TEST_PROFILES: readonly WslCodexProfile[] = [1, 2, 3, 4].map((number) => ({
@@ -155,4 +232,29 @@ function makeCodexSnapshotWithUsage(
       weekly: createLimitWindow('weekly', weeklyUsedPercent, resetAt, 10080)
     }
   };
+}
+
+function settingsWithProfile(id: string, home: string) {
+  const settings = createDefaultSettings();
+  settings.claudeEnabled = false;
+  settings.codexProfiles = [{
+    id,
+    label: id,
+    enabled: true,
+    order: 0,
+    distro: 'Ubuntu',
+    user: 'testuser',
+    home,
+    codexHome: `${home}/.codex`,
+    executable: `${home}/.local/bin/codex`
+  }];
+  return settings;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }

@@ -66,6 +66,7 @@ import {
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
 import type { FleetDownloadJob } from '../../shared/app';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
+import { resolveFleetNotificationTarget, type FleetNotificationTarget } from '../../shared/notification';
 import { FLEET_FIXTURE } from './fleet-fixtures';
 import { SessionWorkspace } from './session-workspace';
 import type { TerminalTabDescriptor } from '../../shared/terminal';
@@ -308,6 +309,41 @@ export class DashboardPrototype {
     this.workspace.open(tab);
     this.view = 'workspace';
     this.render();
+  }
+
+  openNotificationTarget(target: FleetNotificationTarget): void {
+    const route = resolveFleetNotificationTarget(this.snapshot, target);
+    if (route.action === 'open-session') {
+      this.view = 'workspace';
+      this.render();
+      void this.workspace.openSession(route.id);
+      return;
+    }
+    if (route.action === 'dashboard-fallback') {
+      this.view = route.view;
+      this.showToast(route.message);
+      return;
+    }
+    this.view = 'fleet';
+    this.render();
+    if (route.action === 'review-pairing') {
+      this.focusNotificationTarget(`[data-pairing-request-id="${CSS.escape(route.id)}"]`);
+      void window.limitsWidget.reviewFleetPairing(route.id).then((result) => this.showToast(result.message));
+      return;
+    }
+    this.focusNotificationTarget(`[data-physical-host-id="${CSS.escape(route.id)}"]`);
+  }
+
+  private focusNotificationTarget(selector: string): void {
+    window.requestAnimationFrame(() => {
+      const element = this.root.querySelector<HTMLElement>(selector);
+      if (!element) return;
+      element.tabIndex = -1;
+      element.classList.add('notification-target');
+      element.scrollIntoView({ block: 'center' });
+      element.focus({ preventScroll: true });
+      window.setTimeout(() => element.classList.remove('notification-target'), 4_000);
+    });
   }
 
   handleAction(action: string, target: HTMLElement): boolean {
@@ -1228,7 +1264,7 @@ export class DashboardPrototype {
         : `<button class="quiet-button">${icon('more-horizontal')}More</button>`;
     const operationalId = transport?.id ?? host.legacyHostIds[0] ?? '';
     const sessionCount = this.snapshot.sessions.filter((session) => session.physicalHostId === host.id).length;
-    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(operationalId)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(this.targetLabels(host))}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(transport?.wtmuxVersion ?? 'Unknown')}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>${transport ? `v${transport.protocolVersion}` : 'Unknown'}</dd></div></dl><div class="host-card-actions"><button class="quiet-button" data-action="dashboard-doctor-host" ${offline || !transport ? 'disabled' : ''}>${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
+    return `<article class="host-card ${offline ? 'host-card-offline' : ''}" data-host-id="${escapeAttr(operationalId)}" data-physical-host-id="${escapeAttr(host.id)}"><div class="host-card-top"><span class="host-platform">${host.platform === 'termux' ? icon('monitor') : icon('server')}</span><div><strong>${escapeHtml(host.name)}</strong><small>${escapeHtml(this.targetLabels(host))}</small></div><span class="host-status status-text-${host.status}"><i class="status-dot status-${host.status}"></i>${capitalize(host.status)}</span></div><p>${escapeHtml(detail)}</p><dl><div><dt>Sessions</dt><dd>${sessionCount}</dd></div><div><dt>wtmux</dt><dd>${escapeHtml(transport?.wtmuxVersion ?? 'Unknown')}</dd></div><div><dt>Last seen</dt><dd>${relativeTime(host.lastSeenAt)}</dd></div><div><dt>Protocol</dt><dd>${transport ? `v${transport.protocolVersion}` : 'Unknown'}</dd></div></dl><div class="host-card-actions"><button class="quiet-button" data-action="dashboard-doctor-host" ${offline || !transport ? 'disabled' : ''}>${icon('heart-pulse')}Doctor</button>${secondaryAction}</div></article>`;
   }
 
   private transportHost(host: FleetPhysicalHost): FleetHost | undefined {

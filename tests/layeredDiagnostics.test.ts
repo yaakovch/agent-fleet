@@ -43,7 +43,9 @@ const input = () => ({
     releases: {
       detach: 0, cancel: 0, tmux_kill: 0, wsl_shutdown: 0, host_restart: 0,
       app_shutdown: 0, timeout: 0, protocol_failure: 0, superseded: 0
-    }
+    },
+    forcedTerminations: 0,
+    abandoned: 0
   }
 });
 
@@ -128,6 +130,24 @@ describe('layered diagnostics v2', () => {
       summary: '1 app connection owners need review'
     });
     expect(JSON.stringify(report)).not.toContain('private-tab');
+  });
+
+  it('surfaces children that exceeded the forced termination deadline', () => {
+    const value = input();
+    value.processOwnership = {
+      ...value.processOwnership,
+      active: 0,
+      owners: {},
+      forcedTerminations: 2,
+      abandoned: 2
+    };
+    const platform = createWindowsLayeredDiagnostics(value).checks
+      .find((check) => check.layer === 'platform_adapter');
+    expect(platform).toMatchObject({
+      status: 'attention',
+      errorCode: 'STALE_CONNECTIONS_DETECTED',
+      summary: '2 app processes exceeded their termination deadline'
+    });
   });
 });
 

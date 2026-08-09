@@ -55,6 +55,7 @@ export interface FleetBridgeOptions {
   logger: FleetBridgeLogger;
   spawnProcess?: typeof spawn;
   mutationTimeoutMs?: number;
+  terminationTimeoutMs?: number;
   processOwnership?: WslProcessOwnership;
 }
 
@@ -72,6 +73,9 @@ interface PendingMutation {
   timeout: NodeJS.Timeout;
   startedAt: number;
 }
+
+const SETTLE_POLL_LIMIT = 10;
+const SETTLE_POLL_INTERVAL_MS = 1_000;
 
 export interface FleetSupervisorMetrics {
   processStarts: number;
@@ -91,7 +95,11 @@ export class FleetMutationError extends Error {
 export class FleetBridgeSupervisor extends EventEmitter {
   private readonly spawnProcess: typeof spawn;
   private child: ChildProcessWithoutNullStreams | null = null;
-  private buffer = Buffer.alloc(0);
+  private frameChunks: Buffer[] = [];
+  private framePendingChunks: Buffer[] = [];
+  private framePendingBytes = 0;
+  private frameBytes = 0;
+  private childTerminal = false;
   private snapshot: BridgeFleetSnapshot | null = null;
   private cacheSavedAt: string | null = null;
   private status: FleetBridgeStatus = 'starting';
@@ -101,6 +109,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
   private retryTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private settleTimer: NodeJS.Timeout | null = null;
+  private terminationTimer: NodeJS.Timeout | null = null;
   private settlePolls = 0;
   private lastFrameAt = 0;
   private requestNumber = 0;
@@ -138,11 +147,15 @@ export class FleetBridgeSupervisor extends EventEmitter {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.settleTimer) clearTimeout(this.settleTimer);
+    if (this.terminationTimer) clearTimeout(this.terminationTimer);
     this.retryTimer = null;
     this.heartbeatTimer = null;
     this.settleTimer = null;
+    this.terminationTimer = null;
     if (!this.options.processOwnership?.release(this.child, 'app_shutdown')) safeKill(this.child);
     this.child = null;
+    this.childTerminal = false;
+    this.resetFrameBuffer();
     this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge stopped');
     this.applySupervisorAction({ type: 'shutdown-complete' });
   }
@@ -153,6 +166,10 @@ export class FleetBridgeSupervisor extends EventEmitter {
 
   getSupervisorState(): SupervisorState {
     return { ...this.semanticState };
+  }
+
+  isRunning(): boolean {
+    return !this.stopped;
   }
 
   getSupervisorMetrics(): FleetSupervisorMetrics {
@@ -167,7 +184,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   refresh(): void {
-    if (this.child && !this.child.killed) this.requestSnapshot();
+    if (this.child && !this.child.killed && !this.childTerminal) this.requestSnapshot();
     else if (!this.stopped && !this.retryTimer) this.startChild();
   }
 
@@ -228,7 +245,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   private sendMutation(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage | FleetModelControlState | FleetModelControlMutationResult> {
-    if (this.status !== 'live' || !this.snapshot || !this.child || this.child.killed || !this.child.stdin.writable) {
+    if (this.status !== 'live' || !this.snapshot || !this.child || this.childTerminal
+      || this.child.killed || !this.child.stdin.writable) {
       return Promise.reject(new FleetMutationError('host_offline', 'Fleet controller is not live'));
     }
     if (this.pendingRequestId) {
@@ -244,7 +262,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
         this.finishPendingMutation();
         reject(new FleetMutationError('timeout', 'Fleet mutation timed out; refresh before retrying'));
         this.errorCode = 'mutation_timeout';
-        if (!this.options.processOwnership?.release(this.child, 'timeout')) safeKill(this.child);
+        this.terminateCurrentChild('timeout', 'mutation_timeout');
       }, this.options.mutationTimeoutMs ?? 15_000);
       timeout.unref();
       this.pendingMutation = { requestId, resolve, reject, timeout, startedAt: Date.now() };
@@ -291,7 +309,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
 
   private startChild(): void {
     if (this.stopped || this.child) return;
-    this.buffer = Buffer.alloc(0);
+    this.resetFrameBuffer();
+    this.childTerminal = false;
     this.pendingRequestId = '';
     this.lastFrameAt = Date.now();
     this.settlePolls = 0;
@@ -307,19 +326,33 @@ export class FleetBridgeSupervisor extends EventEmitter {
       return;
     }
     this.child = child;
-    this.options.processOwnership?.own('control:bridge', child);
+    try {
+      this.options.processOwnership?.own('control:bridge', child);
+    } catch (error) {
+      this.child = null;
+      child.once('error', () => undefined);
+      safeKill(child);
+      this.options.logger.error('Fleet bridge ownership registration failed', error);
+      this.disconnect('bridge_unavailable');
+      return;
+    }
     this.processStarts += 1;
     this.connectionStartedAt = Date.now();
     let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => this.acceptData(chunk));
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (this.child === child && !this.childTerminal) this.acceptData(chunk);
+    });
     child.stderr.on('data', (chunk: Buffer) => {
+      if (this.child !== child) return;
       stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4_096);
     });
     child.once('error', (error) => {
+      if (this.child !== child) return;
       this.options.logger.warn('Fleet bridge process error', error);
       this.disconnect('bridge_unavailable');
     });
     child.once('exit', (code, signal) => {
+      if (this.child !== child) return;
       const diagnostic = stderr.replaceAll('\u0000', '').trim();
       if (diagnostic) this.options.logger.warn('Fleet bridge exited', { code, signal, diagnostic });
       this.disconnect(this.errorCode || 'bridge_disconnected');
@@ -328,20 +361,27 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   private acceptData(chunk: Buffer): void {
-    if (!this.child) return;
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    if (this.buffer.length > FLEET_MAX_FRAME_BYTES && !this.buffer.includes(0x0a)) {
-      this.protocolFailure('frame_too_large');
-      return;
-    }
-    let newline = this.buffer.indexOf(0x0a);
-    while (newline >= 0) {
-      const frame = this.buffer.subarray(0, newline);
-      this.buffer = this.buffer.subarray(newline + 1);
-      if (frame.length > FLEET_MAX_FRAME_BYTES) {
+    if (!this.child || this.childTerminal) return;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      const end = newline < 0 ? chunk.length : newline;
+      const segment = chunk.subarray(offset, end);
+      if (this.frameBytes + segment.length > FLEET_MAX_FRAME_BYTES) {
         this.protocolFailure('frame_too_large');
         return;
       }
+      if (newline < 0) {
+        if (segment.length) this.appendFrameSegment(segment);
+        return;
+      }
+      const frame = this.frameBytes === 0
+        ? segment
+        : Buffer.concat(
+          [...this.frameChunks, ...this.framePendingChunks, segment],
+          this.frameBytes + segment.length
+        );
+      this.resetFrameBuffer();
       try {
         this.acceptFrame(JSON.parse(frame.toString('utf8')) as unknown);
       } catch (error) {
@@ -349,7 +389,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
         this.protocolFailure('protocol_error');
         return;
       }
-      newline = this.buffer.indexOf(0x0a);
+      if (this.childTerminal) return;
+      offset = newline + 1;
     }
   }
 
@@ -385,7 +426,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
       this.snapshotRequestStartedAt = 0;
     }
     const isSettling = snapshot.hosts.some((host) => host.status === 'connecting');
-    if (isSettling && this.snapshot && this.status === 'cached') {
+    if (isSettling && this.snapshot && this.status === 'cached' && this.settlePolls < SETTLE_POLL_LIMIT) {
       this.scheduleSettlePoll();
       return;
     }
@@ -489,7 +530,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   private requestSnapshot(): void {
-    if (!this.child || this.child.killed || !this.child.stdin.writable || this.pendingRequestId) return;
+    if (!this.child || this.childTerminal || this.child.killed
+      || !this.child.stdin.writable || this.pendingRequestId) return;
     this.requestNumber += 1;
     this.pendingRequestId = `desktop-${this.requestNumber}`;
     this.snapshotRequestStartedAt = Date.now();
@@ -506,12 +548,12 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   private scheduleSettlePoll(): void {
-    if (this.settleTimer || this.settlePolls >= 10 || this.stopped) return;
+    if (this.settleTimer || this.settlePolls >= SETTLE_POLL_LIMIT || this.stopped) return;
     this.settlePolls += 1;
     this.settleTimer = setTimeout(() => {
       this.settleTimer = null;
       this.requestSnapshot();
-    }, 1_000);
+    }, SETTLE_POLL_INTERVAL_MS);
     this.settleTimer.unref();
   }
 
@@ -519,20 +561,24 @@ export class FleetBridgeSupervisor extends EventEmitter {
     if (!this.child || Date.now() - this.lastFrameAt <= SUPERVISOR_HEARTBEAT_TIMEOUT_MS) return;
     this.applySupervisorAction({ type: 'heartbeat-expired' });
     this.errorCode = 'heartbeat_timeout';
-    if (!this.options.processOwnership?.release(this.child, 'timeout')) safeKill(this.child);
+    this.terminateCurrentChild('timeout', 'heartbeat_timeout');
   }
 
   private protocolFailure(code: string): void {
     this.applySupervisorAction({ type: 'channel-failed', channel: 'control' });
     this.errorCode = code;
     this.status = 'error';
+    this.terminateCurrentChild('protocol_failure', code);
     this.emitChanged();
-    if (!this.options.processOwnership?.release(this.child, 'protocol_failure')) safeKill(this.child);
   }
 
   private disconnect(code: string): void {
     if (!this.child && this.retryTimer) return;
+    if (this.terminationTimer) clearTimeout(this.terminationTimer);
+    this.terminationTimer = null;
     this.child = null;
+    this.childTerminal = false;
+    this.resetFrameBuffer();
     this.pendingRequestId = '';
     this.snapshotRequestStartedAt = 0;
     this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge disconnected');
@@ -555,6 +601,49 @@ export class FleetBridgeSupervisor extends EventEmitter {
       this.startChild();
     }, delay);
     this.retryTimer.unref();
+  }
+
+  private terminateCurrentChild(
+    cause: 'timeout' | 'protocol_failure',
+    disconnectCode: string
+  ): void {
+    const child = this.child;
+    if (!child || this.childTerminal) return;
+    this.childTerminal = true;
+    this.resetFrameBuffer();
+    this.pendingRequestId = '';
+    this.snapshotRequestStartedAt = 0;
+    this.rejectPendingMutation('bridge_disconnected', 'Fleet bridge generation was terminated');
+    if (!this.options.processOwnership?.release(child, cause)) safeKill(child);
+    if (this.child !== child) return;
+    if (this.terminationTimer) return;
+    const timeoutMs = this.options.terminationTimeoutMs ?? 5_000;
+    this.terminationTimer = setTimeout(() => {
+      this.terminationTimer = null;
+      if (this.child === child) this.disconnect(disconnectCode);
+    }, timeoutMs);
+    this.terminationTimer.unref();
+  }
+
+  private resetFrameBuffer(): void {
+    this.frameChunks = [];
+    this.framePendingChunks = [];
+    this.framePendingBytes = 0;
+    this.frameBytes = 0;
+  }
+
+  private appendFrameSegment(segment: Buffer): void {
+    this.frameBytes += segment.length;
+    if (this.framePendingChunks.length === 0 && segment.length >= 16 * 1024) {
+      this.frameChunks.push(segment);
+      return;
+    }
+    this.framePendingChunks.push(segment);
+    this.framePendingBytes += segment.length;
+    if (this.framePendingChunks.length < 64 && this.framePendingBytes < 16 * 1024) return;
+    this.frameChunks.push(Buffer.concat(this.framePendingChunks, this.framePendingBytes));
+    this.framePendingChunks = [];
+    this.framePendingBytes = 0;
   }
 
   private finishPendingMutation(): void {
@@ -633,16 +722,18 @@ function parsePairingInvitation(input: unknown): FleetMutationResult['invitation
   };
 }
 
-function parsePairingProposalReview(input: unknown): FleetMutationResult['pairingRequest'] {
+export function parsePairingProposalReview(input: unknown): FleetMutationResult['pairingRequest'] {
   const value = object(input, 'pairing proposal review');
   exactKeys(value, [
     'id', 'invitationId', 'deviceId', 'deviceName', 'platform', 'peer', 'peerIp', 'requestedAt',
     'expiresAt', 'reviewedAt', 'status', 'publicationRef', 'proposal'
   ], 'pairing proposal review');
-  if (!safeToken(value.id, 160) || !safeText(value.deviceName, 128) || !safeText(value.platform, 32)
+  if (!safeToken(value.id, 160) || !safeToken(value.invitationId, 160) || !safeToken(value.deviceId, 160)
+    || !safeText(value.deviceName, 128) || !safeText(value.platform, 32)
     || !safeText(value.peer, 253) || !safeText(value.peerIp, 45) || !safeText(value.requestedAt, 40)
     || !safeText(value.expiresAt, 40) || !Number.isFinite(Date.parse(value.requestedAt as string))
-    || !Number.isFinite(Date.parse(value.expiresAt as string)) || value.status !== 'awaiting-review') {
+    || !Number.isFinite(Date.parse(value.expiresAt as string)) || value.reviewedAt !== null
+    || value.publicationRef !== null || value.status !== 'awaiting-review') {
     throw new Error('Pairing proposal review is invalid');
   }
   const proposal = object(value.proposal, 'pairing proposal');
@@ -653,13 +744,20 @@ function parsePairingProposalReview(input: unknown): FleetMutationResult['pairin
   const fallback = object(proposal.fallback, 'pairing proposal fallback');
   exactKeys(fallback, ['sshHost', 'ip'], 'pairing proposal fallback');
   if (proposal.schemaVersion !== 1 || !Array.isArray(proposal.roles) || proposal.roles.length < 1
-    || proposal.roles.length > 2 || proposal.roles.some((role) => role !== 'host' && role !== 'client')) {
+    || proposal.roles.length > 2 || new Set(proposal.roles).size !== proposal.roles.length
+    || proposal.roles.some((role) => role !== 'host' && role !== 'client')) {
     throw new Error('Pairing proposal schema is invalid');
   }
   for (const field of ['id', 'name', 'platform', 'linuxUsername', 'tailscaleNode', 'projectsRoot', 'transport', 'wslDistro', 'hostCommand']) {
     if (typeof proposal[field] !== 'string' || !safeTextAllowEmpty(proposal[field], 4096)) throw new Error('Pairing proposal field is invalid');
   }
   if (!safeTextAllowEmpty(fallback.sshHost, 253) || !safeTextAllowEmpty(fallback.ip, 45)) throw new Error('Pairing proposal fallback is invalid');
+  if (proposal.id !== value.deviceId || proposal.name !== value.deviceName || proposal.platform !== value.platform) {
+    throw new Error('Pairing proposal identity does not match its verified review envelope');
+  }
+  if (proposal.tailscaleNode && normalizeDnsName(proposal.tailscaleNode as string) !== normalizeDnsName(value.peer as string)) {
+    throw new Error('Pairing proposal Tailscale identity does not match its verified peer');
+  }
   if (JSON.stringify(proposal).length > 65_536) throw new Error('Pairing proposal is too large');
   return {
     id: value.id as string,
@@ -672,6 +770,10 @@ function parsePairingProposalReview(input: unknown): FleetMutationResult['pairin
     status: 'awaiting-review',
     proposal
   };
+}
+
+function normalizeDnsName(value: string): string {
+  return value.replace(/\.+$/u, '').toLowerCase();
 }
 
 function parseDoctorResult(input: unknown): FleetDoctorResult {
@@ -743,11 +845,15 @@ function safeToken(value: unknown, maximum: number): value is string {
 }
 
 function safeText(value: unknown, maximum: number): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\u0000-\u001f\u007f]/u.test(value);
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+    && !/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
 }
 
 function safeTextAllowEmpty(value: unknown, maximum: number): value is string {
-  return typeof value === 'string' && value.length <= maximum && !/[\u0000-\u001f\u007f]/u.test(value);
+  return typeof value === 'string' && value.length <= maximum
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+    && !/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
 }
 
 function safeKill(child: ChildProcessWithoutNullStreams | null): void {

@@ -18,7 +18,7 @@ import {
   type Rectangle
 } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { AppInfo, SettingsImportSelection, UpdaterState } from '../shared/app';
@@ -41,10 +41,12 @@ import {
   createSettingsExport,
   getSettingsPath,
   loadSettings,
+  MAX_SETTINGS_IMPORT_BYTES,
   parseSettingsImport,
   rollbackLatestSettings,
   saveSettings
 } from './settings-store';
+import { readFileSnapshot } from './durable-file';
 import { LimitStateManager } from './state-manager';
 import { FleetBridgeSupervisor, FleetMutationError, fleetBridgeLaunchFromSettings } from './fleet-bridge';
 import { isRetryableFleetErrorCode } from '../shared/fleet-errors';
@@ -54,7 +56,6 @@ import { runPackagedTerminalSmoke } from './terminal-smoke';
 import { ConversationManager } from './conversation-manager';
 import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
 import type { WorkspaceCommand, WorkspaceOpenRequest } from '../shared/workspace-layout';
-import type { StagedAttachment } from '../shared/conversation';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { FleetDownloadManager } from './fleet-download';
 import { UpdaterManager } from './updater';
@@ -67,7 +68,21 @@ import type { LocalSuggestionSettingsInput } from '../shared/local-suggestions';
 import { LocalSuggestionStore } from './local-suggestion-store';
 import { LocalSuggestionManager } from './local-suggestion-manager';
 import { WslRuntimeManager } from './wsl-runtime-manager';
+import { FleetConfigurationStore } from './fleet-configuration-store';
+import { FleetReleaseSetAuthority } from './release-set-authority';
 import { WslProcessOwnership } from './wsl-process-ownership';
+import { awaitBoundedShutdown, RuntimeLifecycleCoordinator } from './runtime-lifecycle';
+import type { WslRuntimeState } from '../shared/runtime';
+import { assertIpcPayload } from '../shared/ipc-validation';
+import {
+  RendererAccessPolicy,
+  allowedRendererRoles,
+  type RendererContentKind,
+  type RendererRole
+} from './renderer-access-policy';
+import { FLEET_NOTIFICATION_PAUSE_MS, FleetNotificationTracker } from './fleet-notification-tracker';
+import { routeExternalLink } from './external-link-router';
+import type { FleetNotificationTarget } from '../shared/notification';
 
 const APP_ID = 'com.yaakovch.ailimitswidget';
 const PRODUCT_NAME = 'Agent Fleet';
@@ -106,11 +121,25 @@ const stateManager = new LimitStateManager({
   settingsDiagnostic: settingsLoadResult.recovered ? settingsLoadResult.message : undefined
 });
 const wslProcessOwnership = new WslProcessOwnership();
+const rendererAccess = new RendererAccessPolicy();
+const fleetConfigurationStore = new FleetConfigurationStore(join(dataDirectory, 'fleet-configuration'));
+const releaseSetAuthority = new FleetReleaseSetAuthority({
+  resourcesRoot: join(getResourceRoot(), 'resources'),
+  dataRoot: dataDirectory,
+  legacyPolicy: 'allow-unconfigured',
+  configurationStore: fleetConfigurationStore
+});
 const wslRuntimeManager = new WslRuntimeManager({
   resourcesRoot: join(getResourceRoot(), 'resources'),
-  distro: () => fleetBridgeLaunchFromSettings(appSettings).distro
+  distro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  windowsVersion: () => app.getVersion(),
+  releaseSetAuthority
 });
 let fleetBridge = createFleetBridge();
+const runtimeLifecycle = new RuntimeLifecycleCoordinator({
+  bridge: () => fleetBridge,
+  runtimeState: () => wslRuntimeManager.getState()
+});
 let terminalRestored = false;
 const terminalManager = new TerminalManager({
   statePath: join(dataDirectory, 'terminal-workspace-v2.json'),
@@ -123,10 +152,14 @@ const terminalManager = new TerminalManager({
     return snapshot.controller.status === 'healthy'
       && snapshot.hosts.some((host) => host.id === hostId && host.status === 'healthy');
   },
-  onData: (event) => broadcast(IPC_CHANNELS.terminalData, event),
-  onStatus: (event) => broadcast(IPC_CHANNELS.terminalStatus, event),
-  onClosed: (event) => broadcast(IPC_CHANNELS.terminalClosed, event),
-  onWorkspace: (state) => broadcast(IPC_CHANNELS.terminalWorkspaceUpdated, state),
+  onData: (event) => sendContent(IPC_CHANNELS.terminalData, event, 'terminal', event.tabId),
+  onStatus: (event) => sendTabContent(IPC_CHANNELS.terminalStatus, event, event.tab.id),
+  onClosed: (event) => {
+    sendTabContent(IPC_CHANNELS.terminalClosed, event, event.tabId);
+    rendererAccess.revokeTab(event.tabId);
+    conversationManager.close(event.tabId);
+  },
+  onWorkspace: (state) => sendDashboard(IPC_CHANNELS.terminalWorkspaceUpdated, state),
   processOwnership: wslProcessOwnership
 });
 const conversationManager = new ConversationManager({
@@ -135,7 +168,7 @@ const conversationManager = new ConversationManager({
   getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
   resolveTab: (tabId) => terminalManager.list().find((tab) => tab.id === tabId),
   sendTerminalInput: (tabId, data) => terminalManager.input(tabId, data),
-  onEvent: (event) => broadcast(IPC_CHANNELS.conversationEvent, event),
+  onEvent: (event) => sendContent(IPC_CHANNELS.conversationEvent, event, 'conversation', event.tabId),
   processOwnership: wslProcessOwnership
 });
 const localSuggestionStore = new LocalSuggestionStore(
@@ -158,10 +191,10 @@ const fleetDownloadManager = new FleetDownloadManager({
   downloadsDirectory: () => app.getPath('downloads'),
   onUpdate: (job) => {
     downloadPowerPolicy.update(job);
-    broadcast(IPC_CHANNELS.fleetDownloadUpdated, job);
+    sendDashboard(IPC_CHANNELS.fleetDownloadUpdated, job);
   },
-  onComplete: (job) => {
-    if (Notification.isSupported()) showFleetNotification('Download complete', job.name);
+  onComplete: () => {
+    if (Notification.isSupported()) showFleetNotification('Download complete', 'A verified repository download is ready.');
   },
   processOwnership: wslProcessOwnership
 });
@@ -174,12 +207,11 @@ let settingsWindowView: 'settings' | 'onboarding' = 'settings';
 let tray: Tray | null = null;
 let updater: UpdaterManager | null = null;
 let isQuitting = false;
+let shutdownComplete = false;
+let shutdownPromise: Promise<void> | null = null;
 let interactionMode: InteractionMode = 'passive';
 const pendingImports = new Map<string, WidgetSettings>();
-const notifiedAttention = new Set<string>();
-const previousHostStates = new Map<string, string>();
-const previousScheduleStates = new Map<string, string>();
-let notificationBaselineReady = false;
+const fleetNotificationTracker = new FleetNotificationTracker();
 const lastDoctorResults = new Map<string, FleetDoctorResult>();
 
 function createFleetBridge(): FleetBridgeSupervisor {
@@ -205,7 +237,7 @@ function createFleetBridge(): FleetBridgeSupervisor {
       const reconnected = terminalManager.reconcileSessions();
       if (reconnected) logger.info('Reconnected restored workspace sessions', reconnected);
     }
-    broadcast(IPC_CHANNELS.fleetStateUpdated, view);
+    sendDashboard(IPC_CHANNELS.fleetStateUpdated, view);
     processFleetNotifications(view);
     updateTrayMenu();
     updateTrayTooltip();
@@ -227,59 +259,26 @@ function getFleetView(): FleetBridgeView {
 }
 
 async function pauseFleetNotifications(): Promise<{ ok: true; message: string; settings: WidgetSettings }> {
-  const until = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const until = new Date(Date.now() + FLEET_NOTIFICATION_PAUSE_MS).toISOString();
   const result = await applyAndPersistSettings({ ...cloneSettings(appSettings), notificationPauseUntil: until });
   return { ok: true, message: `Notifications paused until ${new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, settings: result.settings };
 }
 
 function processFleetNotifications(view: FleetBridgeView): void {
-  if (view.status !== 'live') return;
-  const snapshot = view.snapshot;
-  if (!notificationBaselineReady) {
-    for (const host of snapshot.hosts) previousHostStates.set(host.id, host.status);
-    for (const schedule of snapshot.schedules) previousScheduleStates.set(schedule.id, schedule.status);
-    for (const attention of snapshot.attention) notifiedAttention.add(attention.id);
-    notificationBaselineReady = true;
-    return;
-  }
-  const paused = appSettings.notificationPauseUntil && Date.parse(appSettings.notificationPauseUntil) > Date.now();
-  if (paused || !Notification.isSupported()) return;
-  const preferences = appSettings.fleetNotifications;
-
-  for (const host of snapshot.hosts) {
-    const previous = previousHostStates.get(host.id);
-    previousHostStates.set(host.id, host.status);
-    if (!preferences.hostState || !previous || previous === host.status) continue;
-    if (host.status === 'offline') showFleetNotification(`${host.name} is offline`, host.detail);
-    else if (previous === 'offline' && host.status === 'healthy') showFleetNotification(`${host.name} recovered`, 'The host is connected and live actions are available again.');
-  }
-
-  for (const schedule of snapshot.schedules) {
-    const previous = previousScheduleStates.get(schedule.id);
-    previousScheduleStates.set(schedule.id, schedule.status);
-    if (!previous || previous === schedule.status || schedule.status === 'pending') continue;
-    if (schedule.status === 'delivered' && preferences.deliverySuccess) {
-      showFleetNotification('Scheduled continue delivered', `${schedule.hostId} · ${schedule.summary}`);
-    } else if (preferences.deliveryFailures && ['failed', 'interrupted'].includes(schedule.status)) {
-      showFleetNotification(`Scheduled continue ${schedule.status}`, schedule.detail || `${schedule.hostId} did not deliver the action.`);
-    }
-  }
-
-  for (const attention of snapshot.attention) {
-    if (notifiedAttention.has(attention.id)) continue;
-    notifiedAttention.add(attention.id);
-    const enabled = attention.kind === 'hard-limit' ? preferences.hardLimits
-      : attention.kind === 'delivery' ? preferences.deliveryFailures
-        : attention.kind === 'host' ? preferences.hostState
-          : attention.kind === 'version' ? preferences.versionDrift
-            : preferences.pairing;
-    if (enabled) showFleetNotification(attention.title, attention.detail);
+  const paused = Boolean(appSettings.notificationPauseUntil
+    && Date.parse(appSettings.notificationPauseUntil) > Date.now());
+  const notifications = fleetNotificationTracker.process(view, appSettings.fleetNotifications, {
+    emit: !paused && Notification.isSupported(),
+    expectedHostRuntimeVersion: wslRuntimeManager.expectedHostRuntimeVersion()
+  });
+  for (const notification of notifications) {
+    showFleetNotification(notification.title, notification.body, notification.target);
   }
 }
 
-function showFleetNotification(title: string, body: string): void {
+function showFleetNotification(title: string, body: string, target?: FleetNotificationTarget): void {
   const notification = new Notification({ title, body, silent: false });
-  notification.on('click', () => showDashboard());
+  notification.on('click', () => showDashboard(target));
   notification.show();
 }
 
@@ -305,6 +304,7 @@ function createWindow(): void {
     ...(position ?? {}),
     webPreferences: secureWebPreferences()
   });
+  registerRenderer(mainWindow, 'widget');
   secureWindow(mainWindow);
   mainWindow.setAlwaysOnTop(true, 'floating');
   mainWindow.on('moved', () => {
@@ -326,10 +326,11 @@ function createWindow(): void {
   setWidgetInteractionMode('passive');
 }
 
-function showDashboard(): void {
+function showDashboard(target?: FleetNotificationTarget): void {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.show();
     dashboardWindow.focus();
+    if (target) dashboardWindow.webContents.send(IPC_CHANNELS.fleetNotificationTarget, target);
     return;
   }
   const dashboardStatePath = join(dataDirectory, 'dashboard-window-state.json');
@@ -345,6 +346,17 @@ function showDashboard(): void {
     show: false,
     webPreferences: secureWebPreferences()
   });
+  registerRenderer(dashboardWindow, 'dashboard');
+  const dashboardSenderId = dashboardWindow.webContents.id;
+  const clearDashboardContent = (): void => {
+    if (rendererAccess.role(dashboardSenderId) !== 'dashboard') return;
+    rendererAccess.setBindings(dashboardSenderId, 'terminal', []);
+    rendererAccess.setBindings(dashboardSenderId, 'conversation', []);
+    terminalManager.unbindAll();
+    conversationManager.sync([]);
+  };
+  dashboardWindow.on('hide', clearDashboardContent);
+  dashboardWindow.webContents.on('did-start-loading', clearDashboardContent);
   secureWindow(dashboardWindow);
   const scheduleSave = (): void => {
     if (dashboardSaveTimer) clearTimeout(dashboardSaveTimer);
@@ -373,6 +385,7 @@ function showDashboard(): void {
     if (saved?.maximized) dashboardWindow?.maximize();
     dashboardWindow?.show();
     dashboardWindow?.focus();
+    if (target) dashboardWindow?.webContents.send(IPC_CHANNELS.fleetNotificationTarget, target);
   });
   loadRenderer(dashboardWindow, 'dashboard');
 }
@@ -407,6 +420,7 @@ function createSettingsWindow(view: 'settings' | 'onboarding' = 'settings'): voi
     backgroundColor: '#111318',
     webPreferences: secureWebPreferences()
   });
+  registerRenderer(settingsWindow, 'settings');
   secureWindow(settingsWindow);
   settingsWindow.on('closed', () => (settingsWindow = null));
   loadRenderer(settingsWindow, view);
@@ -424,6 +438,12 @@ function secureWebPreferences(): Electron.WebPreferences {
 function secureWindow(window: BrowserWindow): void {
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+function registerRenderer(window: BrowserWindow, role: RendererRole): void {
+  const senderId = window.webContents.id;
+  rendererAccess.register(senderId, role);
+  window.once('closed', () => rendererAccess.unregister(senderId));
 }
 
 function loadRenderer(window: BrowserWindow, hash?: string): void {
@@ -571,6 +591,10 @@ function setWidgetInteractionMode(mode: InteractionMode): InteractionMode {
   return mode;
 }
 
+async function maintainWslRuntime(operation: () => Promise<WslRuntimeState>): Promise<WslRuntimeState> {
+  return runtimeLifecycle.maintain(operation);
+}
+
 async function applyAndPersistSettings(settings: WidgetSettings): Promise<SettingsLoadResult> {
   let message: string | undefined;
   const previousLaunch = fleetBridgeLaunchFromSettings(appSettings);
@@ -589,10 +613,10 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
   const nextLaunch = fleetBridgeLaunchFromSettings(appSettings);
   if (JSON.stringify(previousLaunch) !== JSON.stringify(nextLaunch)) {
     fleetBridge.stop();
+    fleetNotificationTracker.reset();
     fleetBridge = createFleetBridge();
     try {
-      await wslRuntimeManager.ensure();
-      fleetBridge.start();
+      await maintainWslRuntime(() => wslRuntimeManager.ensure());
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
       logger.error('WSL runtime provisioning failed after distribution change', error);
@@ -655,6 +679,8 @@ function isTrustedEvent(event: IpcMainInvokeEvent): boolean {
 function handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: never[]) => unknown): void {
   ipcMain.handle(channel, (event, ...args) => {
     if (!isTrustedEvent(event)) throw new Error('Rejected IPC from an untrusted sender');
+    assertIpcPayload(channel, args);
+    rendererAccess.assertAnyRole(event.sender.id, allowedRendererRoles(channel));
     return listener(event, ...(args as never[]));
   });
 }
@@ -663,39 +689,138 @@ function broadcast(channel: string, value: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, value);
 }
 
+function sendDashboard(channel: string, value: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (rendererAccess.role(window.webContents.id) === 'dashboard') window.webContents.send(channel, value);
+  }
+}
+
+function sendContent(
+  channel: string,
+  value: unknown,
+  kind: RendererContentKind,
+  tabId: string
+): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (rendererAccess.canAccess(window.webContents.id, kind, tabId)) window.webContents.send(channel, value);
+  }
+}
+
+function sendTabContent(channel: string, value: unknown, tabId: string): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    const senderId = window.webContents.id;
+    if (rendererAccess.canAccess(senderId, 'terminal', tabId)
+      || rendererAccess.canAccess(senderId, 'conversation', tabId)) {
+      window.webContents.send(channel, value);
+    }
+  }
+}
+
+function requireDashboard(event: IpcMainInvokeEvent): number {
+  rendererAccess.assertRole(event.sender.id, 'dashboard');
+  return event.sender.id;
+}
+
+function requireContent(event: IpcMainInvokeEvent, kind: RendererContentKind, tabId: unknown): string {
+  if (typeof tabId !== 'string' || !rendererAccess.canAccess(event.sender.id, kind, tabId)) {
+    throw new Error(`Renderer is not authorized for this ${kind} tab`);
+  }
+  return tabId;
+}
+
+function requireTabAccess(event: IpcMainInvokeEvent, tabId: unknown): string {
+  if (typeof tabId !== 'string'
+    || !rendererAccess.canAccess(event.sender.id, 'terminal', tabId)
+      && !rendererAccess.canAccess(event.sender.id, 'conversation', tabId)) {
+    throw new Error('Renderer is not authorized for this workspace tab');
+  }
+  return tabId;
+}
+
 handle(IPC_CHANNELS.getState, () => stateManager.getState());
 handle(IPC_CHANNELS.refreshNow, () => stateManager.refreshAll());
-handle(IPC_CHANNELS.getFleetState, () => getFleetView());
-handle(IPC_CHANNELS.refreshFleet, () => {
+handle(IPC_CHANNELS.getFleetState, (event) => {
+  requireDashboard(event);
+  return getFleetView();
+});
+handle(IPC_CHANNELS.refreshFleet, (event) => {
+  requireDashboard(event);
   fleetBridge.refresh();
   return getFleetView();
 });
-handle(IPC_CHANNELS.openFleetSession, async (_event, sessionId, request) => {
+handle(IPC_CHANNELS.openFleetSession, async (event, sessionId, request) => {
+  requireDashboard(event);
   if (typeof sessionId !== 'string') return { ok: false, message: 'Session is invalid' };
   return openFleetSessionById(sessionId, parseWorkspaceOpenRequest(request));
 });
-handle(IPC_CHANNELS.openFleetSessionExternal, async (_event, sessionId, target) => {
+handle(IPC_CHANNELS.openFleetSessionExternal, async (event, sessionId, target) => {
+  requireDashboard(event);
   if (typeof sessionId !== 'string' || (target !== 'vscode' && target !== 'windowsTerminal')) {
     return { ok: false, message: 'Session target is invalid' };
   }
   return openFleetSessionExternallyById(sessionId, target);
 });
-handle(IPC_CHANNELS.terminalList, () => {
+handle(IPC_CHANNELS.openExternalLink, async (event, url) => {
+  requireDashboard(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || owner.isDestroyed()) return { ok: false, message: 'The dashboard is no longer available.' };
+  return routeExternalLink(url, {
+    applicationName: (target) => app.getApplicationNameForProtocol(target),
+    confirm: async ({ scheme, applicationName }) => {
+      const choice = await dialog.showMessageBox(owner, {
+        type: 'warning',
+        title: 'Open external link?',
+        message: `Open a ${scheme}: link with ${applicationName}?`,
+        detail: 'This link came from session content. Continue only if you trust its source.',
+        buttons: ['Cancel', 'Open'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true
+      });
+      return choice.response === 1;
+    },
+    open: (target) => shell.openExternal(target, { activate: true })
+  });
+});
+handle(IPC_CHANNELS.terminalList, (event) => {
+  const senderId = requireDashboard(event);
+  rendererAccess.setBindings(senderId, 'terminal', []);
+  rendererAccess.setBindings(senderId, 'conversation', []);
   terminalManager.unbindAll();
   conversationManager.sync([]);
   return terminalManager.getWorkspaceState();
 });
-handle(IPC_CHANNELS.terminalBind, (_event, tabId) =>
-  typeof tabId === 'string' ? terminalManager.bind(tabId) : null);
-handle(IPC_CHANNELS.terminalSyncBindings, (_event, tabIds) => {
-  const values: unknown = tabIds;
-  return Array.isArray(values) && values.every((id) => typeof id === 'string') ? terminalManager.syncBindings(values) : [];
+handle(IPC_CHANNELS.terminalBind, (event, tabId) => {
+  const senderId = requireDashboard(event);
+  const exists = typeof tabId === 'string'
+    && terminalManager.list().some((tab) => tab.id === tabId && tab.viewMode === 'terminal');
+  rendererAccess.setBindings(senderId, 'terminal', exists ? [tabId] : []);
+  const tab = exists ? terminalManager.bind(tabId) : null;
+  rendererAccess.setBindings(senderId, 'terminal', tab ? [tab.id] : []);
+  return tab;
 });
-handle(IPC_CHANNELS.terminalWorkspaceCommand, (_event, command) => {
+handle(IPC_CHANNELS.terminalSyncBindings, (event, tabIds) => {
+  const senderId = requireDashboard(event);
+  const values: unknown = tabIds;
+  if (!Array.isArray(values) || values.length > 4 || !values.every((id) => typeof id === 'string')) {
+    rendererAccess.setBindings(senderId, 'terminal', []);
+    terminalManager.syncBindings([]);
+    return [];
+  }
+  const existing = new Set(terminalManager.list()
+    .filter((tab) => tab.viewMode === 'terminal')
+    .map((tab) => tab.id));
+  const requested = values.filter((id): id is string => typeof id === 'string' && existing.has(id));
+  rendererAccess.setBindings(senderId, 'terminal', requested);
+  const tabs = terminalManager.syncBindings(requested);
+  rendererAccess.setBindings(senderId, 'terminal', tabs.map((tab) => tab.id));
+  return tabs;
+});
+handle(IPC_CHANNELS.terminalWorkspaceCommand, (event, command) => {
+  const senderId = requireDashboard(event);
   const value: unknown = command;
   if (!isWorkspaceCommand(value)) return terminalManager.getWorkspaceState();
   const parsed = value;
-  const before = new Set(terminalManager.list().map((tab) => tab.id));
   if (parsed.type === 'assign') {
     const snapshot = getFleetView().snapshot;
     const session = snapshot.sessions.find((item) => item.id === parsed.sessionId);
@@ -703,27 +828,60 @@ handle(IPC_CHANNELS.terminalWorkspaceCommand, (_event, command) => {
       terminalManager.open(session, { paneId: parsed.paneId, placement: 'replace' });
     }
   } else terminalManager.applyWorkspaceCommand(parsed);
-  for (const tabId of before) if (!terminalManager.list().some((tab) => tab.id === tabId)) conversationManager.close(tabId);
+  const tabs = terminalManager.list();
+  const terminalIds = new Set(tabs.filter((tab) => tab.viewMode === 'terminal').map((tab) => tab.id));
+  const conversationIds = new Set(tabs
+    .filter((tab) => tab.viewMode === 'native' && tab.tool !== 'shell')
+    .map((tab) => tab.id));
+  const retainedTerminal = rendererAccess.bindings(senderId, 'terminal').filter((id) => terminalIds.has(id));
+  const retainedConversation = rendererAccess.bindings(senderId, 'conversation').filter((id) => conversationIds.has(id));
+  rendererAccess.setBindings(senderId, 'terminal', retainedTerminal);
+  rendererAccess.setBindings(senderId, 'conversation', retainedConversation);
+  terminalManager.syncBindings(retainedTerminal);
+  conversationManager.sync(retainedConversation);
   return terminalManager.getWorkspaceState();
 });
-handle(IPC_CHANNELS.terminalInput, (_event, tabId, data) =>
-  typeof tabId === 'string' && typeof data === 'string' && terminalManager.input(tabId, data));
-handle(IPC_CHANNELS.terminalResize, (_event, tabId, columns, rows) =>
-  typeof tabId === 'string' && typeof columns === 'number' && typeof rows === 'number'
-    && terminalManager.resize(tabId, columns, rows));
-handle(IPC_CHANNELS.terminalClose, (_event, tabId) =>
-  typeof tabId === 'string' && (conversationManager.close(tabId), terminalManager.close(tabId)));
-handle(IPC_CHANNELS.terminalRetry, (_event, tabId) =>
-  typeof tabId === 'string' ? terminalManager.retry(tabId) : null);
-handle(IPC_CHANNELS.terminalSelect, (_event, tabId) =>
-  typeof tabId === 'string' && terminalManager.select(tabId));
-handle(IPC_CHANNELS.terminalSetView, (_event, tabId, viewMode) =>
-  typeof tabId === 'string' && (viewMode === 'native' || viewMode === 'terminal')
-    ? terminalManager.setViewMode(tabId, viewMode as SessionViewMode) : null);
-handle(IPC_CHANNELS.conversationStart, (_event, tabId) =>
-  typeof tabId === 'string' && conversationManager.start(tabId));
-handle(IPC_CHANNELS.conversationStop, (_event, tabId) => {
-  if (typeof tabId === 'string') conversationManager.stop(tabId);
+handle(IPC_CHANNELS.terminalInput, (event, tabId, data) =>
+  typeof data === 'string' && terminalManager.input(requireTabAccess(event, tabId), data));
+handle(IPC_CHANNELS.terminalResize, (event, tabId, columns, rows) =>
+  typeof columns === 'number' && typeof rows === 'number'
+    && terminalManager.resize(requireContent(event, 'terminal', tabId), columns, rows));
+handle(IPC_CHANNELS.terminalClose, (event, tabId) => {
+  const authorized = requireTabAccess(event, tabId);
+  const closed = terminalManager.close(authorized);
+  if (!closed) rendererAccess.revokeTab(authorized);
+  return closed;
+});
+handle(IPC_CHANNELS.terminalRetry, (event, tabId) =>
+  terminalManager.retry(requireTabAccess(event, tabId)));
+handle(IPC_CHANNELS.terminalSelect, (event, tabId) =>
+  terminalManager.select(requireTabAccess(event, tabId)));
+handle(IPC_CHANNELS.terminalSetView, (event, tabId, viewMode) => {
+  if (viewMode !== 'native' && viewMode !== 'terminal') return null;
+  const authorized = requireTabAccess(event, tabId);
+  const tab = terminalManager.setViewMode(authorized, viewMode as SessionViewMode);
+  if (tab?.viewMode === 'native') {
+    rendererAccess.revoke(event.sender.id, 'terminal', authorized);
+    terminalManager.syncBindings(rendererAccess.bindings(event.sender.id, 'terminal'));
+  } else if (tab) {
+    rendererAccess.revoke(event.sender.id, 'conversation', authorized);
+    conversationManager.stop(authorized);
+  }
+  return tab;
+});
+handle(IPC_CHANNELS.conversationStart, (event, tabId) => {
+  const senderId = requireDashboard(event);
+  if (typeof tabId !== 'string' || !terminalManager.list()
+    .some((tab) => tab.id === tabId && tab.viewMode === 'native' && tab.tool !== 'shell')) return false;
+  rendererAccess.grant(senderId, 'conversation', tabId);
+  const started = conversationManager.start(tabId);
+  if (!started) rendererAccess.revoke(senderId, 'conversation', tabId);
+  return started;
+});
+handle(IPC_CHANNELS.conversationStop, (event, tabId) => {
+  const authorized = requireContent(event, 'conversation', tabId);
+  conversationManager.stop(authorized);
+  rendererAccess.revoke(event.sender.id, 'conversation', authorized);
 });
 handle(IPC_CHANNELS.localSuggestionsGetSettings, () => localSuggestionManager.settings());
 handle(IPC_CHANNELS.localSuggestionsSaveSettings, async (_event, input) => {
@@ -748,60 +906,95 @@ handle(IPC_CHANNELS.localSuggestionsSuggest, (_event, input) => localSuggestionM
 handle(IPC_CHANNELS.localSuggestionsCancel, (_event, requestId) => {
   localSuggestionManager.cancel(typeof requestId === 'string' ? requestId : undefined);
 });
-handle(IPC_CHANNELS.conversationSync, (_event, tabIds) => {
+handle(IPC_CHANNELS.conversationSync, (event, tabIds) => {
+  const senderId = requireDashboard(event);
   const values: unknown = tabIds;
-  return Array.isArray(values) && values.every((id) => typeof id === 'string') ? conversationManager.sync(values) : [];
+  if (!Array.isArray(values) || values.length > 4 || !values.every((id) => typeof id === 'string')) {
+    rendererAccess.setBindings(senderId, 'conversation', []);
+    conversationManager.sync([]);
+    return [];
+  }
+  const eligible = new Set(terminalManager.list()
+    .filter((tab) => tab.viewMode === 'native' && tab.tool !== 'shell')
+    .map((tab) => tab.id));
+  const requested = values.filter((id): id is string => typeof id === 'string' && eligible.has(id));
+  rendererAccess.setBindings(senderId, 'conversation', requested);
+  const started = conversationManager.sync(requested);
+  rendererAccess.setBindings(senderId, 'conversation', started);
+  return started;
 });
-handle(IPC_CHANNELS.conversationHistory, (_event, tabId) =>
-  typeof tabId === 'string'
-    ? conversationManager.history(tabId)
-    : { ok: false, message: 'Terminal history request is invalid' });
-handle(IPC_CHANNELS.conversationPage, (_event, tabId, cursor) =>
-  typeof tabId === 'string' && typeof cursor === 'string'
-    ? conversationManager.page(tabId, cursor) : { ok: false, message: 'History request is invalid' });
-handle(IPC_CHANNELS.conversationApprove, (_event, tabId, approval, choice, revision, eventPosition) =>
-  [tabId, approval, choice, revision].every((value) => typeof value === 'string') && typeof eventPosition === 'number'
-    ? conversationManager.approve(tabId, approval, choice, revision, eventPosition)
+handle(IPC_CHANNELS.conversationHistory, (event, tabId) =>
+  conversationManager.history(requireContent(event, 'conversation', tabId)));
+handle(IPC_CHANNELS.conversationPage, (event, tabId, cursor) =>
+  typeof cursor === 'string'
+    ? conversationManager.page(requireContent(event, 'conversation', tabId), cursor)
+    : { ok: false, message: 'History request is invalid' });
+handle(IPC_CHANNELS.conversationApprove, (event, tabId, approval, choice, revision, eventPosition) =>
+  [approval, choice, revision].every((value) => typeof value === 'string') && typeof eventPosition === 'number'
+    ? conversationManager.approve(
+      requireContent(event, 'conversation', tabId), approval, choice, revision, eventPosition
+    )
     : { ok: false, message: 'Approval is invalid' });
-handle(IPC_CHANNELS.conversationAnswer, (_event, tabId, question, revision, eventPosition, answers) =>
-  typeof tabId === 'string' && typeof question === 'string' && typeof revision === 'string'
-    && typeof eventPosition === 'number' && Array.isArray(answers)
-    ? conversationManager.answer(tabId, question, revision, eventPosition, answers)
-    : { ok: false, message: 'Answer is invalid' });
-handle(IPC_CHANNELS.conversationStageBytes, (_event, tabId, name, mime, data) => {
+handle(IPC_CHANNELS.conversationAnswer, (event, tabId, question, revision, eventPosition, answers) => {
+  const values: unknown = answers;
+  return typeof question === 'string' && typeof revision === 'string'
+    && typeof eventPosition === 'number' && Array.isArray(values) && values.length <= 8
+    ? conversationManager.answer(
+      requireContent(event, 'conversation', tabId), question, revision, eventPosition, values
+    )
+    : { ok: false, message: 'Answer is invalid' };
+});
+handle(IPC_CHANNELS.conversationStageBytes, (event, tabId, name, mime, data) => {
   const bytes = data as unknown;
-  if (typeof tabId !== 'string' || typeof name !== 'string' || typeof mime !== 'string' || !(bytes instanceof Uint8Array)) {
+  const imageName: unknown = name;
+  const imageMime: unknown = mime;
+  if (typeof imageName !== 'string' || imageName.length > 255
+    || typeof imageMime !== 'string' || imageMime.length > 64
+    || !(bytes instanceof Uint8Array) || bytes.byteLength > 20 * 1024 * 1024) {
     throw new Error('Image data is invalid');
   }
-  return conversationManager.stage(tabId, name, mime, bytes);
+  return conversationManager.stage(requireContent(event, 'conversation', tabId), imageName, imageMime, bytes);
 });
-handle(IPC_CHANNELS.conversationStageClipboard, (_event, tabId) => {
-  if (typeof tabId !== 'string') throw new Error('Session is invalid');
+handle(IPC_CHANNELS.conversationStageClipboard, (event, tabId) => {
+  const authorized = requireContent(event, 'conversation', tabId);
   const image = clipboard.readImage();
   if (image.isEmpty()) throw new Error('The clipboard does not contain an image');
-  return conversationManager.stage(tabId, `clipboard-${Date.now()}.png`, 'image/png', image.toPNG());
+  const dimensions = image.getSize();
+  if (dimensions.width < 1 || dimensions.height < 1
+    || dimensions.width * dimensions.height > 25_000_000) {
+    throw new Error('Clipboard image dimensions are too large');
+  }
+  const data = image.toPNG();
+  if (data.byteLength > 20 * 1024 * 1024) throw new Error('Clipboard image is larger than 20 MB');
+  return conversationManager.stage(authorized, `clipboard-${Date.now()}.png`, 'image/png', data);
 });
-handle(IPC_CHANNELS.conversationChooseAttachments, async (_event, tabId) => {
-  if (typeof tabId !== 'string') throw new Error('Session is invalid');
-  const result = await dialog.showOpenDialog(getDialogOwner(), {
+handle(IPC_CHANNELS.conversationChooseAttachments, async (event, tabId) => {
+  const authorized = requireContent(event, 'conversation', tabId);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) throw new Error('Dashboard window is unavailable');
+  const result = await dialog.showOpenDialog(owner, {
     title: 'Attach images', properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
   });
-  let staged: StagedAttachment[] = [];
-  for (const path of result.filePaths.slice(0, 8)) {
+  const selected = result.filePaths.slice(0, 8).map((path) => {
     const extension = path.split('.').at(-1)?.toLowerCase();
     const mime = extension === 'png' ? 'image/png' : extension === 'gif' ? 'image/gif'
       : extension === 'webp' ? 'image/webp' : 'image/jpeg';
-    staged = conversationManager.stage(tabId, basename(path), mime, readFileSync(path));
-  }
-  return staged;
+    return { path, name: basename(path), mime };
+  });
+  return conversationManager.stageFiles(authorized, selected);
 });
-handle(IPC_CHANNELS.conversationRemoveAttachment, (_event, tabId, attachmentId) =>
-  typeof tabId === 'string' && typeof attachmentId === 'string'
-    ? conversationManager.removeAttachment(tabId, attachmentId) : []);
-handle(IPC_CHANNELS.conversationSend, (_event, tabId, text) =>
-  typeof tabId === 'string' && typeof text === 'string'
-    ? conversationManager.send(tabId, text) : { ok: false, message: 'Message is invalid' });
+handle(IPC_CHANNELS.conversationRemoveAttachment, (event, tabId, attachmentId) => {
+  const id: unknown = attachmentId;
+  return typeof id === 'string' && id.length <= 128
+    ? conversationManager.removeAttachment(
+      requireContent(event, 'conversation', tabId), id
+    ) : [];
+});
+handle(IPC_CHANNELS.conversationSend, (event, tabId, text) =>
+  typeof text === 'string'
+    ? conversationManager.send(requireContent(event, 'conversation', tabId), text)
+    : { ok: false, message: 'Message is invalid' });
 handle(IPC_CHANNELS.conversationCopyText, (_event, text) => {
   if (typeof text !== 'string' || !text || Buffer.byteLength(text, 'utf8') > 128 * 1024) {
     return { ok: false, message: 'Copy content is invalid or too large' };
@@ -1204,13 +1397,19 @@ handle(IPC_CHANNELS.startFleetDownload, (_event, sessionId, relativePath, name, 
     return { ok: false, message: error instanceof Error ? error.message : 'Download could not be started' };
   }
 });
-handle(IPC_CHANNELS.cancelFleetDownload, (_event, jobId) => {
-  const job = typeof jobId === 'string' ? fleetDownloadManager.cancel(jobId) : undefined;
+handle(IPC_CHANNELS.cancelFleetDownload, async (_event, jobId) => {
+  const job = typeof jobId === 'string' ? await fleetDownloadManager.cancel(jobId) : undefined;
   return job ? { ok: true, message: job.message, job } : { ok: false, message: 'Download is no longer available' };
 });
 handle(IPC_CHANNELS.openFleetDownload, async (_event, jobId) => {
-  const job = typeof jobId === 'string' ? fleetDownloadManager.get(jobId) : undefined;
-  if (!job?.path || job.state !== 'completed') return { ok: false, message: 'Downloaded file is not available', job };
+  const job = typeof jobId === 'string' ? await fleetDownloadManager.verifyForUse(jobId) : undefined;
+  if (!job?.path || job.state !== 'completed') {
+    return {
+      ok: false,
+      message: job?.state === 'failed' ? job.message : 'Downloaded file is not available',
+      job
+    };
+  }
   const message = await shell.openPath(job.path);
   return message ? { ok: false, message, job } : { ok: true, message: `Opened ${job.name}`, job };
 });
@@ -1346,7 +1545,7 @@ async function openFleetSessionById(sessionId: string, request: WorkspaceOpenReq
     if (appSettings.fleetOpenTarget === 'agentFleet') {
       const tab = terminalManager.open(session, request);
       showDashboard();
-      broadcast(IPC_CHANNELS.terminalOpened, tab);
+      sendDashboard(IPC_CHANNELS.terminalOpened, tab);
       return { ok: true, message: `Opened ${sessionTitle}`, tab };
     }
     if (appSettings.fleetOpenTarget === 'vscode') {
@@ -1427,7 +1626,7 @@ handle(IPC_CHANNELS.testCodexProfile, async (_event, profile) => {
   const result = await collectCodexProfileLimits(codexProfileFromSettings(normalized));
   return { ok: result.status === 'ok', message: result.status === 'ok' ? 'Profile test succeeded' : result.message ?? result.status };
 });
-handle(IPC_CHANNELS.discoverWsl, () => discoverWslProfiles());
+handle(IPC_CHANNELS.discoverWsl, () => discoverWslProfiles(undefined, wslProcessOwnership));
 handle(IPC_CHANNELS.previewSettingsImport, async () => {
   const result = await dialog.showOpenDialog(getDialogOwner(), {
     title: 'Import AI Limits Widget settings',
@@ -1435,7 +1634,11 @@ handle(IPC_CHANNELS.previewSettingsImport, async () => {
     filters: [{ name: 'AI Limits settings', extensions: ['json'] }]
   });
   if (result.canceled || !result.filePaths[0]) return null;
-  const preview = parseSettingsImport(readFileSync(result.filePaths[0]), result.filePaths[0]);
+  const importPath = result.filePaths[0];
+  const preview = parseSettingsImport(
+    readFileSnapshot(importPath, MAX_SETTINGS_IMPORT_BYTES).data,
+    importPath
+  );
   const token = randomUUID();
   pendingImports.set(token, preview.settings);
   setTimeout(() => pendingImports.delete(token), 10 * 60 * 1000).unref();
@@ -1466,7 +1669,10 @@ handle(IPC_CHANNELS.rollbackSettings, async () => {
   await applyAndPersistSettings(restored);
   return { canceled: false, message: 'The latest settings backup was restored', settings: restored };
 });
-handle(IPC_CHANNELS.getClaudeIntegration, () => inspectClaudeStatusLineInstallation());
+handle(IPC_CHANNELS.getClaudeIntegration, () => {
+  const paths = getClaudeStatusLinePaths(getResourceRoot(), dataDirectory);
+  return inspectClaudeStatusLineInstallation(paths.targetScript, paths.settingsPath, paths.sourceScript);
+});
 handle(IPC_CHANNELS.installClaudeIntegration, async () => {
   const result = ensureClaudeStatusLineInstalled(getClaudeStatusLinePaths(getResourceRoot(), dataDirectory));
   if (result.status !== 'conflict') await applyAndPersistSettings({ ...appSettings, claudeEnabled: true });
@@ -1510,17 +1716,8 @@ handle(IPC_CHANNELS.checkForUpdates, () => updater?.checkNow());
 handle(IPC_CHANNELS.restartToUpdate, () => updater?.restartToUpdate());
 handle(IPC_CHANNELS.openReleasePage, () => shell.openExternal(RELEASE_URL));
 handle(IPC_CHANNELS.getRuntimeState, () => wslRuntimeManager.inspect());
-handle(IPC_CHANNELS.repairRuntime, async () => {
-  const state = await wslRuntimeManager.repair();
-  if (state.status === 'ready') fleetBridge.start();
-  return state;
-});
-handle(IPC_CHANNELS.rollbackRuntime, async () => {
-  fleetBridge.stop();
-  const state = await wslRuntimeManager.rollback();
-  if (state.status === 'ready') fleetBridge.start();
-  return state;
-});
+handle(IPC_CHANNELS.repairRuntime, () => maintainWslRuntime(() => wslRuntimeManager.repair()));
+handle(IPC_CHANNELS.rollbackRuntime, () => maintainWslRuntime(() => wslRuntimeManager.rollback()));
 handle(IPC_CHANNELS.openSettings, () => createSettingsWindow());
 handle(IPC_CHANNELS.getInteractionMode, () => interactionMode);
 handle(IPC_CHANNELS.setInteractionMode, (_event, mode) => setWidgetInteractionMode(mode === 'active' ? 'active' : 'passive'));
@@ -1535,7 +1732,7 @@ handle(IPC_CHANNELS.windowQuit, () => {
 
 stateManager.on('changed', (state) => {
   broadcast(IPC_CHANNELS.stateUpdated, state);
-  broadcast(IPC_CHANNELS.fleetStateUpdated, getFleetView());
+  sendDashboard(IPC_CHANNELS.fleetStateUpdated, getFleetView());
   updateTrayTooltip(state);
 });
 
@@ -1582,7 +1779,9 @@ if (terminalSmokePath) {
       currentVersion: app.getVersion(),
       eligible: app.isPackaged && !isPortableBuild(),
       prerelease: app.getVersion().includes('-'),
-      logger
+      logger,
+      releaseSetAuthority,
+      verifiedUpdateRoot: join(dataDirectory, 'verified-updates')
     });
     updater.on('changed', async (state: UpdaterState) => {
       broadcast(IPC_CHANNELS.updaterStateUpdated, state);
@@ -1592,7 +1791,7 @@ if (terminalSmokePath) {
           type: 'info',
           title: 'Update ready',
           message: `${PRODUCT_NAME} ${state.availableVersion ?? ''} is ready to install.`,
-          detail: 'Restart now, or choose Later to install when you quit the app.',
+          detail: 'Restart now, or choose Later and restart from the update control when convenient.',
           buttons: ['Restart now', 'Later'],
           defaultId: 0,
           cancelId: 1
@@ -1603,8 +1802,7 @@ if (terminalSmokePath) {
     updater.setEnabled(appSettings.automaticUpdates);
     stateManager.start();
     try {
-      await wslRuntimeManager.ensure();
-      fleetBridge.start();
+      await maintainWslRuntime(() => wslRuntimeManager.ensure());
     } catch (error) {
       logger.error('Verified WSL runtime provisioning failed', error);
     }
@@ -1618,17 +1816,46 @@ if (terminalSmokePath) {
   });
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
-  updater?.stop();
-  stateManager.stop();
-  fleetBridge.stop();
-  fleetDownloadManager.stop();
-  downloadPowerPolicy.dispose();
-  terminalManager.dispose();
-  conversationManager.dispose();
-  localSuggestionManager.dispose();
-  wslProcessOwnership.releaseAll('app_shutdown');
+  if (shutdownComplete) return;
+  event.preventDefault();
+  if (shutdownPromise) return;
+  shutdownPromise = (async () => {
+    const cleanup = (label: string, operation: () => void): void => {
+      try {
+        operation();
+      } catch (error) {
+        logger.warn(`Shutdown cleanup failed: ${label}`, error);
+      }
+    };
+    cleanup('updater', () => updater?.stop());
+    cleanup('state manager', () => stateManager.stop());
+    cleanup('fleet bridge', () => fleetBridge.stop());
+    cleanup('terminal manager', () => terminalManager.dispose());
+    cleanup('conversation manager', () => conversationManager.dispose());
+    cleanup('local suggestion manager', () => localSuggestionManager.dispose());
+
+    let downloadsStopped: Promise<unknown>;
+    try {
+      downloadsStopped = fleetDownloadManager.stop();
+    } catch (error) {
+      logger.warn('Shutdown cleanup failed: downloads', error);
+      downloadsStopped = Promise.resolve();
+    }
+    const processesStopped = wslProcessOwnership.releaseAllAndWait('app_shutdown', 5_000);
+    const drained = await awaitBoundedShutdown([downloadsStopped, processesStopped], 6_500);
+    cleanup('download power policy', () => downloadPowerPolicy.dispose());
+    if (!drained) logger.warn('Shutdown cleanup reached its deadline; exiting with best-effort cleanup');
+  })();
+  const finishQuit = (): void => {
+    shutdownComplete = true;
+    app.quit();
+  };
+  void shutdownPromise.then(finishQuit, (error) => {
+    logger.error('Unexpected shutdown cleanup failure', error);
+    finishQuit();
+  });
 });
 
 app.on('window-all-closed', () => {

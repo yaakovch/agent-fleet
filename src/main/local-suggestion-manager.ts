@@ -18,13 +18,52 @@ import {
 } from '../shared/local-suggestions';
 import type { LocalSuggestionStore } from './local-suggestion-store';
 
-interface ManagedServer { process: ChildProcess; baseUrl: string; apiKey: string }
+interface ManagedServer {
+  process: ChildProcess;
+  baseUrl: string;
+  apiKey: string;
+  failure?: Error;
+  stopRequested: boolean;
+}
+
+interface ManagedStart {
+  generation: number;
+  server: ManagedServer | null;
+  abort: AbortController;
+  promise: Promise<ManagedServer>;
+}
+
+interface ActiveSuggestion {
+  requestId: string;
+  abort: AbortController;
+}
+
+const MAX_MODEL_DISCOVERY_BYTES = 256 * 1024;
+const MAX_COMPLETION_BYTES = 1024 * 1024;
+
+export interface LocalSuggestionManagerOptions {
+  spawnProcess?: typeof spawn;
+  availablePort?: () => Promise<number>;
+  fetch?: typeof fetch;
+}
 
 export class LocalSuggestionManager {
   private managed: ManagedServer | null = null;
-  private active: { requestId: string; abort: AbortController } | null = null;
+  private managedStart: ManagedStart | null = null;
+  private managedGeneration = 0;
+  private active: ActiveSuggestion | null = null;
+  private readonly spawnProcess: typeof spawn;
+  private readonly findAvailablePort: () => Promise<number>;
+  private readonly fetchProcess: typeof fetch;
 
-  constructor(private readonly store: LocalSuggestionStore) {}
+  constructor(
+    private readonly store: LocalSuggestionStore,
+    options: LocalSuggestionManagerOptions = {}
+  ) {
+    this.spawnProcess = options.spawnProcess ?? spawn;
+    this.findAvailablePort = options.availablePort ?? availablePort;
+    this.fetchProcess = options.fetch ?? fetch;
+  }
 
   settings(): LocalSuggestionSettingsView { return this.store.view(); }
 
@@ -69,11 +108,14 @@ export class LocalSuggestionManager {
     if (!localSuggestionsEnabled(settings.mode)) return failure(request, 'Enable local reply suggestions in Settings first.');
     this.cancel();
     const abort = new AbortController();
-    this.active = { requestId: request.requestId, abort };
+    const operation: ActiveSuggestion = { requestId: request.requestId, abort };
+    this.active = operation;
     const timeout = setTimeout(() => abort.abort(new Error('Local model timed out')), 30_000);
     try {
       const connection = await this.connection(settings, abort.signal);
+      this.assertActive(operation);
       const model = await this.resolveModel(connection.baseUrl, connection.apiKey, settings.external.modelId, abort.signal);
+      this.assertActive(operation);
       const body = {
         model,
         messages: localSuggestionPrompt(request),
@@ -82,12 +124,24 @@ export class LocalSuggestionManager {
         response_format: { type: 'json_object' }
       };
       let response = await this.postCompletion(connection, body, abort.signal);
+      this.assertActiveResponse(operation, response);
       if (!response.ok && response.status === 400) {
+        cancelResponseBody(response);
         const { response_format: _responseFormat, ...plainBody } = body;
         response = await this.postCompletion(connection, plainBody, abort.signal);
+        this.assertActiveResponse(operation, response);
       }
-      if (!response.ok) throw new Error(`Local model returned HTTP ${response.status}`);
-      const json = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+      if (!response.ok) {
+        cancelResponseBody(response);
+        throw new Error(`Local model returned HTTP ${response.status}`);
+      }
+      const json = await readBoundedJson(
+        response,
+        MAX_COMPLETION_BYTES,
+        abort.signal,
+        'Local model response'
+      ) as { choices?: Array<{ message?: { content?: unknown } }> };
+      this.assertActive(operation);
       const suggestions = parseLocalSuggestions(json.choices?.[0]?.message?.content);
       if (!suggestions.length) throw new Error('Local model returned no usable suggestions');
       return { ok: true, requestId: request.requestId, revision: request.revision, suggestions, message: `${suggestions.length} local suggestion${suggestions.length === 1 ? '' : 's'} ready.` };
@@ -95,7 +149,7 @@ export class LocalSuggestionManager {
       return failure(request, abort.signal.aborted ? 'Suggestion canceled or timed out.' : userMessage(error));
     } finally {
       clearTimeout(timeout);
-      if (this.active?.requestId === request.requestId) this.active = null;
+      if (this.active === operation) this.active = null;
     }
   }
 
@@ -112,46 +166,131 @@ export class LocalSuggestionManager {
       if (!isLoopbackSuggestionUrl(settings.external.baseUrl)) throw new Error('External backend must use a loopback URL.');
       return { baseUrl: normalizeBaseUrl(settings.external.baseUrl), apiKey: this.store.token() };
     }
-    if (this.managed && !this.managed.process.killed && this.managed.process.exitCode === null) return this.managed;
+    if (this.managed && !this.managed.failure
+      && !this.managed.process.killed && this.managed.process.exitCode === null) return this.managed;
+    if (this.managed) {
+      stopServer(this.managed);
+      this.managed = null;
+    }
     const executable = settings.managed.executablePath;
     const model = settings.managed.modelPath;
     if (!executable || !model) throw new Error('Choose llama-server.exe and a GGUF model in Settings.');
     try { accessSync(executable, constants.X_OK); accessSync(model, constants.R_OK); }
     catch { throw new Error('The managed executable or GGUF model cannot be opened.'); }
-    const port = await availablePort();
-    const apiKey = randomBytes(24).toString('base64url');
-    const child = spawn(executable, managedLlamaArguments(model, port, apiKey), { windowsHide: true, stdio: 'ignore' });
-    child.once('exit', () => { if (this.managed?.process === child) this.managed = null; });
-    const server = { process: child, baseUrl: `http://127.0.0.1:${port}`, apiKey };
-    this.managed = server;
-    try { await waitForHealth(server, signal); }
-    catch (error) { this.stopManaged(); throw error; }
-    return server;
+    const startup = this.managedStart?.promise ?? this.startManaged(executable, model);
+    return waitForStartup(startup, signal);
   }
 
   private async resolveModel(baseUrl: string, apiKey: string, configured: string, signal?: AbortSignal): Promise<string> {
     if (configured) return configured;
-    const response = await fetch(`${baseUrl}/v1/models`, {
+    const response = await this.fetchProcess(`${baseUrl}/v1/models`, {
       headers: headers(apiKey), signal, redirect: 'error'
     });
-    if (!response.ok) throw new Error(`Model discovery returned HTTP ${response.status}`);
-    const json = await response.json() as { data?: Array<{ id?: unknown }> };
+    if (!response.ok) {
+      cancelResponseBody(response);
+      throw new Error(`Model discovery returned HTTP ${response.status}`);
+    }
+    const json = await readBoundedJson(
+      response,
+      MAX_MODEL_DISCOVERY_BYTES,
+      signal,
+      'Model discovery response'
+    ) as { data?: Array<{ id?: unknown }> };
     const id = json.data?.find((value) => typeof value.id === 'string')?.id;
     if (!id || typeof id !== 'string') throw new Error('The local server did not report a model.');
     return id;
   }
 
   private postCompletion(connection: { baseUrl: string; apiKey: string }, body: object, signal: AbortSignal): Promise<Response> {
-    return fetch(`${connection.baseUrl}/v1/chat/completions`, {
+    return this.fetchProcess(`${connection.baseUrl}/v1/chat/completions`, {
       method: 'POST', headers: { ...headers(connection.apiKey), 'content-type': 'application/json' },
       body: JSON.stringify(body), signal, redirect: 'error'
     });
   }
 
   private stopManaged(): void {
-    const server = this.managed;
+    this.managedGeneration += 1;
+    const start = this.managedStart;
+    const servers = new Set<ManagedServer>();
+    if (this.managed) servers.add(this.managed);
+    if (start?.server) servers.add(start.server);
     this.managed = null;
-    if (server && server.process.exitCode === null && !server.process.killed) server.process.kill();
+    this.managedStart = null;
+    start?.abort.abort();
+    for (const server of servers) stopServer(server);
+  }
+
+  private startManaged(executable: string, model: string): Promise<ManagedServer> {
+    const start = {
+      generation: this.managedGeneration,
+      server: null,
+      abort: new AbortController(),
+      promise: undefined as unknown as Promise<ManagedServer>
+    } satisfies ManagedStart;
+    this.managedStart = start;
+    start.promise = this.launchManaged(start, executable, model);
+    return start.promise;
+  }
+
+  private async launchManaged(start: ManagedStart, executable: string, model: string): Promise<ManagedServer> {
+    let server: ManagedServer | null = null;
+    try {
+      const port = await this.findAvailablePort();
+      this.assertManagedStart(start);
+      const apiKey = randomBytes(24).toString('base64url');
+      const child = this.spawnProcess(executable, managedLlamaArguments(model, port, apiKey), {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+      server = {
+        process: child,
+        baseUrl: `http://127.0.0.1:${port}`,
+        apiKey,
+        stopRequested: false
+      };
+      start.server = server;
+      child.on('error', (error) => {
+        server!.failure = error;
+      });
+      child.once('exit', () => {
+        server!.failure ??= new Error('Managed backend exited.');
+        if (this.managed?.process === child) this.managed = null;
+      });
+      await waitForHealth(server, this.fetchProcess, start.abort.signal);
+      this.assertManagedStart(start);
+      if (server.failure) throw server.failure;
+      if (server.process.killed || server.process.exitCode !== null) {
+        throw new Error('Managed backend exited during startup.');
+      }
+      this.managedStart = null;
+      this.managed = server;
+      return server;
+    } catch (error) {
+      if (this.managedStart === start) this.managedStart = null;
+      if (server) stopServer(server);
+      throw error;
+    }
+  }
+
+  private assertManagedStart(start: ManagedStart): void {
+    if (this.managedStart !== start || this.managedGeneration !== start.generation) {
+      throw new Error('Managed backend startup was superseded.');
+    }
+  }
+
+  private assertActive(operation: ActiveSuggestion): void {
+    if (this.active !== operation || operation.abort.signal.aborted) {
+      throw new Error('Suggestion request was superseded.');
+    }
+  }
+
+  private assertActiveResponse(operation: ActiveSuggestion, response: Response): void {
+    try {
+      this.assertActive(operation);
+    } catch (error) {
+      cancelResponseBody(response);
+      throw error;
+    }
   }
 }
 
@@ -201,18 +340,115 @@ async function availablePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(server: ManagedServer, signal?: AbortSignal): Promise<void> {
+async function waitForHealth(
+  server: ManagedServer,
+  fetchProcess: typeof fetch,
+  signal: AbortSignal
+): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    if (signal?.aborted) throw new Error('Managed backend startup canceled.');
+    if (server.failure) throw server.failure;
+    if (server.stopRequested || signal.aborted) throw new Error('Managed backend startup canceled.');
     if (server.process.exitCode !== null) throw new Error('Managed backend exited during startup.');
+    const attempt = new AbortController();
+    const canceled = (): void => attempt.abort();
+    signal.addEventListener('abort', canceled, { once: true });
+    const attemptTimer = setTimeout(() => attempt.abort(), 1_000);
+    attemptTimer.unref();
     try {
-      const response = await fetch(`${server.baseUrl}/health`, { headers: headers(server.apiKey), signal, redirect: 'error' });
-      if (response.ok) return;
+      const response = await fetchProcess(`${server.baseUrl}/health`, {
+        headers: headers(server.apiKey),
+        signal: attempt.signal,
+        redirect: 'error'
+      });
+      const healthy = response.ok;
+      cancelResponseBody(response);
+      if (healthy) return;
     } catch { /* startup is still in progress */ }
+    finally {
+      clearTimeout(attemptTimer);
+      signal.removeEventListener('abort', canceled);
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error('Managed backend did not become ready.');
+}
+
+function waitForStartup(startup: Promise<ManagedServer>, signal?: AbortSignal): Promise<ManagedServer> {
+  if (!signal) return startup;
+  if (signal.aborted) return Promise.reject(new Error('Managed backend startup canceled.'));
+  return new Promise((resolve, reject) => {
+    const aborted = (): void => {
+      signal.removeEventListener('abort', aborted);
+      reject(new Error('Managed backend startup canceled.'));
+    };
+    signal.addEventListener('abort', aborted, { once: true });
+    startup.then(
+      (server) => {
+        signal.removeEventListener('abort', aborted);
+        resolve(server);
+      },
+      (error) => {
+        signal.removeEventListener('abort', aborted);
+        reject(error);
+      }
+    );
+  });
+}
+
+function stopServer(server: ManagedServer): void {
+  if (server.stopRequested) return;
+  server.stopRequested = true;
+  if (server.process.exitCode === null && !server.process.killed) {
+    try { server.process.kill(); } catch { /* process already exited */ }
+  }
+}
+
+async function readBoundedJson(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal | undefined,
+  label: string
+): Promise<unknown> {
+  if (!response.body) throw new Error(`${label} was empty`);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const aborted = (): void => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', aborted, { once: true });
+  try {
+    if (signal?.aborted) throw new Error(`${label} was canceled`);
+    while (true) {
+      const item = await reader.read();
+      if (signal?.aborted) throw new Error(`${label} was canceled`);
+      if (item.done) break;
+      bytes += item.value.byteLength;
+      if (bytes > maximumBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new Error(`${label} exceeded the safety limit`);
+      }
+      chunks.push(Buffer.from(item.value));
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as unknown;
+    } catch {
+      throw new Error(`${label} was not valid JSON`);
+    }
+  } finally {
+    signal?.removeEventListener('abort', aborted);
+    reader.releaseLock();
+  }
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => undefined);
+  } catch {
+    // A locked or already-consumed response has no remaining body to retain.
+  }
 }
 
 function userMessage(error: unknown): string {
