@@ -607,3 +607,71 @@ workspaces and retained all tmux sessions. The installer SHA-256 is
 the portable SHA-256 is
 `b347f7b12b054acd5c3eb7d4cd7e643a611a7c64a12d63edf94e7043af289d18`.
 Beta.25 and signed release set 1088 remain available for rollback.
+
+## 32. Verified Endpoint Registry Baseline
+
+1. Replace the embedded schema-v1 machine registry with the identity-v2 fleet
+   records required by the runtime's fail-closed endpoint-evidence checks.
+2. Bind each packaged remote host to a verified Tailnet node identity and SSH
+   host-key fingerprint while retaining unverified fallback endpoints as
+   non-selected recovery candidates.
+3. Make the embedded-runtime verifier reject every legacy registry record and
+   every host record without at least one verified transport compatible with
+   its declared network.
+4. Build the deterministic registry once from the shared wtmux source and use
+   the exact same bytes in Windows and Android. Validate the Windows verifier,
+   full test/typecheck/build gate, shared wtmux registry/transport tests, and
+   Android's protected packaged-registry regression before rollout.
+5. Activate the new registry without changing or restarting remote tmux
+   sessions, then prove exact session restore and a packaged-app restart.
+
+Gate: a packaged Agent Fleet startup can no longer combine the enforcing
+runtime with schema-v1 registry data, both remote WSL hosts have a verified
+selected endpoint, and `Retry exact session` reconnects without weakening SSH
+or Tailnet identity checks.
+
+Acceptance record (2026-08-13): deterministic registry bundle
+`9630fc62f69faaea0724cb040464877c155feb11f3dadf9bb76158025fee7ae2`
+contains three identity-v2 records and is now the packaged Windows baseline.
+The release verifier rejects legacy and unverified host records while retaining
+client-only records. The full Windows quality gate passed all 397 tests,
+type-check, runtime verification, audits, and production build. The unpacked
+Windows package smoke passed. Installer
+`cca3294638ab941c6457437f85a5bf36eac5776b2e50cd8866bd0229f703735b`
+was installed replace-in-place; both Start Menu and taskbar shortcuts now target
+the corrected installation. Its restart kept the full registry digest active,
+restored the saved workspace pane, and left the live `work-m-ubuntu` audit
+`healthy` with four managed sessions and no repair requirement. Remote tmux
+sessions were not restarted or mutated.
+
+## 33. Terminal Reply Safety Baseline Persistence
+
+1. Embed a monotonic wtmux runtime containing the managed tmux 3.6a terminal
+   reply guard, and reject any packaged runtime below component sequences
+   `61/55/28` or missing its helper, policy module, and tmux integration.
+2. Keep installed runtime releases byte-for-byte immutable when Python helpers
+   run or setup binds the shared external fleet registry.
+3. Make runtime activation own the public safety-helper launcher so application
+   startup cannot leave a stale checkout command ahead of the active release.
+4. Package and install Windows Agent Fleet, then relaunch it twice and verify
+   the corrected baseline, exact-tree coherence, five guarded panes, and all
+   existing tmux sessions without restarting the resident server.
+
+Gate: repeated packaged-app startup retains the terminal-safe embedded runtime
+instead of falling back to a pre-safety baseline, and OpenCode receives no
+fragmented terminal-palette reply suffix as input.
+
+Acceptance record (2026-08-13): Windows embeds runtime `git-51f8865` with
+component sequences `63/57/30`, runtime SHA-256
+`5429d344e5c2742425475e577ac4bb95ebc5577e3b4fb8d0a7c412089c564275`,
+and the shared identity-v2 registry. All 397 tests, type-check, dependency
+audits, embedded verification, and the production build passed. Signed NSIS
+and portable packaging completed; packaged smoke passed. Installer SHA-256 is
+`f39f93310149fbacad0e3dc4916d03c270cf07f0a0f4e2dbc672c8c2fa72af90`
+and portable SHA-256 is
+`5d763d38cc575d43bfb967af5c2d7bf58a40644eba8bc0ef5ad18e30dea8bd84`.
+The installer was applied replace-in-place, and two launches retained the new
+current/baseline, a clean exact release tree, the release-owned safety helper,
+5/5 guarded Gaming panes, all nine Gaming/Work sessions, and the restored
+workspace. Both host resource audits were healthy; no tmux server or session
+was restarted.

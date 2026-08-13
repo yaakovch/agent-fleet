@@ -6,6 +6,16 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const COMPONENTS = ['clientRuntime', 'hostRuntime', 'providerAdapters', 'contracts'];
+const TERMINAL_REPLY_SAFETY_MINIMUMS = Object.freeze({
+  clientRuntime: 61,
+  hostRuntime: 55,
+  providerAdapters: 28
+});
+const TERMINAL_REPLY_SAFETY_FILES = Object.freeze([
+  'lib/tmux_safety.py',
+  'lib/tmux_state.sh',
+  'scripts/wtmux-tmux-safety'
+]);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 function exact(value, fields, label) {
@@ -72,6 +82,46 @@ export function assertRuntimeManifestIdentity(value, descriptor) {
   return manifest;
 }
 
+export function assertTerminalReplySafeRuntime(components, fileNames) {
+  if (Object.entries(TERMINAL_REPLY_SAFETY_MINIMUMS).some(
+    ([name, minimum]) => !Number.isSafeInteger(components?.[name]?.sequence)
+      || components[name].sequence < minimum
+  )) {
+    throw new Error('embedded runtime predates managed terminal-reply safety');
+  }
+  const names = new Set(fileNames);
+  if (TERMINAL_REPLY_SAFETY_FILES.some((name) => !names.has(name))) {
+    throw new Error('embedded runtime omits managed terminal-reply safety');
+  }
+  return components;
+}
+
+export function assertConnectableMachineRegistryRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 2 || !Array.isArray(value.roles)) {
+    throw new Error('embedded machine registry records must use identity schema v2');
+  }
+  if (!value.roles.includes('host')) return value;
+  if (!Array.isArray(value.endpoints)) {
+    throw new Error(`embedded host registry record has no endpoints: ${value.id || 'unknown'}`);
+  }
+  const connectable = value.endpoints.some((endpoint) => {
+    if (!endpoint || typeof endpoint !== 'object' || endpoint.identityState !== 'verified') return false;
+    const expectedNetwork = value.transport === 'tailscale'
+      ? 'tailnet'
+      : value.transport === 'ssh' ? 'direct' : null;
+    if (!expectedNetwork) return false;
+    if (endpoint.network !== expectedNetwork) return false;
+    if (expectedNetwork === 'tailnet' && !endpoint.tailscaleNodeId) return false;
+    return (expectedNetwork === 'tailnet' && endpoint.sshEngine === 'tailscale-cli')
+      || (endpoint.sshEngine === 'openssh' && Boolean(endpoint.sshHostKeySha256));
+  });
+  if (!connectable) {
+    throw new Error(`embedded host registry record has no verified transport: ${value.id || 'unknown'}`);
+  }
+  return value;
+}
+
 export function verifyEmbeddedRuntime(root) {
   const descriptorPath = join(root, 'embedded-runtime-v1.json');
   if (!existsSync(descriptorPath)) throw new Error('embedded WSL runtime descriptor is missing');
@@ -129,6 +179,7 @@ export function verifyEmbeddedRuntime(root) {
   if (expected.size !== files.size || [...files.keys()].some((name) => !expected.has(name))) {
     throw new Error('embedded WSL runtime tar contents do not match its manifest');
   }
+  assertTerminalReplySafeRuntime(manifest.components, files.keys());
   const sbom = manifest.files.find((item) => item.path === 'runtime.spdx.json');
   const license = manifest.files.find((item) => item.path === 'runtime-license.txt');
   if (sbom?.sha256 !== runtime.sbomSha256 || license?.sha256 !== runtime.licenseSha256) {
@@ -171,6 +222,16 @@ export function verifyEmbeddedRuntime(root) {
     if (!file || file.length !== item.size || sha256(file) !== item.sha256) {
       throw new Error(`embedded machine registry member verification failed: ${item.path}`);
     }
+    let record;
+    try {
+      record = JSON.parse(file.toString('utf8'));
+    } catch {
+      throw new Error(`embedded machine registry record is not valid JSON: ${item.id}`);
+    }
+    if (record.id !== item.id) {
+      throw new Error(`embedded machine registry record ID does not match its manifest: ${item.id}`);
+    }
+    assertConnectableMachineRegistryRecord(record);
     expectedRegistryFiles.add(item.path);
   }
   if (expectedRegistryFiles.size !== registryFiles.size
