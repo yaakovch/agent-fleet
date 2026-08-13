@@ -698,3 +698,15 @@ SHA-256 `98e278d21eb499178ad05e0ed35f5c5c273af5aa2d8d1fb8e213054e3570fc8a`.
 The verifier floor and protected descriptor trust pin were advanced together.
 All 397 tests, type-check, dependency audits, exact runtime verification, and
 the production Electron build passed.
+
+The local-development NSIS artifact SHA-256 is
+`ed83371585f78476c5acbb1330f79a47234a3221d506b51b56e80c92eadd0ce2`;
+the portable artifact SHA-256 is
+`a15b7239b1baea9672ddd6338549fc338da4cc4b13e0d7353bcb94484e777195`.
+Windows Authenticode inspection reported `NotSigned`, so these artifacts are
+not publication candidates. Packaged smoke passed, and the NSIS artifact was
+installed replace-in-place locally. The installed executable matches the
+packaged SHA-256 `c4415003fd0dd993b7b5c9892eed40b404465bc7a4b0e9e80ab236a0b63750d5`.
+After launch, current and baseline both resolve to `git-0fb24ca`; the resident
+tmux server remains PID `62780` on 3.6a with all seven sessions and all seven
+managed panes preserved.
