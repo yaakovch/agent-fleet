@@ -7,9 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const COMPONENTS = ['clientRuntime', 'hostRuntime', 'providerAdapters', 'contracts'];
 const TERMINAL_REPLY_SAFETY_MINIMUMS = Object.freeze({
-  clientRuntime: 61,
-  hostRuntime: 55,
-  providerAdapters: 28
+  clientRuntime: 64,
+  hostRuntime: 58,
+  providerAdapters: 31
 });
 const TERMINAL_REPLY_SAFETY_FILES = Object.freeze([
   'lib/tmux_safety.py',

@@ -675,3 +675,26 @@ current/baseline, a clean exact release tree, the release-owned safety helper,
 5/5 guarded Gaming panes, all nine Gaming/Work sessions, and the restored
 workspace. Both host resource audits were healthy; no tmux server or session
 was restarted.
+
+## 34. Complete Legacy tmux Palette Guard Baseline
+
+1. Replace the embedded 16-color guard runtime with exact wtmux source
+   `0fb24ca`, whose inherited 256-color palette closes every OSC 4 forwarding
+   path on a resident tmux 3.6 server before a new pane starts.
+2. Advance component sequences to `64/58/31` and raise the packaged-runtime
+   verifier floor so app startup cannot reactivate the earlier partial guard.
+3. Preserve the shared identity-v2 registry, verify the deterministic WSL
+   runtime archive, and run the complete Windows quality/build gate.
+4. Activate the new baseline without restarting the resident tmux server or
+   any pane, then verify the live OpenCode session and packaged-app restart.
+
+Gate: Windows always restores the complete inherited-palette guard while the
+legacy server remains resident, and the runtime cannot regress to the earlier
+per-pane 16-color baseline.
+
+Acceptance record (2026-08-13): Windows embeds exact wtmux source `0fb24ca`
+at sequences `64/58/31`, contracts `1.10.0/20`, and deterministic WSL bundle
+SHA-256 `98e278d21eb499178ad05e0ed35f5c5c273af5aa2d8d1fb8e213054e3570fc8a`.
+The verifier floor and protected descriptor trust pin were advanced together.
+All 397 tests, type-check, dependency audits, exact runtime verification, and
+the production Electron build passed.
