@@ -710,3 +710,34 @@ packaged SHA-256 `c4415003fd0dd993b7b5c9892eed40b404465bc7a4b0e9e80ab236a0b63750
 After launch, current and baseline both resolve to `git-0fb24ca`; the resident
 tmux server remains PID `62780` on 3.6a with all seven sessions and all seven
 managed panes preserved.
+
+## 35. Non-login tmux 3.7 Cutover
+
+1. Embed exact wtmux runtime `git-f54239d` at component sequences `65/59/32`
+   and contracts `1.10.0/20`; raise the Windows packaged-runtime floors to the
+   same values.
+2. Preserve the verified app-owned runtime across packaged restarts and prove
+   a GUI-launched WSL process with `/usr/local/bin` first still selects
+   `~/.local/bin/tmux`.
+3. Install the package replace-in-place without touching the resident server.
+   After an explicit WSL/server restart, require the client, active server, and
+   `/proc/<server>/exe` to identify tmux 3.7b before the OpenCode smoke.
+
+Pre-cutover acceptance record (2026-08-14): Windows embeds exact wtmux source
+`f54239d` at sequences `65/59/32`, contracts `1.10.0/20`, and deterministic
+bundle SHA-256
+`8e6603487845c3f1ec87b2841f4cd469c721399c532ce7f1bbdc817bebf29226`.
+The protected trust pin, all 397 tests, typecheck, dependency audits, runtime
+verification, production build, and packaged live-WSL smoke passed. The local
+installer SHA-256 is
+`6e087cba19991ba4d76492fee53ac10bd73a96c265bcff51fb9409eb9f09846b`;
+the portable SHA-256 is
+`6b1ab4f210aca4340c6099ac2cbf3b68482e73a297f1260f981e5ad9f37bbe09`.
+Both are unsigned local-development artifacts and are not publication
+candidates. The installer was applied replace-in-place; the installed
+executable SHA-256 is
+`5bad5a18ac8311f786c3f89be410575b82088054d6141b10650c594568de5856`,
+and current plus baseline both resolve to `git-f54239d`. The preserved
+pre-cutover server remains PID `17469`, tmux 3.6a from `/usr/local/bin/tmux`,
+with five sessions and all five panes mitigated; final restart evidence is
+pending.
