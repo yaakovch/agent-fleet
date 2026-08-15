@@ -741,3 +741,12 @@ and current plus baseline both resolve to `git-f54239d`. The preserved
 pre-cutover server remains PID `17469`, tmux 3.6a from `/usr/local/bin/tmux`,
 with five sessions and all five panes mitigated; final restart evidence is
 pending.
+
+Post-cutover acceptance record (2026-08-15): A real Windows restart at
+`23:28:57 +03:00` cold-started WSL at `23:29:31`. The restored client and
+server both report tmux 3.7b; server PID `3574` executes
+`/home/sapir_cz/.local/bin/tmux`, and terminal-reply safety reports `safe`.
+The installed Agent Fleet app then launched agent runtime `git-f54239d`
+without replacing or regressing that server. An isolated OpenCode 1.18.18
+smoke through the real server answered two forwarded OSC 4 queries and found
+zero spontaneous terminal-reply fragments.
