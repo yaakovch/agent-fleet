@@ -750,3 +750,19 @@ The installed Agent Fleet app then launched agent runtime `git-f54239d`
 without replacing or regressing that server. An isolated OpenCode 1.18.18
 smoke through the real server answered two forwarded OSC 4 queries and found
 zero spontaneous terminal-reply fragments.
+
+## 36. Delayed OSC 10/11 Reply Hardening
+
+1. Embed exact wtmux runtime `git-4a077ad` at component sequences `66/60/33`
+   and contracts `1.10.0/20`; raise the Windows packaged-runtime floors to the
+   same values so startup cannot reactivate the zero-timeout baseline.
+2. Preserve the protected descriptor trust pin and verify the deterministic WSL
+   artifact includes the server-wide 500 ms minimum reply-assembly timeout.
+3. Run the complete Windows quality, production-build, native packaging, and
+   packaged live-WSL smoke gates before local replace-in-place installation.
+4. Activate the baseline without restarting tmux, then verify current and
+   baseline runtime identities, the seven-session inventory, the live 3.7b
+   server timeout, and the affected OpenCode pane.
+
+Gate: a delayed duplicate OSC 10/11 reply can never reach application input,
+and a packaged app restart cannot restore the former `escape-time 0` policy.
