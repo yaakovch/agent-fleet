@@ -780,5 +780,8 @@ candidates. The installer was applied replace-in-place. Its installed
 executable SHA-256 is
 `74852da1edb9bbf0803a001ad27890db43d618ead2bbd321608e8a3841a58c78`;
 current and baseline both resolve to `git-4a077ad`. The tmux 3.7b server remains
-PID `434049` with all seven sessions, `escape-time 500`, and the affected
-OpenCode pane alive.
+PID `434049` with `escape-time 500`. All seven sessions were present immediately
+after activation. At final audit all five Linux sessions remained, including
+VLC pane `%6`; the two Windows-backed sessions had exited and were not present
+in Agent Fleet's one-pane workspace restore record, so no replacement processes
+were created.
