@@ -766,3 +766,19 @@ zero spontaneous terminal-reply fragments.
 
 Gate: a delayed duplicate OSC 10/11 reply can never reach application input,
 and a packaged app restart cannot restore the former `escape-time 0` policy.
+
+Acceptance record (2026-08-20): Windows commit `084e3df` embeds exact wtmux
+source `4a077ad` at sequences `66/60/33`, contracts `1.10.0/20`, and runtime
+SHA-256 `c341fb6a24909dcd30ab513029d5d16997d4c22b7fff40011a604a792f8c14e7`.
+All 397 tests, typecheck, both dependency audits, runtime verification, and the
+production build passed. Native NSIS and portable packaging plus packaged WSL
+smoke passed. Their SHA-256 values are respectively
+`c950db5992eb4b9e40b5405eb6f81b9c81f8304ba589288b14b88b78267c8ddd`
+and `cdb7c2a45856e805b284b0087e67450962792d33475baca12a355ec88fd5c7be`;
+both are unsigned local-development artifacts and are not publication
+candidates. The installer was applied replace-in-place. Its installed
+executable SHA-256 is
+`74852da1edb9bbf0803a001ad27890db43d618ead2bbd321608e8a3841a58c78`;
+current and baseline both resolve to `git-4a077ad`. The tmux 3.7b server remains
+PID `434049` with all seven sessions, `escape-time 500`, and the affected
+OpenCode pane alive.
