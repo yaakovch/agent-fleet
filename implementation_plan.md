@@ -846,3 +846,29 @@ restored to the installed executable before the installed app was relaunched.
 
 Gate: an Agent Fleet restart cannot leave a configuration that stops `wtmux`,
 and the app and runtime produce byte-identical configuration projections.
+
+Acceptance record (2026-09-16): Windows commits `ab6453e`, `d7b7127`, and
+`6169fe1` embed exact wtmux source `28d569f` at sequences `79/71/43`, contracts
+`1.10.0/20`, and runtime SHA-256
+`cfe568c254b7d6def3c561cf395f11c05f95a52b4fd1aa5b87da5af55ec842f7`, and render
+`wtmux.conf` through the runtime's `render-config`. The first packaging attempt
+embedded `ccdc45f`; it was stopped when a repeated render was found to add a
+blank line, and `28d569f` made the projection idempotent before release. The
+quality gate passed policy, runtime verification, both audits, typecheck, 399
+tests with 4 skipped in 60 files, and the production build. The 4 POSIX-only
+installer tests, including the legacy repeated-entry and repeated-render
+regression, passed with the other 22 in their files under Linux Node. The
+unpacked package smoke passed with a live fleet snapshot, and NSIS, portable,
+SBOM, and finalization passed. Installer SHA-256
+`01e3d95f163cc13eb7ba77586c58c2df7821c6dd27f25c04b4a0546eaa3a59fe` and portable
+SHA-256 `90c124ce15636c93514d1093180b0ba9023443978e9c4e59adbd9d76ac60af71` are
+unsigned local-development artifacts. Both hosts run installed executable
+`9f09ff8a1f53f4ae59ccc9fe9adbc14223a7b4fa7ddf73e18d8ee713d2bb28cb` with current
+and baseline `git-28d569f` and a trust receipt for it. On gaming-desktop the
+app start rewrote `wtmux.conf` with byte-identical content
+(`24351cf7f1857d2287224847f713b05c4c70cda8944101dc288e0201bf4c6acc`) and kept the
+user-activated four-record registry `bb216a90`; its Start Menu shortcut and login
+item were restored to the installed executable after the packaged smoke. On
+work-m the legacy runtime-registry block was replaced once by the canonical
+projection, a second render is a no-op, registry `bb216a90` was kept, and tmux
+server `59347` kept both sessions. `wtmux doctor --config` passes on both.
