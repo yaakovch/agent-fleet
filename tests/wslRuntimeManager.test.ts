@@ -897,7 +897,10 @@ describe('app-owned WSL runtime manager', () => {
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     rmSync(join(registryRoot, 'current'));
     symlinkSync(`releases/${newerRegistryId}`, join(registryRoot, 'current'));
-    const oldRegistryConfig = 'WTMUX_MACHINE_IDS=()\nwtmux_load_shared_registry obsolete\nmachine__fixture__name=override\n';
+    // An April-era hand-written entry repeats a machine the registry already loads.
+    const legacyEntry = `WTMUX_MACHINE_IDS+=(${entry.id})`;
+    const oldRegistryConfig = 'WTMUX_MACHINE_IDS=()\nwtmux_load_shared_registry obsolete\nmachine__fixture__name=override\n'
+      + `${legacyEntry}\n`;
     writeFileSync(config, oldRegistryConfig);
     const repaired = spawnSync('python3', [
       '-c', WSL_RUNTIME_INSTALLER_LOADER, WSL_RUNTIME_INSTALLER_PROGRAM, 'install-registry',
@@ -907,13 +910,27 @@ describe('app-owned WSL runtime manager', () => {
     expect(repaired.status, repaired.stderr).toBe(0);
     expect(JSON.parse(repaired.stdout).status).toBe('preserved');
     expect(readlinkSync(join(registryRoot, 'current'))).toBe(`releases/${newerRegistryId}`);
-    expect(readFileSync(config, 'utf8')).not.toContain('obsolete');
+    const projected = readFileSync(config, 'utf8');
+    expect(projected).not.toContain('obsolete');
+    expect(projected.startsWith('# BEGIN wtmux-fleet configuration\n')).toBe(true);
+    expect(projected).not.toContain('wtmux-runtime registry');
+    expect(projected).toContain(`\n${legacyEntry}\n`);
     const sourcedConfig = spawnSync('bash', ['-c',
       'wtmux_load_shared_registry() { WTMUX_MACHINE_IDS=(fixture); machine__fixture__name=registry; }; source "$1"; printf "%s %s" "${WTMUX_MACHINE_IDS[*]}" "$machine__fixture__name"',
       'registry-test', config
     ], { encoding: 'utf8' });
     expect(sourcedConfig.status, sourcedConfig.stderr).toBe(0);
-    expect(sourcedConfig.stdout).toBe('fixture override');
+    expect(sourcedConfig.stdout).toBe(`fixture ${entry.id} override`);
+    const runtimeSource = join(runtimeRoot, 'current');
+    const loadedConfig = spawnSync('bash', ['-c',
+      'source "$1/lib/common.sh" && source "$1/lib/config.sh" && wtmux_load_config "$2" && wtmux_validate_loaded_config "$2" && printf "%s\\n" "${WTMUX_MACHINE_IDS[@]}"',
+      'registry-test', runtimeSource, config
+    ], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: root, WTMUX_REPO_ROOT: runtimeSource, PYTHONDONTWRITEBYTECODE: '1' }
+    });
+    expect(loadedConfig.status, loadedConfig.stderr).toBe(0);
+    expect(loadedConfig.stdout.split('\n').filter((id) => id === entry.id)).toHaveLength(1);
     expect(readFileSync(recordPath)).toEqual(recordPayload);
     const preservedAbort = spawnSync('python3', [
       '-c', WSL_RUNTIME_INSTALLER_LOADER, WSL_RUNTIME_INSTALLER_PROGRAM, 'abort',

@@ -45,6 +45,8 @@ PUBLIC_COMMANDS = (
 REGISTRY_BEGIN = "# BEGIN wtmux-runtime registry"
 REGISTRY_END = "# END wtmux-runtime registry"
 MANAGED_REGISTRY_BEGIN = "# BEGIN wtmux-managed shared-registry"
+# First wtmux client-runtime sequence whose wtmux-fleet-config has render-config.
+CONFIG_RENDERER_MIN_SEQUENCE = 78
 
 def fail(message):
     raise RuntimeError(message)
@@ -834,7 +836,7 @@ def validate_registry_release(release, manifest_payload, manifest):
         if hashlib.sha256(payload).hexdigest() != item["sha256"]:
             fail(f"installed registry record checksum does not match: {item['id']}")
 
-def registry_config_payload(payload, registry_path=None):
+def legacy_registry_config_payload(payload, registry_path=None):
     try:
         lines = payload.decode("utf-8").splitlines()
     except UnicodeError as error:
@@ -856,11 +858,45 @@ def registry_config_payload(payload, registry_path=None):
         lines = block + lines
     return ("\n".join(lines) + "\n").encode()
 
-def configure_registry(config, registry_path=None):
+def runtime_config_renderer(root, current, runtime_manifest):
+    """Render wtmux.conf with the verified runtime's own writer.
+
+    One implementation owns the shell projection. Only runtimes that predate
+    render-config keep the legacy projection above.
+    """
+    if runtime_manifest["components"]["clientRuntime"]["sequence"] < CONFIG_RENDERER_MIN_SEQUENCE:
+        return legacy_registry_config_payload
+    release = root / current
+    files = {item["path"]: item for item in runtime_manifest["files"]}
+    writer = [files.get(path) for path in ("scripts/wtmux-fleet-config", "lib/fleet_registry.py")]
+    if None in writer:
+        fail("verified runtime has no fleet configuration writer")
+
+    def render(payload, registry_path):
+        for item in writer:
+            data = read_regular(
+                release / item["path"], MAX_FILE_BYTES, f"verified runtime file {item['path']}",
+                item["size"], item["mode"],
+            )
+            if hashlib.sha256(data).hexdigest() != item["sha256"]:
+                fail(f"verified runtime file checksum does not match: {item['path']}")
+        result = subprocess.run(
+            ["python3", "-B", str(release / "scripts" / "wtmux-fleet-config"),
+             "render-config", "--machines", str(registry_path)],
+            input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        if result.returncode != 0 or not result.stdout or len(result.stdout) > MAX_CONFIG_BYTES:
+            fail("verified runtime could not render the wtmux configuration")
+        return result.stdout
+
+    return render
+
+def configure_registry(config, registry_path, render):
     payload = read_regular(
         config, MAX_CONFIG_BYTES, "wtmux configuration",
     ) if os.path.lexists(config) else b"WTMUX_MACHINE_IDS=()\n"
-    atomic_bytes(config, registry_config_payload(payload, registry_path), 0o600)
+    atomic_bytes(config, render(payload, registry_path), 0o600)
 
 def restore_link(root, name, target):
     if target:
@@ -1000,6 +1036,7 @@ def command_install_registry(arguments):
         records = receipt_records(receipt)
         runtime_record = trusted_record(records, current)
         runtime_manifest = validate_release(root, current, runtime_record["manifestSha256"])
+        render = runtime_config_renderer(root, current, runtime_manifest)
         # The APK/desktop registry is a bootstrap seed. A verified activation
         # belongs to the user and survives runtime repair and application restart.
         preserved_path = None
@@ -1068,9 +1105,7 @@ def command_install_registry(arguments):
                 config_payload = b""
                 config_mode = 0
                 source_config = b"WTMUX_MACHINE_IDS=()\n"
-            configured_payload = registry_config_payload(
-                source_config, configured_registry,
-            )
+            configured_payload = render(source_config, configured_registry)
             context["registry"] = {
                 "candidate": candidate_target,
                 "fromCurrent": read_link(registry_root, "current"),
@@ -1087,7 +1122,7 @@ def command_install_registry(arguments):
         elif context["registry"]["candidate"] != candidate_target:
             fail("registry activation retry does not match its pending transaction")
         if preserved_path is not None:
-            configure_registry(config, configured_registry)
+            configure_registry(config, configured_registry, render)
             context["phase"] = "registry-active"
             write_context(root, context)
             print(json.dumps({"status": "preserved"}, sort_keys=True))
@@ -1109,7 +1144,7 @@ def command_install_registry(arguments):
         if old_current and old_current != new_current:
             switch_link(registry_root, "previous", old_current)
         switch_link(registry_root, "current", new_current)
-        configure_registry(config, registry_root / "current" / "machines")
+        configure_registry(config, registry_root / "current" / "machines", render)
         context["phase"] = "registry-active"
         write_context(root, context)
     finally:

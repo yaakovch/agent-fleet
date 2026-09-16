@@ -827,3 +827,22 @@ gaming-desktop tmux server `78170` and the work-m server `59347` each kept both
 sessions. The packaged smoke retargeted the Start Menu shortcut and login item
 to `dist\win-unpacked`, so the installer relaunched that copy; both entries were
 restored to the installed executable before the installed app was relaunched.
+
+## 38. Single wtmux Configuration Writer
+
+1. Embed exact wtmux runtime `git-ccdc45f` at component sequences `78/70/42`
+   and contracts `1.10.0/20`, and raise the Windows packaged-runtime floors to
+   the same values. The runtime loads each registry machine once, even when a
+   legacy hand-written `WTMUX_MACHINE_IDS+=(id)` repeats it.
+2. Render `wtmux.conf` through the verified runtime's
+   `wtmux-fleet-config render-config` after rechecking the writer's manifest
+   checksums, instead of an installer-owned copy. Runtimes below sequence 78
+   keep the legacy projection.
+3. Extend the protected install regression with a legacy repeated entry: the
+   projection must be the runtime's canonical block, and the installed
+   runtime's loader must validate the configuration with that machine once.
+4. Run the complete Windows quality, packaging, and packaged live-WSL smoke
+   gates, then install replace-in-place on gaming-desktop and work-m.
+
+Gate: an Agent Fleet restart cannot leave a configuration that stops `wtmux`,
+and the app and runtime produce byte-identical configuration projections.
