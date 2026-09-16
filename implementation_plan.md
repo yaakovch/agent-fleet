@@ -805,3 +805,25 @@ were created.
 Gate: a project folder whose name contains `.` opens a managed session on every
 Windows host, and a packaged app restart keeps `git-f5e1308` as the trusted
 baseline.
+
+Acceptance record (2026-09-16): Windows commit `0dd2e53` embeds exact wtmux
+source `f5e1308` at sequences `77/69/41`, contracts `1.10.0/20`, and runtime
+SHA-256 `dc3d52beba36d450897c8d3b8503a8992d48b26775ec356db3726cdf48a86e27`.
+Commit `4d631ba` moves js-yaml to 4.3.2 for GHSA-2883-xcg3-v3hh, which the
+shipped dependency audit newly reported. The quality gate passed policy,
+runtime verification, both audits, typecheck, 399 tests with 4 skipped in 60
+files, and the production build. The unpacked package smoke passed with a live
+fleet snapshot, and native NSIS and portable packaging, SBOM, and finalization
+passed. Installer SHA-256
+`087ee76050d59ab0cb8db64186f5197d9de150a094daee9a69b867de82608af1` and portable
+SHA-256 `a248d9b7a18723820fd7ad2871e48c9ed7eed1869232c9bef5a0d855d73ff3cf` are
+unsigned local-development artifacts. The installer was applied replace-in-place
+on gaming-desktop and, through an interactive Session 1 task, on work-m; both
+installed executables hash
+`9dce050e13fc00055edebb2f986fa42389a6eccc77788219401898e45ab38ca9`. Current and
+baseline resolve to `git-f5e1308` on both WSL hosts, both Windows trust receipts
+record it, and the fleet transport reports host sequence 69 on each. The
+gaming-desktop tmux server `78170` and the work-m server `59347` each kept both
+sessions. The packaged smoke retargeted the Start Menu shortcut and login item
+to `dist\win-unpacked`, so the installer relaunched that copy; both entries were
+restored to the installed executable before the installed app was relaunched.
