@@ -830,14 +830,14 @@ restored to the installed executable before the installed app was relaunched.
 
 ## 38. Single wtmux Configuration Writer
 
-1. Embed exact wtmux runtime `git-ccdc45f` at component sequences `78/70/42`
+1. Embed exact wtmux runtime `git-28d569f` at component sequences `79/71/43`
    and contracts `1.10.0/20`, and raise the Windows packaged-runtime floors to
    the same values. The runtime loads each registry machine once, even when a
    legacy hand-written `WTMUX_MACHINE_IDS+=(id)` repeats it.
 2. Render `wtmux.conf` through the verified runtime's
    `wtmux-fleet-config render-config` after rechecking the writer's manifest
-   checksums, instead of an installer-owned copy. Runtimes below sequence 78
-   keep the legacy projection.
+   checksums, instead of an installer-owned copy. Runtimes below sequence 79
+   keep the legacy projection; rendering is idempotent.
 3. Extend the protected install regression with a legacy repeated entry: the
    projection must be the runtime's canonical block, and the installed
    runtime's loader must validate the configuration with that machine once.

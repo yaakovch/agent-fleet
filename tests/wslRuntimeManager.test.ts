@@ -931,6 +931,15 @@ describe('app-owned WSL runtime manager', () => {
     });
     expect(loadedConfig.status, loadedConfig.stderr).toBe(0);
     expect(loadedConfig.stdout.split('\n').filter((id) => id === entry.id)).toHaveLength(1);
+    // Every application start renders again; the projection must not drift.
+    const projectedRegistry = /^WTMUX_SHARED_REGISTRY_DIR='([^']+)'$/m.exec(projected)?.[1];
+    expect(projectedRegistry).toBeTruthy();
+    const rerendered = spawnSync('python3', [
+      '-B', join(runtimeSource, 'scripts/wtmux-fleet-config'), 'render-config',
+      '--machines', projectedRegistry as string
+    ], { input: projected, encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    expect(rerendered.status, rerendered.stderr).toBe(0);
+    expect(rerendered.stdout).toBe(projected);
     expect(readFileSync(recordPath)).toEqual(recordPayload);
     const preservedAbort = spawnSync('python3', [
       '-c', WSL_RUNTIME_INSTALLER_LOADER, WSL_RUNTIME_INSTALLER_PROGRAM, 'abort',

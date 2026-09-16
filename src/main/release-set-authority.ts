@@ -34,7 +34,7 @@ export interface EmbeddedReleaseTrustPins {
  * runtime artifacts, but they are not allowed to define their own trust root.
  */
 export const PRODUCTION_RELEASE_TRUST_PINS: EmbeddedReleaseTrustPins = Object.freeze({
-  descriptorSha256: '496c5fca0de60c7c31dfafbfc1e96442818a81095cf755cfc85bae5b4daaa553',
+  descriptorSha256: '785f75c054ea34cb1e3a2acc815b329300557f1c758a1bfb8c87283cdf70784d',
   keys: Object.freeze([Object.freeze({
     keyId: 'ef1aa26c21be89f9ac220e41ae28a865',
     sha256: 'a3500746ab5f70c708741dd8f3c41b0dc66fabb7a47b43b726bceb6cf9108364'

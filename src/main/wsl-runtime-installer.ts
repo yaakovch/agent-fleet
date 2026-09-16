@@ -45,8 +45,8 @@ PUBLIC_COMMANDS = (
 REGISTRY_BEGIN = "# BEGIN wtmux-runtime registry"
 REGISTRY_END = "# END wtmux-runtime registry"
 MANAGED_REGISTRY_BEGIN = "# BEGIN wtmux-managed shared-registry"
-# First wtmux client-runtime sequence whose wtmux-fleet-config has render-config.
-CONFIG_RENDERER_MIN_SEQUENCE = 78
+# First wtmux client-runtime sequence with an idempotent render-config.
+CONFIG_RENDERER_MIN_SEQUENCE = 79
 
 def fail(message):
     raise RuntimeError(message)
