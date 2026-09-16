@@ -1304,8 +1304,18 @@ handle(IPC_CHANNELS.updateFleetHost, async (_event, hostId) => {
   const host = getFleetView().snapshot.hosts.find((item) => item.id === hostId);
   if (!host) return { ok: false, message: 'Host is no longer available' };
   try {
-    const result = await fleetBridge.mutate('host.update', { hostId, idempotencyKey: randomUUID() });
-    return { ok: true, message: result.status === 'up-to-date' ? `${host.name} is already up to date` : `${host.name} updated and verified` };
+    const result = await wslRuntimeManager.connectHost({ action: 'repair', hostId });
+    if (result.ok && fleetBridge.isRunning()) { fleetBridge.stop(); fleetBridge.start(); }
+    return result;
+  } catch (error) {
+    return fleetMutationFailure(error);
+  }
+});
+handle(IPC_CHANNELS.connectFleetHost, async (_event, request) => {
+  try {
+    const result = await wslRuntimeManager.connectHost(request);
+    if (result.ok && result.hostId && fleetBridge.isRunning()) { fleetBridge.stop(); fleetBridge.start(); }
+    return result;
   } catch (error) {
     return fleetMutationFailure(error);
   }

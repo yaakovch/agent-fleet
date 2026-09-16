@@ -22,6 +22,26 @@ afterEach(() => {
 });
 
 describe('fleet bridge supervisor', () => {
+  it('retains a safe configuration failure without logging raw bridge output', async () => {
+    const directory = temporaryDirectory();
+    const script = join(directory, 'failed-bridge.cjs');
+    writeFileSync(script, 'process.stderr.write("REGISTRY_INVALID: private-path-canary\\n", () => process.exit(2));');
+    const warn = vi.fn();
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(directory, 'cache.json'),
+      launch: { command: process.execPath, args: [script], distro: 'Test Linux' },
+      logger: { ...logger, warn }
+    });
+    const failed = waitForStatus(supervisor, 'offline');
+    try {
+      supervisor.start();
+      expect((await failed).errorCode).toBe('REGISTRY_INVALID');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private-path-canary');
+    } finally {
+      supervisor.stop();
+    }
+  });
+
   it('rejects bidi-format controls in an exact pairing proposal review', () => {
     const proposal = pairingProposalReview();
     proposal.proposal.hostCommand = 'safe\u202Etxt.exe';

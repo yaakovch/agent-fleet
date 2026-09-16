@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { connectArguments, parseConnectResult, type FleetConnectResult } from '../shared/fleet-connect';
 import {
   ACTIVATED_RUNTIME_ROOT,
   activatedRuntimeCommand,
@@ -111,7 +112,7 @@ export class WslRuntimeManager {
         }
         this.assertAdmissionCurrent(admission);
         activation ??= { id: randomUUID().replaceAll('-', '') };
-        this.publish(generation, distro, this.initialState('Activating the verified machine registry…', 'busy'));
+        this.publish(generation, distro, this.initialState('Checking the verified fleet configuration…', 'busy'));
         await this.installRegistry(descriptor, distro, activation.id);
         const activated = await this.inspectOperation(generation, distro, admission, false);
         if (activated.status !== 'ready') {
@@ -212,6 +213,42 @@ export class WslRuntimeManager {
 
   runtimeCommand(command: string): string {
     return activatedRuntimeCommand(command);
+  }
+
+  async connectHost(request: unknown): Promise<FleetConnectResult> {
+    const argumentsList = connectArguments(request);
+    await this.ensure();
+    const distro = this.options.distro();
+    const descriptor = this.descriptor();
+    let bundle = '';
+    if (argumentsList[0] === 'repair') {
+      this.verifyArtifact('host repair runtime', descriptor.runtime);
+      bundle = join(this.options.resourcesRoot, 'runtime', descriptor.runtime.file);
+      argumentsList.push('--bundle', bundle, '--sha256', descriptor.runtime.sha256);
+    }
+    const loader = `import os,pathlib,subprocess,sys
+args=sys.argv[1:]
+if '--bundle' in args:
+ i=args.index('--bundle')+1
+ if not args[i].startswith('/'): args[i]=subprocess.check_output(['wslpath','-u',args[i]],text=True,timeout=5).strip()
+p=pathlib.Path.home()/'.local/share/agent-fleet/wtmux/current/scripts/wtmux-connect'
+os.execv(sys.executable,[sys.executable,str(p),*args])`;
+    try {
+      const result = await this.run('wsl.exe', ['-d', distro, '--cd', '~', '--exec', 'python3', '-c', loader, ...argumentsList], 150_000);
+      this.assertDistro(distro);
+      return parseConnectResult(result.stdout);
+    } catch (error) {
+      const stderr = (error as { stderr?: unknown }).stderr;
+      if (typeof stderr === 'string' && stderr.length < 8192) {
+        try {
+          const failure = JSON.parse(stderr) as { schemaVersion?: number; error?: unknown };
+          if (failure.schemaVersion === 1 && typeof failure.error === 'string' && failure.error.length <= 256) {
+            return { ok: false, message: failure.error };
+          }
+        } catch { /* Use the bounded generic recovery message. */ }
+      }
+      return { ok: false, message: 'Host setup could not finish. Check Tailscale SSH access and retry.' };
+    }
   }
 
   expectedHostRuntimeVersion(): string | null {

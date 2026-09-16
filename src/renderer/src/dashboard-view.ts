@@ -65,6 +65,7 @@ import {
 } from '../../shared/fleet';
 import type { FleetBridgeView, FleetDirectoryListing, FleetDoctorResult, FleetRepositoryEntry, FleetRepositoryPage } from '../../shared/fleet-protocol';
 import type { FleetDownloadJob } from '../../shared/app';
+import type { FleetConnectRequest, TailnetHost, TailnetHostReview } from '../../shared/fleet-connect';
 import { cloneSettings, createDefaultSettings, type WidgetSettings } from '../../shared/settings';
 import { resolveFleetNotificationTarget, type FleetNotificationTarget } from '../../shared/notification';
 import { FLEET_FIXTURE } from './fleet-fixtures';
@@ -173,6 +174,10 @@ export class DashboardPrototype {
   private launcherLocation: 'project' | 'custom' = 'project';
   private launcherDirectory: FleetDirectoryListing | null = null;
   private launcherDirectoryLoading = false;
+  private tailnetHosts: TailnetHost[] | null = null;
+  private tailnetReview: TailnetHostReview | null = null;
+  private tailnetBusy = false;
+  private tailnetMessage = '';
   private launcherDirectoryError = '';
   private launcherSelectedPath = '';
   private launcherLabel = '';
@@ -671,6 +676,25 @@ export class DashboardPrototype {
       void window.limitsWidget.createFleetPairingInvitation().then((result) => this.showToast(result.message));
       return true;
     }
+    if (action === 'tailnet-discover') {
+      void this.connectHost({ action: 'discover' });
+      return true;
+    }
+    if (action === 'tailnet-review') {
+      const row = control.closest<HTMLElement>('[data-tailnet-node]');
+      const username = row?.querySelector<HTMLInputElement>('input')?.value.trim() ?? '';
+      const nodeId = row?.dataset.tailnetNode;
+      if (nodeId) void this.connectHost({ action: 'review', nodeId, username });
+      return true;
+    }
+    if (action === 'tailnet-pair') {
+      if (this.tailnetReview) void this.connectHost({ action: 'pair', reviewId: this.tailnetReview.reviewId });
+      return true;
+    }
+    if (action === 'tailnet-cancel') {
+      if (!this.tailnetBusy) { this.tailnetReview = null; this.render(); }
+      return true;
+    }
     if (action === 'dashboard-review-pairing') {
       const requestId = control.closest<HTMLElement>('[data-pairing-request-id]')?.dataset.pairingRequestId;
       if (!requestId) return this.showToast('Pairing request is no longer available');
@@ -1154,12 +1178,41 @@ export class DashboardPrototype {
 
   private renderFleet(): string {
     return `<div class="dashboard-stack">
+      ${this.renderTailnetSetup()}
       ${this.snapshot.pairingRequests.filter((request) => request.status === 'awaiting-review').map((request) => `<section class="pairing-request" data-pairing-request-id="${escapeAttr(request.id)}"><span class="pairing-icon">${icon('user-plus')}</span><div><strong>Pairing request from ${escapeHtml(request.deviceName)}</strong><p>${escapeHtml(request.platform)} · live peer ${escapeHtml(request.peer)} · expires ${formatTime(request.expiresAt)}</p></div><button data-action="dashboard-review-pairing">Review exact proposal</button></section>`).join('')}
       <section class="fleet-card fleet-host-grid">${this.snapshot.physicalHosts.map((host) => this.renderHostCard(host)).join('')}</section>
       <section class="pairing-layout">
-        <article class="fleet-card registry-card"><div class="card-heading"><div><h2>Fleet registry</h2><p>Provider: GitHub · verified cache available</p></div><span class="safe-badge">${icon('check')}Synced</span></div><dl><div><dt>Last sync</dt><dd>${relativeTime(this.snapshot.registrySyncedAt)}</dd></div><div><dt>Checkout</dt><dd>Clean</dd></div><div><dt>Schema</dt><dd>fleet/v1</dd></div><div><dt>Runtime bundle</dt><dd>1.4.0-dev</dd></div></dl><button class="quiet-button" data-action="dashboard-refresh">${icon('refresh-cw')}Check registry</button></article>
+        <article class="fleet-card registry-card"><div class="card-heading"><div><h2>Fleet configuration</h2><p>Saved host identities are checked on every connection.</p></div></div><button class="quiet-button" data-action="dashboard-refresh">${icon('refresh-cw')}Reconnect hosts</button></article>
       </section>
     </div>`;
+  }
+
+  private async connectHost(request: FleetConnectRequest): Promise<void> {
+    if (this.tailnetBusy) return;
+    this.tailnetBusy = true;
+    this.tailnetMessage = request.action === 'discover' ? 'Finding hosts on your Tailnet…' : 'Checking host setup…';
+    this.render();
+    try {
+      const result = await window.limitsWidget.connectFleetHost(request);
+      this.tailnetMessage = result.message;
+      if (result.nodes) { this.tailnetHosts = result.nodes; this.tailnetReview = null; }
+      if (result.review) this.tailnetReview = result.review;
+      if (result.ok && result.hostId) {
+        this.tailnetReview = null;
+        this.tailnetHosts = null;
+        await window.limitsWidget.refreshFleet();
+      }
+    } catch { this.tailnetMessage = 'Host setup could not finish. Retry when Tailscale is connected.'; }
+    finally { this.tailnetBusy = false; this.render(); }
+  }
+
+  private renderTailnetSetup(): string {
+    const disabled = this.tailnetBusy ? 'disabled' : '';
+    const review = this.tailnetReview;
+    const contents = review
+      ? `<h3>Pair ${escapeHtml(review.name)}?</h3><p>${escapeHtml(review.username)}@${escapeHtml(review.address)}</p><p>${review.runtimePresent ? 'Host runtime found' : 'Host runtime is missing; use Repair host after pairing'} · ${review.tmuxPresent ? 'Session service found' : 'tmux is missing on this host'}</p><button data-action="tailnet-pair" ${disabled}>Pair host</button><button data-action="tailnet-cancel" ${disabled}>Cancel</button>`
+      : (this.tailnetHosts ?? []).map((node) => `<div class="fleet-card" data-tailnet-node="${escapeAttr(node.nodeId)}"><strong>${escapeHtml(node.name)}</strong><p>${escapeHtml(node.address)} · ${node.online ? 'Online on Tailscale' : 'Offline'}${node.hostId ? ' · Paired' : ''}</p>${node.hostId ? '' : node.platform === 'windows' ? '<p>Select this machine’s WSL Linux node to pair.</p>' : `<label>Linux account <input autocomplete="off" maxlength="64" placeholder="Account name on this host" ${disabled}></label><button data-action="tailnet-review" ${!node.online || this.tailnetBusy ? 'disabled' : ''}>Review host</button>`}</div>`).join('');
+    return `<section class="fleet-card"><div class="card-heading"><div><h2>Hosts on your Tailnet</h2><p>Discover machines, check access, and pair the hosts you choose.</p></div><button data-action="tailnet-discover" ${disabled}>${icon('network')}Find hosts</button></div><p role="status">${escapeHtml(this.tailnetMessage)}</p>${contents}</section>`;
   }
 
   private renderSettings(): string {
@@ -1327,9 +1380,9 @@ export class DashboardPrototype {
 
   private confirmRepair(host: FleetHost): void {
     this.modal = {
-      title: `Update runtime on ${host.name}?`,
-      body: `${host.machine}. Installed ${host.wtmuxVersion}; controller offers 1.4.0-dev. The checksummed runtime activates atomically and rolls back if its self-check fails.`,
-      confirm: 'Update and verify',
+      title: `Repair ${host.name}?`,
+      body: 'Install the verified host runtime supplied with this app, then reconnect. Running sessions stay open. Tailscale SSH access is required.',
+      confirm: 'Repair host',
       action: { kind: 'update-host', id: host.id }
     };
     this.render();

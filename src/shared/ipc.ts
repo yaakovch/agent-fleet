@@ -60,6 +60,7 @@ export const IPC_CHANNELS = {
   updateFleetSchedule: 'fleet:updateSchedule',
   runFleetDoctor: 'fleet:runDoctor',
   updateFleetHost: 'fleet:updateHost',
+  connectFleetHost: 'fleet:connectHost',
   pauseFleetNotifications: 'fleet:pauseNotifications',
   createFleetSession: 'fleet:createSession',
   listFleetDirectory: 'fleet:listDirectory',

@@ -879,6 +879,49 @@ describe('app-owned WSL runtime manager', () => {
     ], { encoding: 'utf8', timeout: 30_000 });
     expect(registryOnlyFinalized.status, registryOnlyFinalized.stderr).toBe(0);
     expect(existsSync(join(runtimeRoot, 'activation-authority-v1.json'))).toBe(false);
+
+    const newerRegistryId = '9'.repeat(64);
+    const registryRoot = join(runtimeRoot, 'registry');
+    const newerRegistry = join(registryRoot, 'releases', newerRegistryId);
+    cpSync(join(registryRoot, 'current'), newerRegistry, { recursive: true, dereference: true });
+    const manifestPath = join(newerRegistry, 'registry-manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const entry = manifest.records[0];
+    const recordPath = join(newerRegistry, entry.path);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.name = `${record.name} updated`;
+    const recordPayload = Buffer.from(`${JSON.stringify(record, null, 2)}\n`);
+    writeFileSync(recordPath, recordPayload);
+    entry.size = recordPayload.length;
+    entry.sha256 = createHash('sha256').update(recordPayload).digest('hex');
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    rmSync(join(registryRoot, 'current'));
+    symlinkSync(`releases/${newerRegistryId}`, join(registryRoot, 'current'));
+    const oldRegistryConfig = 'WTMUX_MACHINE_IDS=()\nwtmux_load_shared_registry obsolete\nmachine__fixture__name=override\n';
+    writeFileSync(config, oldRegistryConfig);
+    const repaired = spawnSync('python3', [
+      '-c', WSL_RUNTIME_INSTALLER_LOADER, WSL_RUNTIME_INSTALLER_PROGRAM, 'install-registry',
+      registryBundle, String(descriptor.registry.size), descriptor.registry.sha256,
+      runtimeRoot, receipt, config, String(descriptor.registry.records), '9'.repeat(32)
+    ], { encoding: 'utf8', timeout: 30_000 });
+    expect(repaired.status, repaired.stderr).toBe(0);
+    expect(JSON.parse(repaired.stdout).status).toBe('preserved');
+    expect(readlinkSync(join(registryRoot, 'current'))).toBe(`releases/${newerRegistryId}`);
+    expect(readFileSync(config, 'utf8')).not.toContain('obsolete');
+    const sourcedConfig = spawnSync('bash', ['-c',
+      'wtmux_load_shared_registry() { WTMUX_MACHINE_IDS=(fixture); machine__fixture__name=registry; }; source "$1"; printf "%s %s" "${WTMUX_MACHINE_IDS[*]}" "$machine__fixture__name"',
+      'registry-test', config
+    ], { encoding: 'utf8' });
+    expect(sourcedConfig.status, sourcedConfig.stderr).toBe(0);
+    expect(sourcedConfig.stdout).toBe('fixture override');
+    expect(readFileSync(recordPath)).toEqual(recordPayload);
+    const preservedAbort = spawnSync('python3', [
+      '-c', WSL_RUNTIME_INSTALLER_LOADER, WSL_RUNTIME_INSTALLER_PROGRAM, 'abort',
+      runtimeRoot, receipt, bin, '9'.repeat(32)
+    ], { encoding: 'utf8', timeout: 30_000 });
+    expect(preservedAbort.status, preservedAbort.stderr).toBe(0);
+    expect(readlinkSync(join(registryRoot, 'current'))).toBe(`releases/${newerRegistryId}`);
+    expect(readFileSync(config, 'utf8')).toBe(oldRegistryConfig);
   }, 30_000);
 
   posixIt('deterministically compensates an uncommitted activation after restart and remains idempotent', () => {

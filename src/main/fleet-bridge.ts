@@ -353,9 +353,9 @@ export class FleetBridgeSupervisor extends EventEmitter {
     });
     child.once('exit', (code, signal) => {
       if (this.child !== child) return;
-      const diagnostic = stderr.replaceAll('\u0000', '').trim();
-      if (diagnostic) this.options.logger.warn('Fleet bridge exited', { code, signal, diagnostic });
-      this.disconnect(this.errorCode || 'bridge_disconnected');
+      const startupCode = stderr.split(/\r?\n/u).some((line) => line.startsWith('REGISTRY_INVALID:')) ? 'REGISTRY_INVALID' : '';
+      this.options.logger.warn('Fleet bridge exited', { code, signal, errorCode: startupCode || this.errorCode });
+      this.disconnect(startupCode || this.errorCode || 'bridge_disconnected');
     });
     this.requestSnapshot();
   }

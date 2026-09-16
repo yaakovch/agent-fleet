@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { FleetConnectRequest, FleetConnectResult } from '../shared/fleet-connect';
 import type {
   AppInfo,
   ClaudeIntegrationState,
@@ -53,6 +54,7 @@ function subscribe<Value>(channel: string, callback: (value: Value) => void): ()
 }
 
 const api = {
+  connectFleetHost: (request: FleetConnectRequest): Promise<FleetConnectResult> => invoke(IPC_CHANNELS.connectFleetHost, request),
   getState: (): Promise<CombinedLimitState> => invoke(IPC_CHANNELS.getState),
   refreshNow: (): Promise<CombinedLimitState> => invoke(IPC_CHANNELS.refreshNow),
   getFleetState: (): Promise<FleetBridgeView> => invoke(IPC_CHANNELS.getFleetState),

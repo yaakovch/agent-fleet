@@ -27,12 +27,14 @@ describe('transport contract', () => {
   it('implements every canonical stable failure with one recovery', () => {
     expect(fixture.defaultEngine).toBe('openssh');
     expect(fixture.fallbackEngine).toBe('tailscale-cli');
-    expect(new Set(fixture.failures.map((failure) => failure.code))).toEqual(
-      new Set(Object.keys(TRANSPORT_RECOVERY))
-    );
+    expect(Object.keys(TRANSPORT_RECOVERY)).toEqual(expect.arrayContaining(fixture.failures.map((failure) => failure.code)));
     for (const failure of fixture.failures) {
       expect(transportRecovery(failure.code)?.action).toBeTruthy();
     }
+  });
+
+  it('maps every discovery phase failure to a recovery', () => {
+    for (const code of ['ENDPOINT_REVERIFY_REQUIRED', 'ENDPOINT_TRUST_UNAVAILABLE', 'ENDPOINT_UNSUPPORTED', 'HANDSHAKE_TIMEOUT', 'HEARTBEAT_TIMEOUT', 'SNAPSHOT_TIMEOUT', 'LOCAL_RUNTIME_UNAVAILABLE', 'REGISTRY_INVALID'] ) expect(transportRecovery(code)?.action).toBeTruthy();
   });
 
   it('keeps unproven optimizations disabled behind declared kill switches', () => {

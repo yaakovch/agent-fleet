@@ -71,7 +71,7 @@ export function assertRuntimeManifestIdentity(value, descriptor) {
     || source.contractPackageVersion !== descriptor.contractPackageVersion
     || target.platform !== 'linux'
     || target.architecture !== 'universal'
-    || target.prefix !== '/home/agent-fleet/.local') {
+    || !['/home/agent-fleet/.local', '~/.local'].includes(target.prefix)) {
     throw new Error('embedded WSL runtime manifest identity does not match its descriptor');
   }
   if (!COMPONENTS.every((name) =>

@@ -219,7 +219,9 @@ def parse_runtime_manifest(payload, expected_version, expected_manifest_digest):
     if (
         target["platform"] not in {"linux", "termux"}
         or target["architecture"] not in {"x86_64", "arm64", "universal"}
-        or not isinstance(target["prefix"], str) or not target["prefix"].startswith("/")
+        or not isinstance(target["prefix"], str)
+        or (not target["prefix"].startswith("/")
+            and not (target["platform"] == "linux" and target["prefix"] == "~/.local"))
         or len(target["prefix"]) > 256
     ):
         fail("runtime target metadata is invalid")
@@ -837,24 +839,21 @@ def registry_config_payload(payload, registry_path=None):
         lines = payload.decode("utf-8").splitlines()
     except UnicodeError as error:
         raise RuntimeError("wtmux configuration is not valid UTF-8") from error
-    starts = [index for index, line in enumerate(lines) if line == REGISTRY_BEGIN]
-    ends = [index for index, line in enumerate(lines) if line == REGISTRY_END]
-    if len(starts) != len(ends) or len(starts) > 1 or (starts and starts[0] >= ends[0]):
-        fail("runtime registry config markers are malformed")
-    if starts:
-        del lines[starts[0]:ends[0] + 1]
+    for label in ("wtmux-fleet configuration", "wtmux-runtime registry", "wtmux-managed shared-registry"):
+        begin, end = f"# BEGIN {label}", f"# END {label}"
+        if begin in lines or end in lines:
+            if lines.count(begin) != 1 or lines.count(end) != 1 or lines.index(begin) >= lines.index(end):
+                fail("runtime registry config markers are malformed")
+            del lines[lines.index(begin):lines.index(end) + 1]
+    # The verified loader initializes host membership; a template's empty
+    # initializer must not erase it after the prepended projection.
+    lines = [line for line in lines if line.strip() != "WTMUX_MACHINE_IDS=()"
+             and not line.lstrip().startswith("wtmux_load_shared_registry ")]
     if registry_path is not None:
         escaped = str(registry_path).replace("'", "'\"'\"'")
-        block = [REGISTRY_BEGIN, f"WTMUX_SHARED_REGISTRY_DIR='{escaped}'", REGISTRY_END]
-        try:
-            insertion = lines.index(MANAGED_REGISTRY_BEGIN)
-        except ValueError:
-            insertion = len(lines)
-        if insertion and lines[insertion - 1]:
-            block.insert(0, "")
-        if insertion < len(lines) and lines[insertion]:
-            block.append("")
-        lines[insertion:insertion] = block
+        block = [REGISTRY_BEGIN, f"WTMUX_SHARED_REGISTRY_DIR='{escaped}'",
+                 f"wtmux_load_shared_registry '{escaped}'", REGISTRY_END]
+        lines = block + lines
     return ("\n".join(lines) + "\n").encode()
 
 def configure_registry(config, registry_path=None):
@@ -919,26 +918,27 @@ def compensate_context(root, receipt, bin_dir, context):
             fail("registry activation pointers were superseded before compensation")
         restore_link(registry_root, "current", registry["fromCurrent"])
         restore_link(registry_root, "previous", registry["fromPrevious"])
-        if registry["configPath"]:
-            config = absolute_path(registry["configPath"])
-            prior_config = base64.b64decode(registry["configPayload"], validate=True)
-            if os.path.lexists(config):
-                current_config = read_regular(config, MAX_CONFIG_BYTES, "wtmux configuration")
-                current_digest = hashlib.sha256(current_config).hexdigest()
-                before_matches = registry["configExisted"] and current_config == prior_config
-                after_matches = current_digest == registry["configAfterSha256"]
-                if not before_matches and not after_matches:
-                    fail("wtmux configuration changed after registry activation; preserving the newer edit")
-                if after_matches:
-                    if registry["configExisted"]:
-                        atomic_bytes(config, prior_config, registry["configMode"])
-                    else:
-                        config.unlink()
-                        fsync_directory(config.parent)
-            elif registry["configExisted"]:
-                fail("wtmux configuration changed after registry activation; preserving the newer edit")
         if registry["candidateCreated"]:
             quarantine_created_release(registry_root, registry["candidate"], "rejected registry")
+
+    if registry["configPath"]:
+        config = absolute_path(registry["configPath"])
+        prior_config = base64.b64decode(registry["configPayload"], validate=True)
+        if os.path.lexists(config):
+            current_config = read_regular(config, MAX_CONFIG_BYTES, "wtmux configuration")
+            current_digest = hashlib.sha256(current_config).hexdigest()
+            before_matches = registry["configExisted"] and current_config == prior_config
+            after_matches = current_digest == registry["configAfterSha256"]
+            if not before_matches and not after_matches:
+                fail("wtmux configuration changed after registry activation; preserving the newer edit")
+            if after_matches:
+                if registry["configExisted"]:
+                    atomic_bytes(config, prior_config, registry["configMode"])
+                else:
+                    config.unlink()
+                    fsync_directory(config.parent)
+        elif registry["configExisted"]:
+            fail("wtmux configuration changed after registry activation; preserving the newer edit")
 
     records = receipt_records(receipt, allow_missing=True)
     version = candidate.removeprefix("releases/")
@@ -1000,6 +1000,27 @@ def command_install_registry(arguments):
         records = receipt_records(receipt)
         runtime_record = trusted_record(records, current)
         runtime_manifest = validate_release(root, current, runtime_record["manifestSha256"])
+        # The APK/desktop registry is a bootstrap seed. A verified activation
+        # belongs to the user and survives runtime repair and application restart.
+        preserved_path = None
+        resolver = root / current / "lib" / "fleet_registry.py"
+        if resolver.is_file():
+            active = subprocess.run(
+                ["python3", str(resolver), "--active", str(root)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15, check=False,
+            )
+            if active.returncode == 0:
+                preserved_path = Path(active.stdout.decode("utf-8").strip())
+            elif active.returncode != 3:
+                fail("REGISTRY_INVALID: preserving the failed activation for configuration repair")
+        elif os.path.lexists(root / "fleet-config" / "current"):
+            fail("active fleet configuration requires a runtime with configuration validation")
+        elif os.path.lexists(registry_root / "current"):
+            prior = registry_root / read_link(registry_root, "current")
+            prior_payload = read_regular(prior / "registry-manifest.json", MAX_FILE_BYTES, "active registry manifest")
+            prior_manifest = parse_registry_manifest(prior_payload)
+            validate_registry_release(prior, prior_payload, prior_manifest)
+            preserved_path = registry_root / "current" / "machines"
         if context is None:
             context = {
                 "schemaVersion": 1,
@@ -1033,7 +1054,9 @@ def command_install_registry(arguments):
         if hashlib.sha256(validator_payload).hexdigest() != validator_item["sha256"]:
             fail("verified registry validator checksum does not match")
         release = releases / release_id
-        created = not os.path.lexists(release)
+        created = preserved_path is None and not os.path.lexists(release)
+        candidate_target = read_link(registry_root, "current") if preserved_path else f"releases/{release_id}"
+        configured_registry = preserved_path or registry_root / "current" / "machines"
         if context["phase"] == "runtime-active":
             config_existed = os.path.lexists(config)
             if config_existed:
@@ -1046,10 +1069,10 @@ def command_install_registry(arguments):
                 config_mode = 0
                 source_config = b"WTMUX_MACHINE_IDS=()\n"
             configured_payload = registry_config_payload(
-                source_config, registry_root / "current" / "machines",
+                source_config, configured_registry,
             )
             context["registry"] = {
-                "candidate": f"releases/{release_id}",
+                "candidate": candidate_target,
                 "fromCurrent": read_link(registry_root, "current"),
                 "fromPrevious": read_link(registry_root, "previous"),
                 "candidateCreated": created,
@@ -1061,8 +1084,14 @@ def command_install_registry(arguments):
             }
             context["phase"] = "registry-prepared"
             write_context(root, context)
-        elif context["registry"]["candidate"] != f"releases/{release_id}":
+        elif context["registry"]["candidate"] != candidate_target:
             fail("registry activation retry does not match its pending transaction")
+        if preserved_path is not None:
+            configure_registry(config, configured_registry)
+            context["phase"] = "registry-active"
+            write_context(root, context)
+            print(json.dumps({"status": "preserved"}, sort_keys=True))
+            return
         if os.path.lexists(release):
             validate_registry_release(release, manifest_entry[0], manifest)
         else:
