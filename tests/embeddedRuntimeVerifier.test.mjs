@@ -60,12 +60,17 @@ describe('embedded runtime verifier', () => {
       clientRuntime: { sequence: 77 },
       hostRuntime: { sequence: 69 },
       providerAdapters: { sequence: 41 }
+    }, safeFiles)).toThrow('predates managed terminal-reply safety');
+    expect(() => assertTerminalReplySafeRuntime({
+      clientRuntime: { sequence: 78 },
+      hostRuntime: { sequence: 70 },
+      providerAdapters: { sequence: 42 }
     }, new Set(['lib/tmux_state.sh']))).toThrow('omits managed terminal-reply safety');
     expect(assertTerminalReplySafeRuntime({
-      clientRuntime: { sequence: 77 },
-      hostRuntime: { sequence: 69 },
-      providerAdapters: { sequence: 41 }
-    }, safeFiles)).toMatchObject({ clientRuntime: { sequence: 77 } });
+      clientRuntime: { sequence: 78 },
+      hostRuntime: { sequence: 70 },
+      providerAdapters: { sequence: 42 }
+    }, safeFiles)).toMatchObject({ clientRuntime: { sequence: 78 } });
   });
 
   it('requires identity-v2 evidence for every packaged host transport', () => {
