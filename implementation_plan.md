@@ -785,3 +785,23 @@ after activation. At final audit all five Linux sessions remained, including
 VLC pane `%6`; the two Windows-backed sessions had exited and were not present
 in Agent Fleet's one-pane workspace restore record, so no replacement processes
 were created.
+
+## 37. Dotted Project Session Names
+
+1. Embed exact wtmux runtime `git-f5e1308` at component sequences `77/69/41`
+   and contracts `1.10.0/20`; raise the Windows packaged-runtime floors to the
+   same values so startup cannot reactivate a runtime whose session names keep
+   tmux target separators.
+2. Preserve the protected descriptor trust pin and verify the portable WSL
+   artifact maps `.` in project slugs to `_` and addresses sessions exactly in
+   the terminal-reply safety helper.
+3. Run the complete Windows quality, production-build, native packaging, and
+   packaged live-WSL smoke gates before replace-in-place installation on
+   gaming-desktop and work-m.
+4. Activate the baseline without restarting tmux, then verify current and
+   baseline runtime identities, the Windows trust receipt, and the live session
+   inventory on each host.
+
+Gate: a project folder whose name contains `.` opens a managed session on every
+Windows host, and a packaged app restart keeps `git-f5e1308` as the trusted
+baseline.
