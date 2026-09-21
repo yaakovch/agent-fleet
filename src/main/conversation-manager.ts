@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { nativeImage } from 'electron';
-import { parseConversationFrame, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
+import { parseConversationProtocolFrame, parseConversationFrame, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
 import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
 import { activatedRuntimeCommand } from '../shared/runtime';
 import { wslProcessOwner, type WslProcessOwnership } from './wsl-process-ownership';
@@ -289,13 +289,16 @@ export class ConversationManager {
     );
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
     const frame = parseConversationFrame(line);
-    if (result.code === 0 && action === 'answer') {
-      const receipt = safeJson(line);
-      const expectedQuestion = args[args.indexOf('--question') + 1];
-      if (receipt?.protocolVersion !== 2 || receipt?.type !== 'question.response'
-        || receipt?.status !== 'delivered' || receipt?.questionId !== expectedQuestion
-        || receipt?.session !== tab.internalName) {
-        return { ok: false, message: 'The host did not confirm this answer. Check again before retrying.' };
+    if (result.code === 0 && (action === 'answer' || action === 'approve')) {
+      const receipt = parseConversationProtocolFrame(line);
+      const question = action === 'answer';
+      const expectedId = args[args.indexOf(question ? '--question' : '--approval') + 1];
+      if (!receipt || (receipt.type !== 'question.response' && receipt.type !== 'approval.response')
+        || receipt.type !== (question ? 'question.response' : 'approval.response')
+        || receipt.session !== tab.internalName
+        || (question ? receipt.questionId !== expectedId
+          : receipt.approvalId !== expectedId || receipt.choice !== args[args.indexOf('--choice') + 1])) {
+        return { ok: false, message: 'The host did not confirm this response. Check again before retrying.' };
       }
     }
     if (result.code === 0) return { ok: true, message: 'Delivered', ...(frame ? { frame } : {}) };

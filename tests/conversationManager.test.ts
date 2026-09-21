@@ -47,14 +47,35 @@ function tab(id: string): TerminalTabDescriptor {
 }
 
 describe('native conversation streams', () => {
-  it.each(['missing', 'wrong-question', 'delivered'])('requires a matching provider answer receipt: %s', async (result) => {
+  it.each(['missing', 'wrong-question', 'wrong-session', 'delivered'])('requires a matching provider answer receipt: %s', async (result) => {
     const process = fakeProcess();
     const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
       resolveTab: () => tab('answer'), sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn() }, spawnProcess: vi.fn(() => process) as unknown as typeof spawn });
     const pending = manager.answer('answer', 'request', 'r1', 1, [{ questionId: 'q1', choiceIds: ['a'], text: '' }]);
     if (result !== 'missing') (process.stdout as PassThrough).end(JSON.stringify({ protocolVersion: 2,
-      type: 'question.response', session: 'answer', questionId: result === 'delivered' ? 'request' : 'other', status: 'delivered' }));
+      type: 'question.response', timestamp: '2026-09-22T00:00:00Z', session: result === 'wrong-session' ? 'other' : 'answer',
+      questionId: result === 'wrong-question' ? 'other' : 'request', status: 'delivered' }));
+    process.emit('exit', 0);
+    expect((await pending).ok).toBe(result === 'delivered'); manager.dispose();
+  });
+
+  it.each(['missing', 'wrong-session', 'wrong-id', 'wrong-choice', 'delivered'])('validates approval receipt: %s', async (result) => {
+    const process = fakeProcess();
+    const spawnMock = vi.fn(() => process);
+    const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
+      resolveTab: () => tab('approve'), sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn() }, spawnProcess: spawnMock as unknown as typeof spawn });
+    const pending = manager.approve('approve', 'request', 'allow', 'r1', 123);
+    expect(spawnMock).toHaveBeenCalledWith('wsl.exe', expect.arrayContaining([
+      'conversation', 'approve', '--host', 'gaming', '--session', 'approve',
+      '--approval', 'request', '--choice', 'allow', '--revision', 'r1', '--event-position', '123'
+    ]), expect.any(Object));
+    if (result !== 'missing') (process.stdout as PassThrough).end(JSON.stringify({ protocolVersion: 2,
+      type: 'approval.response', timestamp: '2026-09-22T00:00:00Z',
+      session: result === 'wrong-session' ? 'other' : 'approve',
+      approvalId: result === 'wrong-id' ? 'other' : 'request',
+      choice: result === 'wrong-choice' ? 'deny' : 'allow', status: 'delivered' }));
     process.emit('exit', 0);
     expect((await pending).ok).toBe(result === 'delivered'); manager.dispose();
   });
