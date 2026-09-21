@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "source": "codex_async_question",
+  "cases": [
+    {
+      "name": "async-survives-work",
+      "events": [
+        {
+          "id": "request-1",
+          "kind": "question",
+          "timestamp": "2026-09-21T10:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-1",
+          "questions": [
+            {
+              "id": "question-0",
+              "header": "",
+              "prompt": "Choose a setting",
+              "type": "single",
+              "required": true,
+              "allowOther": true,
+              "options": [
+                {
+                  "id": "option-0",
+                  "label": "First",
+                  "description": ""
+                }
+              ]
+            }
+          ],
+          "answers": []
+        },
+        {
+          "id": "work-1",
+          "kind": "tool",
+          "timestamp": "2026-09-21T10:00:01Z",
+          "role": "assistant",
+          "title": "Continuing work",
+          "text": "",
+          "detail": "",
+          "state": "complete",
+          "tool": "exec",
+          "attachments": [],
+          "choices": []
+        }
+      ],
+      "pending": [
+        "request-1"
+      ]
+    }
+  ]
+}

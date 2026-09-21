@@ -310,10 +310,14 @@ export function mergeConversationItems(current: ConversationItem[], incoming: Co
     }
     values.set(item.id, old && ['tool', 'question'].includes(item.kind) ? {
       ...old, ...item,
-      state: old.state === 'complete' || item.state === 'complete' ? 'complete' : item.state || old.state,
+      state: old.state === 'complete' || item.state === 'complete' ? 'complete'
+        : item.state === 'pending' && ['running', 'error'].includes(old.state) ? old.state : item.state || old.state,
+      source: item.source || old.source,
       text: item.text || old.text, detail: item.detail || old.detail,
       questions: item.questions?.length ? item.questions : old.questions,
-      answers: item.answers?.length ? item.answers : old.answers,
+      answers: item.source === 'codex_async_question' || old.source === 'codex_async_question'
+        ? [...new Map([...(old.answers ?? []), ...(item.answers ?? [])].map((answer) => [answer.questionId, answer])).values()]
+        : item.answers?.length ? item.answers : old.answers,
       input: item.input || old.input, result: item.result || old.result,
       startedAt: item.startedAt || old.startedAt, completedAt: item.completedAt || old.completedAt,
       presentation: mergeToolPresentation(old.presentation, item.presentation)
@@ -332,7 +336,7 @@ export function retireSupersededQuestions(items: ConversationItem[]): Conversati
     }
   }
   return items.map((item, index) => {
-    if (item.kind !== 'question' || item.state === 'complete') return item;
+    if (item.kind !== 'question' || item.state === 'complete' || item.source === 'codex_async_question') return item;
     const superseded = item.timestamp && latestTimestamp
       ? latestTimestamp > item.timestamp
         || (latestTimestamp === item.timestamp && latestTimestampIndex > index && items[latestTimestampIndex].id !== item.id)

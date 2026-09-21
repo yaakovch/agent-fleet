@@ -47,6 +47,18 @@ function tab(id: string): TerminalTabDescriptor {
 }
 
 describe('native conversation streams', () => {
+  it.each(['missing', 'wrong-question', 'delivered'])('requires a matching provider answer receipt: %s', async (result) => {
+    const process = fakeProcess();
+    const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
+      resolveTab: () => tab('answer'), sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn() }, spawnProcess: vi.fn(() => process) as unknown as typeof spawn });
+    const pending = manager.answer('answer', 'request', 'r1', 1, [{ questionId: 'q1', choiceIds: ['a'], text: '' }]);
+    if (result !== 'missing') (process.stdout as PassThrough).end(JSON.stringify({ protocolVersion: 2,
+      type: 'question.response', session: 'answer', questionId: result === 'delivered' ? 'request' : 'other', status: 'delivered' }));
+    process.emit('exit', 0);
+    expect((await pending).ok).toBe(result === 'delivered'); manager.dispose();
+  });
+
   it('kills a spawned stream when ownership registration fails', () => {
     const process = fakeProcess();
     const manager = new ConversationManager({

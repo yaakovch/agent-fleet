@@ -1498,8 +1498,9 @@ export class SessionWorkspace {
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
     const pendingAfter = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete')?.id ?? '';
-    if (!pendingAfter) state.questionSheetId = '';
-    else if (pendingAfter !== pendingBefore && state.followOutput && !state.viewer) state.questionSheetId = pendingAfter;
+    if (!state.items.some((item) => item.id === state.questionSheetId && item.state !== 'complete')) state.questionSheetId = '';
+    if (pendingAfter && pendingAfter !== pendingBefore && state.followOutput && !state.viewer
+      && state.items.find((item) => item.id === pendingAfter)?.source !== 'codex_async_question') state.questionSheetId = pendingAfter;
     if (state.suggestion.target && suggestionRevisionBefore !== this.suggestionRevision(state, state.suggestion.target)) {
       this.clearSuggestions(tabId, true);
     }
@@ -1544,8 +1545,10 @@ export class SessionWorkspace {
   private renderNative(tab: TerminalTabDescriptor): string {
     if (tab.tool === 'shell') return '<div class="native-shell"><div class="native-shell-intro"><strong>Shell sessions use Terminal</strong><span>Open Codex, Claude Code, or Copilot from the shell.</span></div></div>';
     const state = this.nativeState(tab.id);
-    const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
-    const feedItems = pending ? state.items.filter((item) => item.id !== pending.id) : state.items;
+    const actions = state.items.filter((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
+    const pending = actions.find((item) => item.id === state.questionSheetId)
+      ?? [...actions].reverse().find((item) => item.source !== 'codex_async_question') ?? actions[0];
+    const feedItems = state.items.filter((item) => !actions.some((action) => action.id === item.id));
     const viewerItem = state.viewer ? state.items.find((item) => item.id === state.viewer?.itemId) : undefined;
     const attention = this.fleetSnapshot?.attention.find((item) =>
       item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId && !this.dismissedAttention.has(item.id)
@@ -1561,20 +1564,24 @@ export class SessionWorkspace {
       </div>
       ${state.newMessages ? '<button class="new-messages-button" data-new-messages data-action="native-new-messages" data-workspace-action>New messages ↓</button>' : ''}
       <div data-native-limit-host>${attention ? renderLimitCard(attention) : ''}</div>
-      ${pending ? this.renderPendingAction(pending, state) : this.renderComposer(tab, state)}
+      ${pending ? this.renderPendingAction(pending, state) : ''}
+      ${!pending || pending.source === 'codex_async_question' ? this.renderComposer(tab, state) : ''}
       ${viewerItem && state.viewer ? renderConversationViewer(viewerItem, state.viewer) : ''}
     </div>`;
   }
 
   private renderPendingAction(item: ConversationItem, state: NativeState): string {
+    const actions = state.items.filter((value) => value.kind === 'question' && value.state !== 'complete');
+    const picker = actions.length > 1 ? `<nav class="native-question-picker" aria-label="Pending questions">${actions.map((value, index) =>
+      `<span data-conversation-item="${escapeAttr(value.id)}"><button data-action="native-question-open" data-workspace-action aria-pressed="${value.id === item.id}">${index + 1}. ${escapeHtml(value.questions?.[0]?.header || value.questions?.[0]?.prompt || 'Question')}</button></span>`).join('')}</nav>` : '';
     const content = item.kind === 'question'
       ? renderQuestion(item, state.questionSteps.get(item.id) ?? 0, state.questionDrafts.get(item.id), state.submittingQuestions.has(item.id),
         localSuggestionsEnabled(this.localSuggestionSettings.mode) ? state.suggestion : undefined, this.localSuggestionSettings.mode)
       : renderConversationItem(item);
     const label = item.kind === 'question' ? (item.title || 'Answer needed') : (item.title || 'Approval needed');
     const allowed = state.providerState.mutationsAllowed;
-    return `<section class="native-answer-bar ${state.interactionMode === 'plan' ? 'planning' : ''}" data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action ${allowed ? '' : 'disabled'}><span><strong>${escapeHtml(label)}</strong><small>${allowed ? 'Tap to respond' : 'Open Terminal to respond'}</small></span><b>${allowed ? 'Open' : 'Read-only'}</b></button></section>
-      ${allowed && state.questionSheetId === item.id ? `<div class="native-sheet-backdrop"><section class="native-question-sheet"><header><span><strong>Action needed</strong><small>Complete this to continue the session</small></span><button class="quiet-button" data-action="native-question-close" data-workspace-action aria-label="Close">×</button></header>${content}</section></div>` : ''}`;
+    return `<section class="native-answer-bar ${state.interactionMode === 'plan' ? 'planning' : ''}" data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action ${allowed ? '' : 'disabled'}><span><strong>${actions.length > 1 ? `${actions.length} questions waiting` : escapeHtml(label)}</strong><small>${allowed ? 'Tap to respond' : 'Open Terminal to respond'}</small></span><b>${allowed ? 'Open' : 'Read-only'}</b></button></section>
+      ${allowed && state.questionSheetId === item.id ? `<div class="native-sheet-backdrop"><section class="native-question-sheet"><header><span><strong>Answer question</strong><small>${item.source === 'codex_async_question' ? 'Codex can keep working while you answer' : 'Complete this to continue the session'}</small></span><button class="quiet-button" data-action="native-question-close" data-workspace-action aria-label="Close">×</button></header>${picker}${content}</section></div>` : ''}`;
   }
 
   private renderComposer(tab: TerminalTabDescriptor, state: NativeState): string {
@@ -1739,6 +1746,7 @@ export class SessionWorkspace {
     if (!item.revision || !item.questions?.length) return;
     this.captureVisibleQuestionDraft(item.id);
     const state = this.nativeState(this.selectedId);
+    if (state.submittingQuestions.has(item.id) || item.state === 'complete') return;
     if (!state.providerState.mutationsAllowed) {
       state.notice = 'Native actions are read-only for this provider state. Open Terminal to respond.';
       this.renderSelectedNative(); return;
@@ -1758,10 +1766,15 @@ export class SessionWorkspace {
     this.renderSelectedNative();
     const result = await window.limitsWidget.answerConversation(
       this.selectedId, item.id, item.revision, state.providerState.eventPosition, answers
-    );
+    ).catch(() => ({ ok: false, message: 'Delivery was not confirmed. Check again before retrying.' }));
     state.notice = result.message;
-    if (result.ok) state.items = mergeItems(state.items, [{ ...item, state: 'running', title: 'Answer sent…', answers }]);
-    else state.submittingQuestions.delete(item.id);
+    state.submittingQuestions.delete(item.id);
+    if (result.ok) {
+      state.items = mergeItems(state.items, [{ ...item, state: 'complete', title: 'Answered', answers }]);
+      if (state.questionSheetId === item.id) state.questionSheetId = '';
+    } else {
+      state.items = mergeItems(state.items, [{ ...item, state: 'error', title: 'Answer not sent', text: result.message, answers }]);
+    }
     this.renderSelectedNative();
   }
 
@@ -1786,7 +1799,7 @@ export class SessionWorkspace {
     const questionId = textInput?.dataset.questionId ?? question?.id;
     if (!questionId || !textInput) return;
     const previous = answers.find((value) => value.questionId === questionId);
-    const next = { questionId, choiceIds: previous?.choiceIds ?? [], text: textInput.value };
+    const next = { questionId, choiceIds: question?.type !== 'multi' && textInput.value.trim() ? [] : previous?.choiceIds ?? [], text: textInput.value };
     const index = answers.findIndex((value) => value.questionId === questionId);
     if (index >= 0) answers[index] = next; else answers.push(next);
     state.questionDrafts.set(itemId, answers);
@@ -1795,6 +1808,7 @@ export class SessionWorkspace {
   private async chooseQuestionOption(item: ConversationItem, questionId: string, choice: string): Promise<void> {
     if (!item.questions?.length) return;
     const state = this.nativeState(this.selectedId);
+    if (state.submittingQuestions.has(item.id) || state.items.find((value) => value.id === item.id)?.state === 'complete') return;
     const step = state.questionSteps.get(item.id) ?? 0;
     const question = item.questions[Math.min(step, item.questions.length - 1)];
     if (question.id !== questionId) return;
@@ -2334,7 +2348,9 @@ function renderQuestion(
   const current = questions[step];
   const explicitAction = !complete && current && (['multi', 'text'].includes(current.type) || current.allowOther);
   const actionLabel = current?.type === 'multi' ? 'Done' : 'Send';
+  if (submitting) return `<article class="native-card question-card submitting" data-conversation-item="${escapeAttr(item.id)}"><div class="question-scroll" role="status"><h3>Sending…</h3><p>Waiting for Codex to confirm your answers.</p></div></article>`;
   return `<article class="native-card question-card state-${escapeAttr(item.state)} ${submitting ? 'submitting' : ''}" data-conversation-item="${escapeAttr(item.id)}"><div class="question-scroll"><small>${complete ? 'Answered' : 'Question'}</small><h3>${escapeHtml(item.title || 'Your input is needed')}</h3>${item.text ? markdown(item.text) : ''}
+    ${item.state === 'error' ? '<button data-action="native-question-submit" data-workspace-action>Retry answers</button><button data-action="workspace-view" data-mode="terminal" data-workspace-action>Open Terminal</button>' : ''}
     ${!complete && questions.length > 1 ? `<div class="question-progress"><span>Question ${step + 1} of ${questions.length}</span>${questions.map((_question, index) => `<i class="${index < step ? 'done' : index === step ? 'active' : ''}"></i>`).join('')}</div>` : ''}
     ${visibleQuestions.map((question) => renderQuestionPart(question, item, answerSource, suggestion, suggestionMode)).join('')}
     ${complete ? '<div class="question-complete">Answer submitted</div>' : ''}</div>

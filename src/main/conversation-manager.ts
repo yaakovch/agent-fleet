@@ -145,7 +145,7 @@ export class ConversationManager {
     if (payload.length > 32 * 1024) return { ok: false, message: 'Answers are too long' };
     return this.action(tabId, 'answer', ['--question', question, '--revision', revision,
       '--event-position', String(eventPosition),
-      '--answers-b64', payload.toString('base64url'), '--idempotency-key', randomUUID()], 35_000);
+      '--answers-b64', payload.toString('base64url'), '--idempotency-key', randomUUID()], 90_000);
   }
 
   stage(tabId: string, name: string, mime: string, data: Uint8Array): Promise<StagedAttachment[]> {
@@ -289,6 +289,15 @@ export class ConversationManager {
     );
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
     const frame = parseConversationFrame(line);
+    if (result.code === 0 && action === 'answer') {
+      const receipt = safeJson(line);
+      const expectedQuestion = args[args.indexOf('--question') + 1];
+      if (receipt?.protocolVersion !== 2 || receipt?.type !== 'question.response'
+        || receipt?.status !== 'delivered' || receipt?.questionId !== expectedQuestion
+        || receipt?.session !== tab.internalName) {
+        return { ok: false, message: 'The host did not confirm this answer. Check again before retrying.' };
+      }
+    }
     if (result.code === 0) return { ok: true, message: 'Delivered', ...(frame ? { frame } : {}) };
     const structured = safeJson(line)?.error?.message;
     return { ok: false, message: typeof structured === 'string' ? structured.slice(0, 500) : result.stderr.trim().slice(0, 500) || 'The host rejected the action' };

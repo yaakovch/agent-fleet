@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   activePendingAction, mergeConversationItems, resolveConversationScroll, type ConversationItem
 } from '../src/shared/conversation';
@@ -12,6 +14,24 @@ function item(value: Partial<ConversationItem>): ConversationItem {
 }
 
 describe('conversation lifecycle model', () => {
+  it('consumes the shared async lifecycle fixture', () => {
+    const fixture = JSON.parse(readFileSync(join(process.cwd(), 'tests/fixtures/native-question-behavior-v1.json'), 'utf8'));
+    for (const example of fixture.cases) {
+      const merged = mergeConversationItems([], example.events);
+      expect(merged.filter((value) => value.kind === 'question' && value.state !== 'complete').map((value) => value.id)).toEqual(example.pending);
+    }
+  });
+  it('keeps async questions through work and stale snapshots until an explicit receipt', () => {
+    const question = item({ kind: 'question', source: 'codex_async_question', state: 'pending' });
+    const work = item({ id: 'later', timestamp: '2026-07-14T06:01:00Z' });
+    const waiting = mergeConversationItems([question], [work]);
+    expect(activePendingAction(waiting)?.id).toBe(question.id);
+    const sending = mergeConversationItems(waiting, [{ ...question, state: 'running' }]);
+    expect(mergeConversationItems(sending, [question])[0].state).toBe('running');
+    const completed = mergeConversationItems(sending, [{ ...question, state: 'complete' }]);
+    expect(mergeConversationItems(completed, [question])[0].state).toBe('complete');
+    expect(activePendingAction(completed)).toBeUndefined();
+  });
   it('keeps semantic start input when a generic completion arrives', () => {
     const start = item({
       input: '{"cmd":"npm test"}', startedAt: '2026-07-14T06:00:00Z',

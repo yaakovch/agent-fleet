@@ -485,3 +485,19 @@ areas.
 - The feature is off by default. One request may run at a time, cancellation and
   stale results are safe, and setup/test/failure states are actionable. External
   processes own their RAM; the UI states this explicitly.
+
+
+## Native questions and conversation refresh (2026-09-21)
+
+Approved scope: reliable automatic submission of the final answer in supported
+question groups (1, 2, 3, 4 and 8), explicit Sending state, provider-confirmed
+completion, and retained answers with Retry on failed or unconfirmed delivery.
+Async Codex follow-up questions remain available while work and the composer
+continue. A persistent bar opens them without stealing focus; multiple requests
+are selectable and dismissing the form preserves drafts. Defaults never submit
+automatically. Blocking requests take priority over async requests.
+
+Both clients use neutral user bubbles, plain assistant text, compact tool rows,
+rounded composers and theme-aware neutral question surfaces. Navigation stays
+unchanged. Existing source fields identify async questions; no protocol schema
+change or intentional user-visible platform divergence is introduced.

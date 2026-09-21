@@ -872,3 +872,29 @@ item were restored to the installed executable after the packaged smoke. On
 work-m the legacy runtime-registry block was replaced once by the canonical
 projection, a second render is a no-op, registry `bb216a90` was kept, and tmux
 server `59347` kept both sessions. `wtmux doctor --config` passes on both.
+
+
+## Approved Native questions implementation (2026-09-21)
+
+1. Reproduce final-answer delivery and asynchronous question lifecycle failures
+   against installed Codex; fix stable request revisions and durable receipts.
+2. Implement pending/submitting/error/complete lifecycle in Windows, then Android;
+   retain drafts and implement async request selection without composer capture.
+3. Apply the focused desktop-inspired conversation presentation on both clients.
+4. Validate shared behavior fixtures, actual provider continuation, Windows UI
+   parity and protected Android emulator interactions and reviewed screenshots.
+5. Package the fixed host runtime and publish one verified Android in-app update.
+   Windows installer publication is outside this scope. Acceptance is pending
+   until evidence and release gates are recorded.
+
+Validation for Native questions: 45 targeted lifecycle, presentation, contract and
+manager tests passed; TypeScript, embedded-runtime verification and production
+build passed. The installed Electron runtime exercised the production renderer
+and actual click handlers with an isolated IPC receipt: three choices produced
+one submission, the sheet stayed open until confirmation, then closed while
+preserving the composer draft. Dark/light screenshots were inspected and the
+remaining light-theme footer and tool surfaces were corrected. Evidence is in
+`dist/native-question-review/receipt.json` and sibling PNGs. This is UI/IPC fixture
+evidence, not a claim of a remote-provider Windows smoke test. The actual provider
+bridge and Android connected probe are recorded in the wtmux handoff. No Windows
+installer publication is part of this change.

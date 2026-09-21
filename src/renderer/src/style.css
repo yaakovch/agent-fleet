@@ -5,6 +5,36 @@
   color: #eef2f6;
 }
 
+/* Conversation surfaces follow the desktop reading layout in either OS theme. */
+.native-conversation { --chat-surface: #17191d; --chat-bubble: #25272c; --chat-text: #e8eaed; --chat-muted: #a4a7ad; --chat-line: #383b42; }
+.native-conversation .tool-call { background: transparent; border: 0; border-bottom: 1px solid var(--chat-line); border-radius: 0; padding: 8px 2px; color: var(--chat-text); }
+.native-conversation .tool-group > summary { padding: 8px 2px; color: var(--chat-muted); }
+.native-conversation .question-navigation,.native-conversation .native-answer-bar { background: var(--chat-surface); border-color: var(--chat-line); box-shadow: none; }
+.native-conversation .native-answer-bar > button { color: var(--chat-text); }
+.native-conversation .question-progress,.native-conversation .question-part legend small,.native-conversation .question-navigation small,.native-conversation .native-answer-bar small { color: var(--chat-muted); }
+.native-conversation .native-question-sheet > header { border-color: var(--chat-line); }
+.native-conversation .native-question-sheet .quiet-button,.native-conversation .native-composer .composer-actions button { background: var(--chat-bubble); border-color: var(--chat-line); color: var(--chat-text); }
+.native-conversation .native-message { color: var(--chat-text); line-height: 1.6; }
+.native-conversation .native-message.user { background: var(--chat-bubble); border: 0; border-radius: 20px; }
+.native-conversation .native-message.assistant { max-width: 100%; }
+.native-conversation .native-message.user > small,.native-conversation .native-message.assistant > small { display: none; }
+.native-conversation .tool-group { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.native-conversation .tool-group > button { color: var(--chat-muted); padding: 8px 2px; }
+.native-conversation .native-composer { border: 1px solid var(--chat-line); border-radius: 22px; background: var(--chat-surface); box-shadow: none; }
+.native-conversation .native-composer.planning { border-color: #c79445; }
+.native-conversation .native-question-sheet { background: var(--chat-surface); border-color: var(--chat-line); border-radius: 22px; }
+.native-conversation .question-card { background: var(--chat-surface); color: var(--chat-text); border-color: var(--chat-line); box-shadow: none; }
+.native-conversation .question-option { background: var(--chat-surface); color: var(--chat-text); border-color: var(--chat-line); border-radius: 12px; padding: 14px; }
+.native-conversation .question-option.selected { background: var(--chat-bubble); border-color: #809cca; }
+.native-conversation .question-option small,.native-conversation .native-question-sheet > header small { color: var(--chat-muted); }
+.native-question-picker { display: flex; gap: 6px; padding: 8px 14px; overflow-x: auto; flex-shrink: 0; }
+.native-question-picker button { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--chat-line); border-radius: 14px; padding: 7px 12px; color: var(--chat-text); background: var(--chat-surface); }
+.native-question-picker button[aria-pressed="true"] { background: var(--chat-bubble); }
+@media (prefers-color-scheme: light) {
+  .native-conversation { --chat-surface: #fff; --chat-bubble: #f0f0f2; --chat-text: #202124; --chat-muted: #63666d; --chat-line: #dadce0; background: #fff; color: var(--chat-text); }
+  .native-conversation .native-composer textarea[data-native-message],.native-conversation .question-part textarea { color: var(--chat-text); background: var(--chat-surface); }
+}
+
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; background: transparent; }
 button { font: inherit; }
