@@ -910,3 +910,41 @@ Validate both client parsers with conversation-turns-v2.json, mixed host version
 and light/dark/large text. Preserve submission receipts across mode changes.
 Complete Android protected emulator and canonical signed publication gates;
 verify paired-host canary/rollout with sessions, configuration and rollback.
+
+## Native loading and earlier questions repair (2026-09-22)
+
+1. Keep provider-state discovery separate from its verified/unsupported result,
+   including cold open and reconnect, while disabling actions until verified.
+2. Retain at most 256 confirmed questions per session, keyed by kind, request ID
+   and revision. Restore only matching incoming records, including paged history;
+   reject cross-session frames and clear memory when tab identity changes.
+   A missing revision may match only one saved request with identical ID, source,
+   nonempty timestamp and nonempty structured question schema. Never substitute
+   a different explicit revision or infer an answer from conversation activity.
+3. Partition pending async requests by the latest timestamped user message and
+   expose earlier requests in a preserved disclosure with explicit reopen.
+   Leave their state, answers and drafts intact and retain the composer.
+4. Validate the production frame handler, renderer, request delivery, stale
+   snapshots, identity isolation and bounded memory, then type-check and build.
+   Coordinate Android parity and host receipt reconciliation before publication.
+
+Windows validation: 84 focused tests across lifecycle, delivery, model,
+presentation, views, contracts, manager, local suggestions and embedded runtime
+verification passed, including
+the 11-case shared `native-question-attention-v1.json` fixture. TypeScript and
+the production build passed. `scripts/capture-native-conversation.cjs` exercised
+the actual renderer in an isolated Electron window with synthetic content and
+no host processes. Cold loading, dark/light Earlier questions, 1.35x text and
+opening an earlier sheet with preserved question/composer drafts passed and
+were visually inspected. Evidence: `dist/native-conversation-preview/receipt.json`
+and sibling PNGs. Production frame tests additionally cover missing-revision
+history only matching one identical saved request and reject changed/ambiguous
+identities. Windows installation/publication and physical-device tests are not
+part of this source delivery.
+
+The Windows embedded Linux runtime is byte-identical to Android host repair:
+clean source `fd49fcca982dc9c6d286ab9de0f7ba8cbf5f2899`, components 83/75/46,
+contracts 21 / 1.11.0, SHA-256
+`914d7cec6a533e6693cdef208aa37b326a53523b067766d36e2c7993edd7fa43`.
+`scripts/verify-embedded-runtime.mjs` validates its source, manifest, SBOM,
+license and checksum. Registry and trusted release keys are preserved.

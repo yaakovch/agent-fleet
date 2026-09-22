@@ -520,3 +520,20 @@ obsolete requests cancelled. No extra AI calls, idle polling or transcript files
 Windows delivers source parity without an installer publication; Android uses
 the signed in-app updater after emulator and release gates. Physical phone smoke
 is user-operated. This is the only intentional delivery difference.
+
+## Native loading and earlier questions (2026-09-22)
+
+Before the first provider result, Native shows Connecting/loading and disables
+actions without declaring the provider unsupported. An explicit unsupported
+result remains visible. Snapshot refreshes, view changes and history paging
+preserve provider-confirmed question completion for the same request and session,
+with bounded local receipt memory and conservative identity matching.
+
+Unanswered async questions older than a later user message remain available in
+an expandable Earlier questions section, outside the current waiting count.
+Moving a question there never marks it answered or expires it. Compare valid
+timestamps across all loaded messages, using transcript order only to break
+equal timestamps; unknown timestamps remain current. Preserve drafts and the
+composer. Blocking questions and approvals retain the current action surface.
+Windows and Android share this behavior; Windows source delivery only remains
+the intentional release difference.

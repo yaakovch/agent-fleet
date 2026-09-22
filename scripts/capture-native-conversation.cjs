@@ -21,6 +21,7 @@ const deadline = setTimeout(() => { trace('timed out'); app.exit(2); }, 60000);
     workspace.nativeStates = new Map(); workspace.activityCache = new ActivityCache();
     workspace.localSuggestionSettings = createDefaultLocalSuggestionSettings();
     const tab = {id:'fixture', sessionId:'fixture', hostId:'fixture', internalName:'fixture', tool:'codex'};
+    workspace.tabs = new Map([[tab.id, tab]]); workspace.selectedId = tab.id;
     const base = {id:'user', kind:'message', timestamp:'now', role:'user', title:'', text:'Make Native view easier to read.', detail:'', state:'complete', tool:'', attachments:[], choices:[], turnId:'turn', messagePurpose:'user'};
     const summary = {...base, id:'activity', kind:'activity', role:'', text:'', messagePurpose:undefined, activitySummary:{turnId:'turn', state:'complete', toolCount:1001, changeCount:3, progressCount:2, otherCount:1, partial:false, latestProgress:'', cursor:'cursor'}};
     const final = {...base, id:'final', role:'assistant', messagePurpose:'final', text:'Native view now puts your messages and my replies first.\\n\\nOpen Activity to inspect tools and edits. Use Actions to switch to Detailed whenever you want the full timeline.'};
@@ -59,6 +60,47 @@ const deadline = setTimeout(() => { trace('timed out'); app.exit(2); }, 60000);
       const input = document.querySelector('[data-native-message]'); input.style.height = 'auto'; input.style.height = input.scrollHeight+'px';
       return {messages:document.querySelectorAll('.native-message').length, activities:document.querySelectorAll('.native-turn-activity').length, tools:document.querySelectorAll('.tool-call').length, composerHeight:input.getBoundingClientRect().height};
     };
+    // Production frame handling and real Native HTML; only pane selection, DOM
+    // scheduling and suggestion work are substituted for this isolated window.
+    workspace.queueNativeRender = () => {}; workspace.maybeStartAutomaticSuggestion = () => {};
+    workspace.selectFromControl = () => {};
+    workspace.renderSelectedNative = () => {
+      const previous = workspace.captureRenderSnapshot(tab.id);
+      document.querySelector('[data-native-host]').innerHTML = workspace.renderNative(tab);
+      workspace.restoreRenderSnapshot(tab.id, previous);
+    };
+    document.addEventListener('click', (event) => {
+      const control = event.target.closest('[data-action]');
+      if (control) workspace.handleAction(control.dataset.action, control);
+    });
+    window.renderQuestionFixture = (kind) => {
+      workspace.nativeStates.clear(); workspace.nativeView = 'conversation';
+      const state = workspace.nativeState(tab.id);
+      if (kind !== 'cold') {
+        const questions = Array.from({length:7}, (_, index) => ({...base, id:'old-'+index,
+          kind:'question', role:'assistant', timestamp:'2026-09-22T00:00:00Z', state:'pending', source:'codex_async_question',
+          title:'Answer needed', text:'', revision:'stable-'+index,
+          questions:[{id:'q1', header:'Earlier question '+(index+1), prompt:'Which approach should this earlier request use?',
+            type:'single', required:true, allowOther:true, options:[{id:'a', label:'Keep the existing approach', description:'Preserve the current behavior'}]}]}));
+        workspace.applyConversationFrame(tab.id, {type:'conversation.snapshot', session:tab.internalName,
+          items:[{...base, timestamp:'2026-09-22T00:01:00Z', text:'Continue with the conversation improvements.'},
+            {...final, timestamp:'2026-09-22T00:02:00Z', text:'Your earlier questions remain available below. You can keep typing while reviewing them.'}, ...questions],
+          providerState:{...state.providerState, confidence:'verified', fallback:'none', mutationsAllowed:true}});
+        state.draft = 'Preserve this composer draft';
+        state.questionDrafts.set('old-0', [{questionId:'q1', choiceIds:[], text:'Preserve this question draft'}]);
+        if (kind !== 'earlier-collapsed') state.expandedDetails.add('earlier-questions');
+      }
+      document.body.innerHTML = '<main class="session-workspace" style="height:100vh;width:100vw;display:block"><div data-native-host="fixture" style="height:100%">'+workspace.renderNative(tab)+'</div></main>';
+      workspace.element = document.body.firstElementChild;
+      if (kind === 'earlier-open') document.querySelector('[data-conversation-item="old-0"] [data-action="native-question-open"]').click();
+      const text = document.body.innerText;
+      return {warning: text.includes('Terminal-only provider state'), updateHint:text.includes('Update this host'), waiting: text.includes('questions waiting'),
+        connecting:text.includes('Connecting'), earlier: text.includes('Earlier questions (7)'),
+        sheet: Boolean(document.querySelector('.native-question-sheet')),
+        sendDisabled:document.querySelector('[data-action="native-send"]').disabled,
+        composerDraft:document.querySelector('[data-native-message]').value,
+        questionDraft:document.querySelector('[data-question-text]')?.value ?? ''};
+    };
   `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'browser', outfile: join(output, 'fixture.js'), loader: { '.woff': 'dataurl', '.woff2': 'dataurl' } });
   writeFileSync(join(output, 'index.html'), '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"></head><body><script src="fixture.js"></script></body></html>');
   trace('bundled');
@@ -84,6 +126,20 @@ const deadline = setTimeout(() => { trace('timed out'); app.exit(2); }, 60000);
     await new Promise((resolve) => setTimeout(resolve, 350));
     const png = await window.webContents.capturePage();
     writeFileSync(join(output, name+'.png'), png.toPNG());
+    evidence.push({name, theme, scale, ...result});
+  }
+  for (const [kind, theme, scale] of [
+    ['cold', 'dark', 1], ['earlier-collapsed', 'dark', 1], ['earlier-expanded', 'dark', 1],
+    ['earlier-expanded', 'light', 1], ['earlier-expanded', 'dark', 1.35], ['earlier-open', 'light', 1]
+  ]) {
+    nativeTheme.themeSource = theme; window.webContents.setZoomFactor(scale);
+    const result = await window.webContents.executeJavaScript(`window.renderQuestionFixture(${JSON.stringify(kind)})`);
+    if (result.warning || result.waiting || (kind === 'cold' ? !result.connecting || !result.sendDisabled || result.updateHint
+      : !result.earlier || result.sendDisabled || result.composerDraft !== 'Preserve this composer draft')) throw new Error('Unexpected question state: '+JSON.stringify(result));
+    if (kind === 'earlier-open' && (!result.sheet || result.questionDraft !== 'Preserve this question draft')) throw new Error('Earlier question did not reopen with its draft');
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const name = `${kind}-${theme}-${scale}`;
+    writeFileSync(join(output, name+'.png'), (await window.webContents.capturePage()).toPNG());
     evidence.push({name, theme, scale, ...result});
   }
   writeFileSync(join(output, 'receipt.json'), JSON.stringify(evidence, null, 2));

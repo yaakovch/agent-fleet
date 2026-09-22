@@ -13,7 +13,7 @@ import type {
   ConversationAnswer, ConversationFrame, ConversationItem, ConversationQuestion, ProviderActivity, StagedAttachment,
   ProviderState, ToolPresentationBlock
 } from '../../shared/conversation';
-import { mergeConversationItems, resolveConversationScroll, unavailableProviderState } from '../../shared/conversation';
+import { ConfirmedQuestionCompletions, mergeConversationItems, partitionPendingActions, resolveConversationScroll, unavailableProviderState } from '../../shared/conversation';
 import {
   canSuggestForComposer,
   canSuggestForQuestion,
@@ -69,11 +69,14 @@ interface TerminalRuntime {
 }
 
 interface NativeState {
+  sessionIdentity: string;
   items: ConversationItem[];
   interactionMode: string;
   connection: string;
   providerActivity: ProviderActivity | null;
   providerState: ProviderState;
+  providerStateKnown: boolean;
+  confirmedQuestions: ConfirmedQuestionCompletions;
   providerActivityReceivedAt: number;
   nextCursor: string | null;
   hasMore: boolean;
@@ -599,7 +602,7 @@ export class SessionWorkspace {
       this.viewGeneration += 1;
       this.activityCache.clear();
       const ids = [...this.conversationStarted];
-      for (const id of ids) this.nativeState(id).loadingOlder = false;
+      for (const id of ids) { this.nativeState(id).loadingOlder = false; this.beginConversationLoading(id); }
       void window.limitsWidget.syncConversations(ids, this.nativeView);
       this.renderStructure();
       return true;
@@ -1447,10 +1450,12 @@ export class SessionWorkspace {
   }
 
   private nativeState(tabId: string): NativeState {
+    const tab = this.tabs.get(tabId);
+    const sessionIdentity = JSON.stringify([tab?.hostId, tab?.sessionId, tab?.internalName, tab?.tool]);
     let state = this.nativeStates.get(tabId);
-    if (!state) {
-      state = { items: [], interactionMode: 'unknown', connection: 'Connecting…', providerActivity: null,
-        providerState: unavailableProviderState(),
+    if (!state || state.sessionIdentity !== sessionIdentity) {
+      state = { sessionIdentity, items: [], interactionMode: 'unknown', connection: 'Connecting…', providerActivity: null,
+        providerState: unavailableProviderState(), providerStateKnown: false, confirmedQuestions: new ConfirmedQuestionCompletions(),
         providerActivityReceivedAt: 0, nextCursor: null,
         hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
         scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
@@ -1466,7 +1471,7 @@ export class SessionWorkspace {
   private startConversation(tab: TerminalTabDescriptor): void {
     if (tab.tool === 'shell' || this.conversationStarted.has(tab.id)) return;
     this.conversationStarted.add(tab.id);
-    this.nativeState(tab.id).connection = 'Connecting…';
+    this.beginConversationLoading(tab.id);
     void window.limitsWidget.startConversation(tab.id, this.nativeView).then((started) => {
       if (!started) {
         const state = this.nativeState(tab.id);
@@ -1474,6 +1479,17 @@ export class SessionWorkspace {
         this.renderNativePanel(tab.id);
       }
     });
+  }
+
+  private beginConversationLoading(tabId: string): void {
+    const state = this.nativeState(tabId);
+    state.connection = 'Connecting…';
+    state.providerState = unavailableProviderState();
+    state.providerStateKnown = false;
+    state.providerActivity = null;
+    state.providerActivityReceivedAt = 0;
+    state.error = '';
+    this.queueNativeRender(tabId);
   }
 
   private syncConversation(): void {
@@ -1484,6 +1500,7 @@ export class SessionWorkspace {
       .map((tab) => tab.id) : [];
     const signature = desired.join('\0');
     if (signature === [...this.conversationStarted].join('\0')) return;
+    for (const id of desired) if (!this.conversationStarted.has(id)) this.beginConversationLoading(id);
     this.conversationStarted = new Set(desired);
     void window.limitsWidget.syncConversations(desired, this.nativeView);
   }
@@ -1501,24 +1518,28 @@ export class SessionWorkspace {
   }
 
   private applyConversationFrame(tabId: string, frame: ConversationFrame): void {
-    if (!this.tabs.has(tabId)) return;
+    const tab = this.tabs.get(tabId);
+    if (!tab || (frame.session && frame.session !== tab.internalName)) return;
     const state = this.nativeState(tabId);
     const suggestionRevisionBefore = this.suggestionRevision(state, state.suggestion.target);
     const pendingBefore = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete')?.id ?? '';
     if (frame.type === 'conversation.snapshot') {
       const firstSnapshot = !state.scrollInitialized && !state.items.length;
-      state.items = mergeItems([], frame.items ?? []);
+      state.confirmedQuestions.remember(frame.items ?? [], state.items);
+      state.items = mergeItems([], state.confirmedQuestions.restore(frame.items ?? []));
       state.renderMode = firstSnapshot ? 'initial' : 'preserve';
       state.interactionMode = frame.interactionMode ?? 'unknown';
       state.providerActivity = Object.prototype.hasOwnProperty.call(frame, 'providerActivity') ? frame.providerActivity ?? null : null;
       state.providerActivityReceivedAt = state.providerActivity ? Date.now() : 0;
       state.providerState = frame.providerState ?? unavailableProviderState();
+      state.providerStateKnown = true;
       state.connection = 'Live'; state.error = '';
       state.nextCursor = frame.nextCursor ?? null; state.hasMore = Boolean(frame.hasMore); state.loadingOlder = false;
     } else if (frame.type === 'conversation.event' && frame.item) {
       state.renderMode = 'append';
-      state.items = mergeItems(state.items, [frame.item]); state.connection = 'Live'; state.error = '';
-      if (frame.providerState) state.providerState = frame.providerState;
+      state.confirmedQuestions.remember([frame.item], state.items);
+      state.items = mergeItems(state.items, state.confirmedQuestions.restore([frame.item])); state.connection = 'Live'; state.error = '';
+      if (frame.providerState) { state.providerState = frame.providerState; state.providerStateKnown = true; }
     } else if (frame.type === 'conversation.error') {
       state.connection = 'Unavailable'; state.error = frame.error?.message ?? 'Native view is unavailable';
     } else {
@@ -1528,7 +1549,7 @@ export class SessionWorkspace {
       const hasProviderActivity = Object.prototype.hasOwnProperty.call(frame, 'providerActivity');
       const providerChanged = hasProviderActivity && !sameProviderActivity(state.providerActivity, frame.providerActivity ?? null);
       const confidenceChanged = Boolean(frame.providerState)
-        && JSON.stringify(frame.providerState) !== JSON.stringify(state.providerState);
+        && (!state.providerStateKnown || JSON.stringify(frame.providerState) !== JSON.stringify(state.providerState));
       if (connection === state.connection && interactionMode === state.interactionMode && !providerChanged && !confidenceChanged) return;
       state.connection = connection;
       state.interactionMode = interactionMode;
@@ -1536,7 +1557,7 @@ export class SessionWorkspace {
         state.providerActivity = frame.providerActivity ?? null;
         state.providerActivityReceivedAt = state.providerActivity ? Date.now() : 0;
       }
-      if (frame.providerState) state.providerState = frame.providerState;
+      if (frame.providerState) { state.providerState = frame.providerState; state.providerStateKnown = true; }
     }
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
@@ -1588,27 +1609,31 @@ export class SessionWorkspace {
   private renderNative(tab: TerminalTabDescriptor): string {
     if (tab.tool === 'shell') return '<div class="native-shell"><div class="native-shell-intro"><strong>Shell sessions use Terminal</strong><span>Open Codex, Claude Code, or Copilot from the shell.</span></div></div>';
     const state = this.nativeState(tab.id);
-    const actions = state.items.filter((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
+    const { current: actions, earlier } = partitionPendingActions(state.items);
+    const allActions = [...actions, ...earlier];
     const pending = actions.find((item) => item.id === state.questionSheetId)
       ?? [...actions].reverse().find((item) => item.source !== 'codex_async_question') ?? actions[0];
-    const feedItems = state.items.filter((item) => !actions.some((action) => action.id === item.id));
+    const sheetAction = allActions.find((item) => item.id === state.questionSheetId);
+    const feedItems = state.items.filter((item) => !allActions.some((action) => action.id === item.id));
     const viewerItem = state.viewer ? this.findConversationItem(tab.id, state.viewer.itemId) : undefined;
     const attention = this.fleetSnapshot?.attention.find((item) =>
       item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId && !this.dismissedAttention.has(item.id)
     );
     return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
       <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i><span data-provider-activity-tab="${escapeAttr(tab.id)}">${escapeHtml(providerActivityText(tab.tool, state.providerActivity, state.providerActivityReceivedAt) || state.connection)}</span></span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
-      ${state.providerState.mutationsAllowed ? '' : `<div class="native-error"><strong>${state.providerState.fallback === 'terminal_only' ? 'Terminal-only provider state' : 'Native view is read-only'}</strong><span>${escapeHtml(providerConfidenceMessage(state.providerState))}</span></div>`}
+      ${!state.providerStateKnown || state.providerState.mutationsAllowed ? '' : `<div class="native-error"><strong>${state.providerState.fallback === 'terminal_only' ? 'Terminal-only provider state' : 'Native view is read-only'}</strong><span>${escapeHtml(providerConfidenceMessage(state.providerState))}</span></div>`}
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
         ${this.renderFeed(tab.id, conversationRows(feedItems, this.nativeView), state.expandedDetails)}
+        ${earlier.length ? this.renderEarlierQuestions(earlier, state) : ''}
         ${!state.items.length && !state.error ? '<div class="native-empty"><strong>Loading conversation…</strong><span>The newest messages appear first; older history loads only when requested.</span></div>' : ''}
       </div>
       ${state.newMessages ? '<button class="new-messages-button" data-new-messages data-action="native-new-messages" data-workspace-action>New messages ↓</button>' : ''}
       <div data-native-limit-host>${attention ? renderLimitCard(attention) : ''}</div>
-      ${pending ? this.renderPendingAction(pending, state) : ''}
+      ${pending ? this.renderPendingAction(pending, state, actions) : ''}
       ${!pending || pending.source === 'codex_async_question' ? this.renderComposer(tab, state) : ''}
+      ${sheetAction && state.providerState.mutationsAllowed ? this.renderQuestionSheet(sheetAction, state, allActions) : ''}
       ${viewerItem && state.viewer ? renderConversationViewer(viewerItem, state.viewer) : ''}
     </div>`;
   }
@@ -1616,7 +1641,8 @@ export class SessionWorkspace {
   private renderFeed(tabId: string, items: ConversationItem[], expanded: Set<string>): string {
     if (this.nativeView === 'detailed') return renderConversationRows(items, expanded);
     const supported = items.some((item) => item.activitySummary || item.messagePurpose);
-    const guidance = !supported ? '<small class="native-compatibility">Update this host for turn grouping and on-demand Activity.</small>' : '';
+    const guidance = this.nativeState(tabId).providerStateKnown && items.length && !supported
+      ? '<small class="native-compatibility">Update this host for turn grouping and on-demand Activity.</small>' : '';
     return guidance + items.map((item) => {
       const summary = item.activitySummary;
       if (!summary) {
@@ -1653,18 +1679,26 @@ export class SessionWorkspace {
     this.renderNativePanel(tabId);
   }
 
-  private renderPendingAction(item: ConversationItem, state: NativeState): string {
-    const actions = state.items.filter((value) => value.kind === 'question' && value.state !== 'complete');
+  private renderEarlierQuestions(items: ConversationItem[], state: NativeState): string {
+    return `<details class="native-earlier-questions" data-detail-id="earlier-questions" ${state.expandedDetails.has('earlier-questions') ? 'open' : ''}><summary>Earlier questions (${items.length})</summary><p>Unanswered questions from before your latest message.</p><nav aria-label="Earlier questions">${items.map((item) =>
+      `<span data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>${escapeHtml(item.questions?.[0]?.header || item.questions?.[0]?.prompt || item.title || 'Question')}<small>${state.providerState.mutationsAllowed ? 'Open question' : 'Open Terminal to respond'}</small></button></span>`).join('')}</nav></details>`;
+  }
+
+  private renderPendingAction(item: ConversationItem, state: NativeState, actions: ConversationItem[]): string {
+    const label = item.kind === 'question' ? (item.title || 'Answer needed') : (item.title || 'Approval needed');
+    const allowed = state.providerState.mutationsAllowed;
+    return `<section class="native-answer-bar ${state.interactionMode === 'plan' ? 'planning' : ''}" data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action ${allowed ? '' : 'disabled'}><span><strong>${actions.length > 1 ? `${actions.length} questions waiting` : escapeHtml(label)}</strong><small>${allowed ? 'Tap to respond' : 'Open Terminal to respond'}</small></span><b>${allowed ? 'Open' : 'Read-only'}</b></button></section>`;
+  }
+
+  private renderQuestionSheet(item: ConversationItem, state: NativeState, pending: ConversationItem[]): string {
+    const actions = pending.filter((value) => value.kind === 'question');
     const picker = actions.length > 1 ? `<nav class="native-question-picker" aria-label="Pending questions">${actions.map((value, index) =>
       `<span data-conversation-item="${escapeAttr(value.id)}"><button data-action="native-question-open" data-workspace-action aria-pressed="${value.id === item.id}">${index + 1}. ${escapeHtml(value.questions?.[0]?.header || value.questions?.[0]?.prompt || 'Question')}</button></span>`).join('')}</nav>` : '';
     const content = item.kind === 'question'
       ? renderQuestion(item, state.questionSteps.get(item.id) ?? 0, state.questionDrafts.get(item.id), state.submittingQuestions.has(item.id),
         localSuggestionsEnabled(this.localSuggestionSettings.mode) ? state.suggestion : undefined, this.localSuggestionSettings.mode)
       : renderConversationItem(item);
-    const label = item.kind === 'question' ? (item.title || 'Answer needed') : (item.title || 'Approval needed');
-    const allowed = state.providerState.mutationsAllowed;
-    return `<section class="native-answer-bar ${state.interactionMode === 'plan' ? 'planning' : ''}" data-conversation-item="${escapeAttr(item.id)}"><button data-action="native-question-open" data-workspace-action ${allowed ? '' : 'disabled'}><span><strong>${actions.length > 1 ? `${actions.length} questions waiting` : escapeHtml(label)}</strong><small>${allowed ? 'Tap to respond' : 'Open Terminal to respond'}</small></span><b>${allowed ? 'Open' : 'Read-only'}</b></button></section>
-      ${allowed && state.questionSheetId === item.id ? `<div class="native-sheet-backdrop"><section class="native-question-sheet"><header><span><strong>Answer question</strong><small>${item.source === 'codex_async_question' ? 'Codex can keep working while you answer' : 'Complete this to continue the session'}</small></span><button class="quiet-button" data-action="native-question-close" data-workspace-action aria-label="Close">×</button></header>${picker}${content}</section></div>` : ''}`;
+    return `<div class="native-sheet-backdrop"><section class="native-question-sheet"><header><span><strong>Answer question</strong><small>${item.source === 'codex_async_question' ? 'Codex can keep working while you answer' : 'Complete this to continue the session'}</small></span><button class="quiet-button" data-action="native-question-close" data-workspace-action aria-label="Close">×</button></header>${picker}${content}</section></div>`;
   }
 
   private renderComposer(tab: TerminalTabDescriptor, state: NativeState): string {
@@ -1676,7 +1710,7 @@ export class SessionWorkspace {
       ${state.notice ? `<small class="composer-notice">${escapeHtml(state.notice)}</small>` : ''}
       <textarea rows="1" data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
       ${state.suggestion.target?.kind === 'composer' ? renderSuggestionChoices(state.suggestion) : ''}
-      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action>Shift+Tab</button><button data-action="native-control-c" data-workspace-action>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action>Send</button></div>
+      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action>Shift+Tab</button><button data-action="native-control-c" data-workspace-action>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Send</button></div>
     </div>`;
   }
 
@@ -1753,7 +1787,9 @@ export class SessionWorkspace {
 
   private automaticSuggestionTarget(tabId: string): LocalSuggestionTarget | null {
     const state = this.nativeState(tabId);
-    const pending = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete');
+    const { current, earlier } = partitionPendingActions(state.items);
+    const pending = [...current, ...earlier].find((item) => item.id === state.questionSheetId)
+      ?? [...current].reverse().find((item) => item.source !== 'codex_async_question') ?? current[0];
     if (pending?.kind === 'question') {
       const questions = pending.questions?.length ? pending.questions : fallbackQuestion(pending);
       const step = Math.min(state.questionSteps.get(pending.id) ?? 0, questions.length - 1);
@@ -1798,10 +1834,12 @@ export class SessionWorkspace {
     if (!state.nextCursor || state.loadingOlder) return;
     state.loadingOlder = true; this.renderSelectedNative();
     const result = await window.limitsWidget.pageConversation(this.selectedId, state.nextCursor);
-    if (generation !== this.viewGeneration) return;
+    if (generation !== this.viewGeneration || !this.tabs.has(tabId) || this.nativeState(tabId) !== state) return;
     state.loadingOlder = false;
-    if (result.frame?.type === 'conversation.snapshot') {
-      state.items = mergeItems(result.frame.items ?? [], state.items);
+    if (result.frame?.type === 'conversation.snapshot'
+      && (!result.frame.session || result.frame.session === this.tabs.get(tabId)?.internalName)) {
+      state.confirmedQuestions.remember(result.frame.items ?? [], state.items);
+      state.items = mergeItems(state.confirmedQuestions.restore(result.frame.items ?? []), state.items);
       state.nextCursor = result.frame.nextCursor ?? null; state.hasMore = Boolean(result.frame.hasMore);
       state.renderMode = 'prepend';
     } else state.notice = result.message;
@@ -1856,7 +1894,9 @@ export class SessionWorkspace {
     state.notice = result.message;
     state.submittingQuestions.delete(item.id);
     if (result.ok) {
-      state.items = mergeItems(state.items, [{ ...item, state: 'complete', title: 'Answered', answers }]);
+      const completed = { ...item, state: 'complete', title: 'Answered', answers };
+      state.confirmedQuestions.remember([completed]);
+      state.items = mergeItems(state.items, [completed]);
       if (state.questionSheetId === item.id) state.questionSheetId = '';
     } else {
       state.items = mergeItems(state.items, [{ ...item, state: 'error', title: 'Answer not sent', text: result.message, answers }]);

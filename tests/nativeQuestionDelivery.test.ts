@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionWorkspace } from '../src/renderer/src/session-workspace';
 import type { ConversationItem } from '../src/shared/conversation';
+import { ConfirmedQuestionCompletions } from '../src/shared/conversation';
 vi.mock('dompurify', () => ({ default: { sanitize: (value: string) => value } }));
 afterEach(() => vi.unstubAllGlobals());
 function fixture(count: number) {
@@ -9,6 +10,7 @@ function fixture(count: number) {
     questions: Array.from({ length: count }, (_, index) => ({ id: `q${index}`, header: '', prompt: `Choose ${index}`,
       type: 'single' as const, required: true, allowOther: true, options: [{ id: 'a', label: 'First', description: '' }] })) };
   const state = { items: [item], providerState: { mutationsAllowed: true, eventPosition: 10 },
+    confirmedQuestions: new ConfirmedQuestionCompletions(),
     questionDrafts: new Map(), questionSteps: new Map(), submittingQuestions: new Set(), questionSheetId: item.id, notice: '' };
   // Exercise the production event handlers, replacing only DOM rendering and IPC.
   const workspace = Object.create(SessionWorkspace.prototype) as any;

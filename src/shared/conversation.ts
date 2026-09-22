@@ -276,6 +276,86 @@ export function unavailableProviderState(): ProviderState {
   };
 }
 
+/** Provider-confirmed completions survive refreshes without retaining snapshot membership. */
+export class ConfirmedQuestionCompletions {
+  private readonly completed = new Map<string, ConversationItem>();
+
+  remember(items: ConversationItem[], current: ConversationItem[] = []): void {
+    for (const item of items) {
+      if (item.kind !== 'question' || item.state !== 'complete') continue;
+      const prior = !item.revision ? current.find((value) => sameQuestionRequest(value, item)) : undefined;
+      const revision = item.revision || prior?.revision;
+      if (!revision) continue;
+      const completed = { ...item, revision };
+      const key = this.key(completed);
+      const previous = this.completed.get(key);
+      this.completed.delete(key);
+      this.completed.set(key, { ...completed, title: completed.title || previous?.title || '',
+        answers: completed.answers?.length ? completed.answers : previous?.answers,
+        completedAt: completed.completedAt || previous?.completedAt });
+      if (this.completed.size > 256) this.completed.delete(this.completed.keys().next().value!);
+    }
+  }
+
+  restore(items: ConversationItem[]): ConversationItem[] {
+    return items.map((item) => {
+      const matches = item.revision ? [this.completed.get(this.key(item))].filter((value) => value !== undefined)
+        : [...this.completed.values()].filter((value) => sameQuestionRequest(value, item));
+      const completed = matches.length === 1 ? matches[0] : undefined;
+      return completed ? { ...item, revision: completed.revision, state: 'complete', title: completed.title,
+        completedAt: completed.completedAt || item.completedAt,
+        answers: completed.answers?.length ? completed.answers : item.answers } : item;
+    });
+  }
+
+  private key(item: ConversationItem): string { return JSON.stringify([item.kind, item.id, item.revision]); }
+}
+
+function sameQuestionRequest(left: ConversationItem, right: ConversationItem): boolean {
+  if (left.kind !== 'question' || right.kind !== 'question' || left.id !== right.id
+    || !left.timestamp || left.timestamp !== right.timestamp || (left.source ?? '') !== (right.source ?? '')
+    || !left.questions?.length || !right.questions?.length) return false;
+  const schema = (item: ConversationItem): string => JSON.stringify(item.questions!.map((question) => [
+    question.id, question.header, question.prompt, question.type, question.required, question.allowOther,
+    question.options.map((option) => [option.id, option.label, option.description])
+  ]));
+  return schema(left) === schema(right);
+}
+
+export function partitionPendingActions(items: ConversationItem[]): {
+  current: ConversationItem[]; earlier: ConversationItem[];
+} {
+  let latestUserTime: bigint | null = null;
+  let latestUserIndex = -1;
+  items.forEach((item, index) => {
+    if (item.kind !== 'message' || item.role !== 'user') return;
+    const time = questionAttentionTimestamp(item.timestamp);
+    if (time !== null && (latestUserTime === null || time >= latestUserTime)) { latestUserTime = time; latestUserIndex = index; }
+  });
+  const current: ConversationItem[] = [];
+  const earlier: ConversationItem[] = [];
+  items.forEach((item, index) => {
+    if (!['question', 'approval'].includes(item.kind) || item.state === 'complete') return;
+    const time = questionAttentionTimestamp(item.timestamp);
+    const beforeUser = time !== null && latestUserTime !== null
+      && (time < latestUserTime || (time === latestUserTime && index < latestUserIndex));
+    (item.kind === 'question' && item.source === 'codex_async_question' && beforeUser ? earlier : current).push(item);
+  });
+  return { current, earlier };
+}
+
+function questionAttentionTimestamp(value: string): bigint | null {
+  // Date.parse alone truncates host microseconds; preserve the same instant as
+  // Android's java.time.Instant and reject incomplete or normalized dates.
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/u.exec(value);
+  if (!match) return null;
+  const local = Date.parse(`${match[1]}Z`);
+  const milliseconds = Date.parse(`${match[1]}${match[3]}`);
+  if (!Number.isFinite(local) || !Number.isFinite(milliseconds)
+    || new Date(local).toISOString().slice(0, 19) !== match[1]) return null;
+  return BigInt(milliseconds) * 1_000_000n + BigInt((match[2] ?? '').padEnd(9, '0'));
+}
+
 function optionalTimestamp(input: Record<string, unknown>): boolean {
   return !('timestamp' in input) || timestamp(input.timestamp);
 }

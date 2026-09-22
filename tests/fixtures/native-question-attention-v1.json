@@ -1,0 +1,526 @@
+{
+  "schemaVersion": 1,
+  "description": "Pending async question attention only; partitioning never changes question completion or answers.",
+  "cases": [
+    {
+      "name": "older async appended after latest user",
+      "items": [
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        }
+      ],
+      "current": [],
+      "earlier": [
+        "old"
+      ]
+    },
+    {
+      "name": "max timestamp rather than last array user",
+      "items": [
+        {
+          "id": "new-user",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:05:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "old-user",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "between",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:03:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-between"
+        }
+      ],
+      "current": [],
+      "earlier": [
+        "between"
+      ]
+    },
+    {
+      "name": "equal timestamps use transcript order",
+      "items": [
+        {
+          "id": "before",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-before"
+        },
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "after",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-after"
+        }
+      ],
+      "current": [
+        "after"
+      ],
+      "earlier": [
+        "before"
+      ]
+    },
+    {
+      "name": "unknown question timestamps stay current",
+      "items": [
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "empty",
+          "kind": "question",
+          "timestamp": "",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-empty"
+        },
+        {
+          "id": "unknown",
+          "kind": "question",
+          "timestamp": "unknown",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-unknown"
+        }
+      ],
+      "current": [
+        "empty",
+        "unknown"
+      ],
+      "earlier": []
+    },
+    {
+      "name": "unknown user timestamps cannot archive",
+      "items": [
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        },
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "unknown",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        }
+      ],
+      "current": [
+        "old"
+      ],
+      "earlier": []
+    },
+    {
+      "name": "no age expiry without later user message",
+      "items": [
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2000-01-01T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        }
+      ],
+      "current": [
+        "old"
+      ],
+      "earlier": []
+    },
+    {
+      "name": "blocking and approvals stay current and completed omitted",
+      "items": [
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        },
+        {
+          "id": "blocking",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_request_user_input",
+          "revision": "revision-blocking"
+        },
+        {
+          "id": "approval",
+          "kind": "approval",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-approval"
+        },
+        {
+          "id": "complete",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "complete",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-complete"
+        },
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "new",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:02:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-new"
+        }
+      ],
+      "current": [
+        "blocking",
+        "approval",
+        "new"
+      ],
+      "earlier": [
+        "old"
+      ]
+    },
+    {
+      "name": "compare timestamp instants not offset text",
+      "items": [
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T02:00:00+02:00",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        },
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        }
+      ],
+      "current": [],
+      "earlier": [
+        "old"
+      ]
+    },
+    {
+      "name": "later assistant work does not move async request",
+      "items": [
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        },
+        {
+          "id": "assistant",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "assistant",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        }
+      ],
+      "current": [
+        "old"
+      ],
+      "earlier": []
+    },
+    {
+      "name": "preserve submillisecond ordering despite appended async records",
+      "items": [
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:00:00.000002Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "old",
+          "kind": "question",
+          "timestamp": "2026-09-22T00:00:00.000001Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        }
+      ],
+      "current": [],
+      "earlier": [
+        "old"
+      ]
+    },
+    {
+      "name": "date-only or invalid normalized dates stay current",
+      "items": [
+        {
+          "id": "u",
+          "kind": "message",
+          "timestamp": "2026-09-22T00:01:00Z",
+          "role": "user",
+          "title": "",
+          "text": "Continue",
+          "detail": "",
+          "state": "complete",
+          "tool": "",
+          "attachments": [],
+          "choices": []
+        },
+        {
+          "id": "date-only",
+          "kind": "question",
+          "timestamp": "2026-09-22",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        },
+        {
+          "id": "invalid-date",
+          "kind": "question",
+          "timestamp": "2026-02-30T00:00:00Z",
+          "role": "assistant",
+          "title": "Answer needed",
+          "text": "",
+          "detail": "",
+          "state": "pending",
+          "tool": "question",
+          "attachments": [],
+          "choices": [],
+          "source": "codex_async_question",
+          "revision": "revision-old"
+        }
+      ],
+      "current": [
+        "date-only",
+        "invalid-date"
+      ],
+      "earlier": []
+    }
+  ]
+}
