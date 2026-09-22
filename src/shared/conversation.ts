@@ -28,16 +28,24 @@ export interface ToolPresentation {
   version: 1; title: string; subtitle: string; previewLines: number;
   inputBlocks: ToolPresentationBlock[]; resultBlocks: ToolPresentationBlock[];
 }
+export type ConversationView = 'conversation' | 'detailed';
+export interface ActivitySummary {
+  turnId: string; state: 'running' | 'complete' | 'error' | 'unknown';
+  toolCount: number; changeCount: number; progressCount: number; otherCount: number;
+  partial: boolean; latestProgress: string; cursor: string;
+}
 export interface ConversationItem {
   id: string; kind: string; timestamp: string; role: string; title: string; text: string; detail: string;
   state: string; tool: string; attachments: string[]; choices: ConversationChoice[]; revision?: string;
   action?: string; target?: string; input?: string; result?: string; startedAt?: string; completedAt?: string;
   questions?: ConversationQuestion[]; answers?: ConversationAnswer[]; presentation?: ToolPresentation;
+  messagePurpose?: 'user' | 'progress' | 'final' | 'unknown'; activitySummary?: ActivitySummary;
   source?: string; turnId?: string; taskListId?: string; updateMode?: 'replace' | 'merge'; tasks?: ConversationTask[];
 }
 export interface ConversationFrame {
   protocolVersion: 2;
-  type: 'conversation.snapshot' | 'conversation.event' | 'conversation.status' | 'conversation.heartbeat' | 'conversation.error';
+  type: 'conversation.activity' | 'conversation.snapshot' | 'conversation.event' | 'conversation.status' | 'conversation.heartbeat' | 'conversation.error';
+  view?: ConversationView; capabilities?: string[]; turnId?: string;
   session?: string; adapter?: string; mode?: string; interactionMode?: 'plan' | 'default' | 'unknown';
   revision?: string; items?: ConversationItem[]; item?: ConversationItem; nextCursor?: string | null;
   hasMore?: boolean; status?: string; error?: { code: string; message: string };
@@ -73,12 +81,20 @@ export function parseConversationFrame(line: string): ConversationFrame | null {
   if (type === 'conversation.snapshot') {
     if (!shape(input,
       ['protocolVersion', 'type', 'session', 'adapter', 'mode', 'interactionMode', 'revision', 'items', 'nextCursor', 'hasMore'],
-      ['timestamp', 'providerActivity', 'providerState'])
+      ['timestamp', 'providerActivity', 'providerState', 'view', 'capabilities'])
+      || ('view' in input && !member(input.view, ['conversation', 'detailed']))
+      || ('capabilities' in input && !boundedArray(input.capabilities, 1, (v) => v === 'conversation.turns.v1'))
       || !safe(input.session, 160) || !safe(input.adapter, 32) || !safe(input.mode, 32)
       || !member(input.interactionMode, ['plan', 'default', 'unknown']) || !safe(input.revision, 160)
       || !boundedArray(input.items, 200, validConversationItem) || !uniqueRecordField(input.items, 'id')
       || !(input.nextCursor === null || safe(input.nextCursor, 2048)) || typeof input.hasMore !== 'boolean'
       || !optionalTimestamp(input) || !optionalProviderActivity(input) || !optionalProviderState(input)) return null;
+  } else if (type === 'conversation.activity') {
+    if (!shape(input, ['protocolVersion', 'type', 'timestamp', 'session', 'adapter', 'turnId', 'items', 'nextCursor', 'hasMore'])
+      || !timestamp(input.timestamp) || !safe(input.session, 160) || !safe(input.adapter, 32) || !nonEmptySafe(input.turnId, 160)
+      || !boundedArray(input.items, 200, validConversationItem) || !uniqueRecordField(input.items, 'id')
+      || !(input.items as ConversationItem[]).every((item) => item.turnId === input.turnId)
+      || !(input.nextCursor === null || safe(input.nextCursor, 512)) || typeof input.hasMore !== 'boolean') return null;
   } else if (type === 'conversation.event') {
     if (!shape(input, ['protocolVersion', 'type', 'session', 'adapter', 'item'], ['timestamp', 'providerState'])
       || !optionalTimestamp(input) || !safe(input.session, 160) || !safe(input.adapter, 32)
@@ -124,11 +140,18 @@ export function parseConversationProtocolFrame(line: string): ConversationProtoc
   return null;
 }
 
+function validActivitySummary(input: unknown): input is ActivitySummary {
+  return record(input) && shape(input, ['turnId', 'state', 'toolCount', 'changeCount', 'progressCount', 'otherCount', 'partial', 'latestProgress', 'cursor'])
+    && nonEmptySafe(input.turnId, 160) && member(input.state, ['running', 'complete', 'error', 'unknown'])
+    && ['toolCount', 'changeCount', 'progressCount', 'otherCount'].every((key) => Number.isSafeInteger(input[key]) && Number(input[key]) >= 0)
+    && typeof input.partial === 'boolean' && safe(input.latestProgress, 240) && nonEmptySafe(input.cursor, 512);
+}
+
 function validConversationItem(input: unknown): boolean {
   if (!record(input) || !shape(input,
     ['id', 'kind', 'timestamp', 'role', 'title', 'text', 'detail', 'state', 'tool', 'attachments', 'choices'],
     ['revision', 'action', 'target', 'input', 'result', 'startedAt', 'completedAt', 'questions', 'answers',
-      'presentation', 'source', 'turnId', 'taskListId', 'updateMode', 'tasks'])) return false;
+      'presentation', 'source', 'turnId', 'taskListId', 'updateMode', 'tasks', 'messagePurpose', 'activitySummary'])) return false;
   if (!nonEmptySafe(input.id, 160) || typeof input.kind !== 'string' || !ITEM_KINDS.has(input.kind)
     || !timestamp(input.timestamp) || !safe(input.role, 16) || !safe(input.title, 240)
     || !safe(input.text, 65_536, true) || !safe(input.detail, 131_072, true)
@@ -140,6 +163,8 @@ function validConversationItem(input: unknown): boolean {
     || !optionalSafe(input, 'result', 131_072, true) || !optionalSafe(input, 'startedAt', 64)
     || !optionalSafe(input, 'completedAt', 64) || !optionalSafe(input, 'source', 64)
     || !optionalSafe(input, 'turnId', 160) || !optionalSafe(input, 'taskListId', 160)) return false;
+  if ('messagePurpose' in input && !member(input.messagePurpose, ['user', 'progress', 'final', 'unknown'])) return false;
+  if ('activitySummary' in input && (!validActivitySummary(input.activitySummary) || input.kind !== 'activity' || input.turnId !== input.activitySummary.turnId)) return false;
   if ('updateMode' in input && !member(input.updateMode, ['replace', 'merge'])) return false;
   if ('questions' in input && (!boundedArray(input.questions, 8, validQuestion)
     || !uniqueRecordField(input.questions, 'id'))) return false;

@@ -166,6 +166,7 @@ const conversationManager = new ConversationManager({
   tempPath: join(app.getPath('temp'), 'agent-fleet-attachments'),
   logger,
   getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  hostCapabilities: (hostId) => getFleetView().snapshot.hosts.find((host) => host.id === hostId)?.capabilities ?? [],
   resolveTab: (tabId) => terminalManager.list().find((tab) => tab.id === tabId),
   sendTerminalInput: (tabId, data) => terminalManager.input(tabId, data),
   onEvent: (event) => sendContent(IPC_CHANNELS.conversationEvent, event, 'conversation', event.tabId),
@@ -869,12 +870,12 @@ handle(IPC_CHANNELS.terminalSetView, (event, tabId, viewMode) => {
   }
   return tab;
 });
-handle(IPC_CHANNELS.conversationStart, (event, tabId) => {
+handle(IPC_CHANNELS.conversationStart, (event, tabId, view) => {
   const senderId = requireDashboard(event);
   if (typeof tabId !== 'string' || !terminalManager.list()
     .some((tab) => tab.id === tabId && tab.viewMode === 'native' && tab.tool !== 'shell')) return false;
   rendererAccess.grant(senderId, 'conversation', tabId);
-  const started = conversationManager.start(tabId);
+  const started = conversationManager.start(tabId, view === 'detailed' ? 'detailed' : 'conversation');
   if (!started) rendererAccess.revoke(senderId, 'conversation', tabId);
   return started;
 });
@@ -906,7 +907,7 @@ handle(IPC_CHANNELS.localSuggestionsSuggest, (_event, input) => localSuggestionM
 handle(IPC_CHANNELS.localSuggestionsCancel, (_event, requestId) => {
   localSuggestionManager.cancel(typeof requestId === 'string' ? requestId : undefined);
 });
-handle(IPC_CHANNELS.conversationSync, (event, tabIds) => {
+handle(IPC_CHANNELS.conversationSync, (event, tabIds, view) => {
   const senderId = requireDashboard(event);
   const values: unknown = tabIds;
   if (!Array.isArray(values) || values.length > 4 || !values.every((id) => typeof id === 'string')) {
@@ -919,7 +920,7 @@ handle(IPC_CHANNELS.conversationSync, (event, tabIds) => {
     .map((tab) => tab.id));
   const requested = values.filter((id): id is string => typeof id === 'string' && eligible.has(id));
   rendererAccess.setBindings(senderId, 'conversation', requested);
-  const started = conversationManager.sync(requested);
+  const started = conversationManager.sync(requested, view === 'detailed' ? 'detailed' : 'conversation');
   rendererAccess.setBindings(senderId, 'conversation', started);
   return started;
 });
@@ -929,6 +930,12 @@ handle(IPC_CHANNELS.conversationPage, (event, tabId, cursor) =>
   typeof cursor === 'string'
     ? conversationManager.page(requireContent(event, 'conversation', tabId), cursor)
     : { ok: false, message: 'History request is invalid' });
+handle(IPC_CHANNELS.conversationCancelRead, (event, tabId) =>
+  conversationManager.cancelRead(requireContent(event, 'conversation', tabId)));
+handle(IPC_CHANNELS.conversationActivity, (event, tabId, turnId, cursor) =>
+  typeof turnId === 'string' && typeof cursor === 'string'
+    ? conversationManager.activity(requireContent(event, 'conversation', tabId), turnId, cursor)
+    : { ok: false, message: 'Activity request is invalid' });
 handle(IPC_CHANNELS.conversationApprove, (event, tabId, approval, choice, revision, eventPosition) =>
   [approval, choice, revision].every((value) => typeof value === 'string') && typeof eventPosition === 'number'
     ? conversationManager.approve(

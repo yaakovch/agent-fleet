@@ -82,13 +82,16 @@ const api = {
   selectTerminalTab: (tabId: string): Promise<boolean> => invoke(IPC_CHANNELS.terminalSelect, tabId),
   setTerminalView: (tabId: string, viewMode: SessionViewMode): Promise<TerminalTabDescriptor | null> =>
     invoke(IPC_CHANNELS.terminalSetView, tabId, viewMode),
-  startConversation: (tabId: string): Promise<boolean> => invoke(IPC_CHANNELS.conversationStart, tabId),
+  startConversation: (tabId: string, view: 'conversation' | 'detailed' = 'conversation'): Promise<boolean> => invoke(IPC_CHANNELS.conversationStart, tabId, view),
   stopConversation: (tabId: string): Promise<void> => invoke(IPC_CHANNELS.conversationStop, tabId),
-  syncConversations: (tabIds: string[]): Promise<string[]> => invoke(IPC_CHANNELS.conversationSync, tabIds),
+  syncConversations: (tabIds: string[], view: 'conversation' | 'detailed' = 'conversation'): Promise<string[]> => invoke(IPC_CHANNELS.conversationSync, tabIds, view),
   loadTerminalHistory: (tabId: string): Promise<NativeActionResult> =>
     invoke(IPC_CHANNELS.conversationHistory, tabId),
   pageConversation: (tabId: string, cursor: string): Promise<NativeActionResult> =>
     invoke(IPC_CHANNELS.conversationPage, tabId, cursor),
+  cancelConversationRead: (tabId: string): Promise<void> => invoke(IPC_CHANNELS.conversationCancelRead, tabId),
+  conversationActivity: (tabId: string, turnId: string, cursor: string): Promise<NativeActionResult> =>
+    invoke(IPC_CHANNELS.conversationActivity, tabId, turnId, cursor),
   approveConversation: (tabId: string, approval: string, choice: string, revision: string, eventPosition: number): Promise<NativeActionResult> =>
     invoke(IPC_CHANNELS.conversationApprove, tabId, approval, choice, revision, eventPosition),
   answerConversation: (tabId: string, question: string, revision: string, eventPosition: number, answers: ConversationAnswer[]): Promise<NativeActionResult> =>

@@ -47,6 +47,41 @@ function tab(id: string): TerminalTabDescriptor {
 }
 
 describe('native conversation streams', () => {
+  it('renegotiates when a running legacy host gains turn support', () => {
+    let capabilities: string[] = [];
+    const children: ChildProcess[] = [];
+    const spawnMock = vi.fn(() => { const child = fakeProcess(); children.push(child); return child; });
+    const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
+      resolveTab: () => tab('turns'), hostCapabilities: () => capabilities,
+      sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
+      spawnProcess: spawnMock as unknown as typeof spawn });
+    manager.start('turns');
+    expect(spawnMock).toHaveBeenLastCalledWith('wsl.exe', expect.not.arrayContaining(['--view']), expect.anything());
+    capabilities = ['conversation.turns.v1'];
+    manager.sync(['turns']);
+    expect(children[0].kill).toHaveBeenCalledOnce();
+    expect(spawnMock).toHaveBeenLastCalledWith('wsl.exe', expect.arrayContaining(['--view', 'conversation']), expect.anything());
+    manager.dispose();
+  });
+
+  it('negotiates views, replaces one stream on mode change, and cancels obsolete activity', async () => {
+    const children: ChildProcess[] = [];
+    const spawnMock = vi.fn(() => { const child = fakeProcess(); children.push(child); return child; });
+    const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
+      resolveTab: () => tab('turns'), hostCapabilities: () => ['conversation.turns.v1'],
+      sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
+      spawnProcess: spawnMock as unknown as typeof spawn });
+    manager.start('turns');
+    expect(spawnMock).toHaveBeenLastCalledWith('wsl.exe', expect.arrayContaining(['--view', 'conversation']), expect.anything());
+    const pending = manager.activity('turns', 'turn-one', 'cursor-one');
+    manager.start('turns', 'detailed');
+    expect(children[0].kill).toHaveBeenCalledOnce();
+    expect(children[1].kill).toHaveBeenCalledOnce();
+    expect((await pending).ok).toBe(false);
+    expect(spawnMock).toHaveBeenLastCalledWith('wsl.exe', expect.arrayContaining(['--view', 'detailed']), expect.anything());
+    manager.dispose();
+  });
+
   it.each(['missing', 'wrong-question', 'wrong-session', 'delivered'])('requires a matching provider answer receipt: %s', async (result) => {
     const process = fakeProcess();
     const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',

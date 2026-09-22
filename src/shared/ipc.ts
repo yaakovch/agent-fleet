@@ -29,6 +29,8 @@ export const IPC_CHANNELS = {
   conversationSync: 'conversation:sync',
   conversationHistory: 'conversation:history',
   conversationPage: 'conversation:page',
+  conversationActivity: 'conversation:activity',
+  conversationCancelRead: 'conversation:cancelRead',
   conversationApprove: 'conversation:approve',
   conversationAnswer: 'conversation:answer',
   conversationEvent: 'conversation:event',

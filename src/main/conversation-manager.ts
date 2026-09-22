@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { nativeImage } from 'electron';
-import { parseConversationProtocolFrame, parseConversationFrame, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
+import { parseConversationProtocolFrame, parseConversationFrame, type ConversationView, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
 import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
 import { activatedRuntimeCommand } from '../shared/runtime';
 import { wslProcessOwner, type WslProcessOwnership } from './wsl-process-ownership';
@@ -20,13 +20,14 @@ const MAX_IMAGE_PIXELS = 25_000_000;
 const MAX_ORPHAN_DIRECTORIES_SCANNED = 128;
 const MAX_ORPHAN_FILES_PER_DIRECTORY = MAX_ATTACHMENTS + 1;
 
-interface StreamState { process: ChildProcess; buffer: string; bufferBytes: number; generation: number }
+interface StreamState { negotiated: boolean; process: ChildProcess; buffer: string; bufferBytes: number; generation: number }
 interface StoredAttachment extends StagedAttachment { path: string; sha256: string }
 export interface AttachmentFileSelection { path: string; name: string; mime: string }
 
 export interface ConversationManagerOptions {
   tempPath: string;
   getDistro(): string;
+  hostCapabilities?(hostId: string): string[];
   resolveTab(tabId: string): TerminalTabDescriptor | undefined;
   sendTerminalInput(tabId: string, data: string): boolean;
   onEvent(event: ConversationEvent): void;
@@ -38,6 +39,8 @@ export interface ConversationManagerOptions {
 }
 
 export class ConversationManager {
+  private views = new Map<string, ConversationView>();
+  private reads = new Map<string, AbortController>();
   private streams = new Map<string, StreamState>();
   private generations = new Map<string, number>();
   private attachments = new Map<string, StoredAttachment[]>();
@@ -50,17 +53,19 @@ export class ConversationManager {
     this.stagingRoot = createPrivateStagingRoot(options.tempPath);
   }
 
-  start(tabId: string): boolean {
+  start(tabId: string, view: ConversationView = 'conversation'): boolean {
     const tab = this.options.resolveTab(tabId);
     if (!tab || tab.tool === 'shell') return false;
-    if (this.streams.has(tabId)) return true;
+    const negotiated = this.options.hostCapabilities?.(tab.hostId).includes('conversation.turns.v1') ?? false;
+    if (this.streams.has(tabId) && this.views.get(tabId) === view && this.streams.get(tabId)?.negotiated === negotiated) return true;
     this.stop(tabId);
+    this.views.set(tabId, view);
     const generation = (this.generations.get(tabId) ?? 0) + 1;
     this.generations.set(tabId, generation);
-    const process = (this.options.spawnProcess ?? spawn)('wsl.exe', this.command(tab, 'stream', ['--limit', '20']), {
+    const process = (this.options.spawnProcess ?? spawn)('wsl.exe', this.command(tab, 'stream', ['--limit', '20', ...this.viewArgs(tab)]), {
       windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
-    const state: StreamState = { process, buffer: '', bufferBytes: 0, generation };
+    const state: StreamState = { negotiated, process, buffer: '', bufferBytes: 0, generation };
     try {
       this.options.processOwnership?.own(wslProcessOwner('conversation', tabId), process);
     } catch (error) {
@@ -82,15 +87,21 @@ export class ConversationManager {
     return true;
   }
 
-  sync(tabIds: string[]): string[] {
+  sync(tabIds: string[], view: ConversationView = 'conversation'): string[] {
     const desired = new Set(tabIds.filter((id, index, values) => values.indexOf(id) === index).slice(0, 4));
     for (const tabId of [...this.streams.keys()]) if (!desired.has(tabId)) this.stop(tabId);
     const started: string[] = [];
-    for (const tabId of desired) if (this.start(tabId)) started.push(tabId);
+    for (const tabId of desired) if (this.start(tabId, view)) started.push(tabId);
     return started;
   }
 
+  cancelRead(tabId: string): void {
+    this.reads.get(tabId)?.abort();
+    this.reads.delete(tabId);
+  }
+
   stop(tabId: string): void {
+    this.cancelRead(tabId);
     this.generations.set(tabId, (this.generations.get(tabId) ?? 0) + 1);
     const stream = this.streams.get(tabId);
     this.streams.delete(tabId);
@@ -113,7 +124,21 @@ export class ConversationManager {
 
   async page(tabId: string, cursor: string): Promise<NativeActionResult> {
     if (!safeArg(cursor, 512)) return { ok: false, message: 'History cursor is invalid' };
-    return this.frameAction(tabId, 'stream', ['--cursor', cursor, '--limit', '20', '--no-follow'], 15_000);
+    const tab = this.options.resolveTab(tabId);
+    if (!tab) return { ok: false, message: 'Session is no longer open' };
+    return this.frameAction(tabId, 'stream', ['--cursor', cursor, '--limit', '20', '--no-follow', ...this.viewArgs(tab)], 15_000);
+  }
+
+  private viewArgs(tab: TerminalTabDescriptor): string[] {
+    return this.options.hostCapabilities?.(tab.hostId).includes('conversation.turns.v1')
+      ? ['--view', this.views.get(tab.id) ?? 'conversation'] : [];
+  }
+
+  async activity(tabId: string, turnId: string, cursor: string): Promise<NativeActionResult> {
+    const tab = this.options.resolveTab(tabId);
+    if (!tab || !this.viewArgs(tab).length || !safeArg(turnId, 160) || !safeArg(cursor, 512))
+      return { ok: false, message: 'Update this host to load turn activity' };
+    return this.frameAction(tabId, 'activity', ['--turn-id', turnId, '--cursor', cursor, '--limit', '25'], 15_000);
   }
 
   async history(tabId: string): Promise<NativeActionResult> {
@@ -279,14 +304,18 @@ export class ConversationManager {
   private async action(tabId: string, action: string, args: string[], timeout: number): Promise<NativeActionResult> {
     const tab = this.options.resolveTab(tabId);
     if (!tab) return { ok: false, message: 'Session is no longer open' };
+    const read = ['stream', 'activity'].includes(action) ? new AbortController() : undefined;
+    if (read) { this.reads.get(tabId)?.abort(); this.reads.set(tabId, read); }
     const result = await runBounded(
       'wsl.exe',
       this.command(tab, action, args),
       timeout,
       this.options.spawnProcess ?? spawn,
       this.options.processOwnership,
-      actionOwner(action)
+      actionOwner(action), read?.signal
     );
+    if (read && this.reads.get(tabId) === read) this.reads.delete(tabId);
+    if (read?.signal.aborted) return { ok: false, message: 'Request cancelled' };
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
     const frame = parseConversationFrame(line);
     if (result.code === 0 && (action === 'answer' || action === 'approve')) {
@@ -662,7 +691,8 @@ async function runBounded(
   timeoutMs: number,
   spawnProcess: typeof spawn = spawn,
   processOwnership?: WslProcessOwnership,
-  owner = actionOwner('bounded')
+  owner = actionOwner('bounded'),
+  signal?: AbortSignal
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawnProcess(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -678,13 +708,14 @@ async function runBounded(
     const stderr: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
-    let termination: 'timeout' | 'output' | null = null;
+    let termination: 'timeout' | 'output' | 'cancel' | null = null;
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
     const finish = (code: number, error?: Error): void => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       const stdoutText = Buffer.concat(stdout, stdoutBytes).toString('utf8');
       const stderrText = termination === 'timeout'
         ? 'Action timed out'
@@ -693,7 +724,7 @@ async function runBounded(
           : error?.message ?? Buffer.concat(stderr, stderrBytes).toString('utf8');
       resolve({ code: termination || error ? -1 : code, stdout: stdoutText, stderr: stderrText });
     };
-    const terminate = (cause: 'timeout' | 'output'): void => {
+    const terminate = (cause: 'timeout' | 'output' | 'cancel'): void => {
       if (termination) return;
       termination = cause;
       const releaseCause = cause === 'timeout' ? 'timeout' : 'protocol_failure';
@@ -706,6 +737,9 @@ async function runBounded(
       }
       finish(-1);
     };
+    const abort = (): void => terminate('cancel');
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
     const append = (chunks: Buffer[], data: Buffer | string, used: number, maximum: number): number => {
       if (termination) return used;
       const value = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');

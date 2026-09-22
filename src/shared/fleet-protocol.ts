@@ -834,6 +834,7 @@ function toHost(host: BridgeHostSnapshot, sessions: FleetSession[]): FleetHost {
   return {
     id: host.id,
     name: host.name,
+    capabilities: host.capabilities,
     machine: `${host.platform.toUpperCase()} · ${host.transport}`,
     platform: host.platform,
     status,

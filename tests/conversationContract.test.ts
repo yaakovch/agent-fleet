@@ -20,6 +20,13 @@ describe('canonical conversation v2 contract', () => {
     }
   });
 
+  it('accepts the shared turn projection fixture', () => {
+    const parsed = parseConversationFrame(fixture('conversation-turns-v2.json'));
+    expect(parsed?.view).toBe('conversation');
+    expect(parsed?.items?.map((item) => item.kind)).toEqual(['message', 'activity', 'message']);
+    expect(parsed?.items?.[1].activitySummary?.toolCount).toBe(1);
+  });
+
   it('accepts and round-trips the shared structured-work fixture', () => {
     const parsed = parseConversationFrame(fixture('conversation-structured-work-v2.json'));
     expect(parsed?.type).toBe('conversation.snapshot');

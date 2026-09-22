@@ -3,6 +3,7 @@ export type FleetTool = 'codex' | 'claude' | 'copilot' | 'shell';
 export type FleetBackend = 'wsl' | 'linux' | 'windows';
 
 export interface FleetHost {
+  capabilities?: string[];
   id: string;
   name: string;
   machine: string;

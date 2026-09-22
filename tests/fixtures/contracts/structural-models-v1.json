@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.10.0",
+  "packageVersion": "1.11.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,
@@ -762,6 +762,38 @@
       "rejectUnknown": true
     },
     {
+      "id": "conversation-v2:#/$defs/activity",
+      "required": [
+        "adapter",
+        "hasMore",
+        "items",
+        "nextCursor",
+        "protocolVersion",
+        "session",
+        "timestamp",
+        "turnId",
+        "type"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "conversation-v2:#/$defs/activitySummary",
+      "required": [
+        "changeCount",
+        "cursor",
+        "latestProgress",
+        "otherCount",
+        "partial",
+        "progressCount",
+        "state",
+        "toolCount",
+        "turnId"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
       "id": "conversation-v2:#/$defs/answer",
       "required": [
         "choiceIds",
@@ -886,9 +918,11 @@
       ],
       "optional": [
         "action",
+        "activitySummary",
         "answers",
         "completedAt",
         "input",
+        "messagePurpose",
         "presentation",
         "questions",
         "result",
@@ -1012,9 +1046,11 @@
         "type"
       ],
       "optional": [
+        "capabilities",
         "providerActivity",
         "providerState",
-        "timestamp"
+        "timestamp",
+        "view"
       ],
       "rejectUnknown": true
     },

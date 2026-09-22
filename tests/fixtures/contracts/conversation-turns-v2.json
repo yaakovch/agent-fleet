@@ -1,0 +1,73 @@
+{
+  "protocolVersion": 2,
+  "type": "conversation.snapshot",
+  "timestamp": "2026-09-22T00:00:00Z",
+  "session": "fixture",
+  "adapter": "codex",
+  "revision": "r1",
+  "items": [
+    {
+      "id": "user",
+      "kind": "message",
+      "timestamp": "2026-09-22T01:00:00Z",
+      "role": "user",
+      "title": "",
+      "text": "Review the change",
+      "detail": "",
+      "state": "complete",
+      "tool": "",
+      "attachments": [],
+      "choices": [],
+      "turnId": "codex:3b46d2ef0137c28574af21d6",
+      "messagePurpose": "user"
+    },
+    {
+      "id": "activity:codex:3b46d2ef0137c28574af21d6",
+      "kind": "activity",
+      "timestamp": "2026-09-22T01:00:00Z",
+      "role": "",
+      "title": "Activity",
+      "text": "",
+      "detail": "",
+      "state": "complete",
+      "tool": "",
+      "attachments": [],
+      "choices": [],
+      "turnId": "codex:3b46d2ef0137c28574af21d6",
+      "activitySummary": {
+        "turnId": "codex:3b46d2ef0137c28574af21d6",
+        "state": "complete",
+        "toolCount": 1,
+        "changeCount": 0,
+        "progressCount": 1,
+        "otherCount": 0,
+        "partial": false,
+        "latestProgress": "",
+        "cursor": "turns1:fixture"
+      }
+    },
+    {
+      "id": "final",
+      "kind": "message",
+      "timestamp": "2026-09-22T01:00:00Z",
+      "role": "assistant",
+      "title": "",
+      "text": "The change is ready.",
+      "detail": "",
+      "state": "complete",
+      "tool": "",
+      "attachments": [],
+      "choices": [],
+      "turnId": "codex:3b46d2ef0137c28574af21d6",
+      "messagePurpose": "final"
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false,
+  "mode": "ai",
+  "interactionMode": "default",
+  "view": "conversation",
+  "capabilities": [
+    "conversation.turns.v1"
+  ]
+}

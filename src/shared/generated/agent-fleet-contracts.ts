@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.10.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.11.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -704,6 +704,36 @@ export const GENERATED_OBJECT_SHAPES = {
     "optional": [],
     "rejectUnknown": true
   },
+  "conversation-v2:#/$defs/activity": {
+    "required": [
+      "adapter",
+      "hasMore",
+      "items",
+      "nextCursor",
+      "protocolVersion",
+      "session",
+      "timestamp",
+      "turnId",
+      "type"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "conversation-v2:#/$defs/activitySummary": {
+    "required": [
+      "changeCount",
+      "cursor",
+      "latestProgress",
+      "otherCount",
+      "partial",
+      "progressCount",
+      "state",
+      "toolCount",
+      "turnId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
   "conversation-v2:#/$defs/answer": {
     "required": [
       "choiceIds",
@@ -819,9 +849,11 @@ export const GENERATED_OBJECT_SHAPES = {
     ],
     "optional": [
       "action",
+      "activitySummary",
       "answers",
       "completedAt",
       "input",
+      "messagePurpose",
       "presentation",
       "questions",
       "result",
@@ -936,9 +968,11 @@ export const GENERATED_OBJECT_SHAPES = {
       "type"
     ],
     "optional": [
+      "capabilities",
       "providerActivity",
       "providerState",
-      "timestamp"
+      "timestamp",
+      "view"
     ],
     "rejectUnknown": true
   },

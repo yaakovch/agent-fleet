@@ -54,6 +54,8 @@ import {
   TERMINAL_HISTORY_QUIET_MS,
   type TerminalHistoryState
 } from './terminal-history';
+import { ActivityCache, conversationRows } from '../../shared/conversation-view';
+import type { ConversationView } from '../../shared/conversation';
 import { renderSafeMarkdownSource } from './safe-markdown';
 
 interface TerminalRuntime {
@@ -110,12 +112,17 @@ interface RenderSnapshot {
   scrollHeight: number;
   nearBottom: boolean;
   focusKey: string;
+  anchorId: string;
+  anchorTop: number;
   selectionStart: number | null;
   selectionEnd: number | null;
 }
 
 export class SessionWorkspace {
   readonly element = document.createElement('section');
+  private nativeView: ConversationView = localStorage.getItem('agent-fleet-native-view') === 'detailed' ? 'detailed' : 'conversation';
+  private activityCache = new ActivityCache();
+  private viewGeneration = 0;
   private tabs = new Map<string, TerminalTabDescriptor>();
   private runtimes = new Map<string, TerminalRuntime>();
   private nativeStates = new Map<string, NativeState>();
@@ -258,6 +265,7 @@ export class SessionWorkspace {
       } else if (input instanceof HTMLTextAreaElement && input.matches('[data-native-message]')) {
         const tabId = this.tabIdFromControl(input);
         if (tabId) {
+          input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
           this.nativeState(tabId).draft = input.value; this.clearSuggestions(tabId, true);
           input.closest('.native-composer')?.querySelector('.local-suggestions')?.remove();
         }
@@ -360,7 +368,13 @@ export class SessionWorkspace {
   }
 
   setFleetSnapshot(snapshot: FleetSnapshot): void {
+    const capabilitiesChanged = snapshot.hosts.some((host) =>
+      host.capabilities?.includes('conversation.turns.v1') !== this.fleetSnapshot?.hosts.find((old) => old.id === host.id)?.capabilities?.includes('conversation.turns.v1'));
     this.fleetSnapshot = snapshot;
+    if (capabilitiesChanged) {
+      this.conversationStarted.clear();
+      this.syncConversation();
+    }
     const hiddenUnavailableSessionIds = reconcileHiddenUnavailableSessions(
       snapshot, this.workspaceState.rail.hiddenUnavailableSessionIds
     );
@@ -577,6 +591,35 @@ export class SessionWorkspace {
     }
     if (action === 'model-control-cancel-pending') {
       void this.cancelPendingModelChange();
+      return true;
+    }
+    if (action === 'native-view') {
+      this.nativeView = control.dataset.view === 'detailed' ? 'detailed' : 'conversation';
+      localStorage.setItem('agent-fleet-native-view', this.nativeView);
+      this.viewGeneration += 1;
+      this.activityCache.clear();
+      const ids = [...this.conversationStarted];
+      for (const id of ids) this.nativeState(id).loadingOlder = false;
+      void window.limitsWidget.syncConversations(ids, this.nativeView);
+      this.renderStructure();
+      return true;
+    }
+    if (action === 'native-activity' || action === 'native-activity-more' || action === 'native-activity-refresh') {
+      const item = this.itemFromControl(control);
+      if (item?.activitySummary) {
+        const state = this.nativeState(this.selectedId);
+        const key = `activity-${item.id}`;
+        if (action === 'native-activity' && state.expandedDetails.has(key)) {
+          state.expandedDetails.delete(key);
+          void window.limitsWidget.cancelConversationRead(this.selectedId);
+        }
+        else {
+          state.expandedDetails.add(key);
+          if (!this.activityCache.get(`${this.selectedId}:${item.id}`) || action !== 'native-activity')
+            void this.loadActivity(this.selectedId, item, action === 'native-activity-more');
+        }
+        this.renderSelectedNative();
+      }
       return true;
     }
     if (action === 'native-retry') {
@@ -901,7 +944,7 @@ export class SessionWorkspace {
       ${modelControl}
       <div class="workspace-pane-modes" data-workspace-mode-controls><button data-action="workspace-view" data-workspace-action data-mode="native" class="${pane.viewMode === 'native' ? 'active' : ''}" ${presentation.nativeEnabled ? '' : 'disabled'}>Native</button><button data-action="workspace-view" data-workspace-action data-mode="terminal" class="${pane.viewMode === 'terminal' ? 'active' : ''}" ${presentation.terminalEnabled ? '' : 'disabled'}>Terminal</button></div>
       <button class="primary-button workspace-toolbar-retry ${presentation.retryVisible ? '' : 'invisible'}" data-action="workspace-retry" data-workspace-action ${presentation.retryVisible ? '' : 'disabled'}>Retry</button>
-      <details class="workspace-actions-menu workspace-toolbar-more"><summary aria-label="More actions for ${escapeAttr(presentation.title)}">•••</summary><div>${more}</div></details>`;
+      <details class="workspace-actions-menu workspace-toolbar-more"><summary aria-label="More actions for ${escapeAttr(presentation.title)}">•••</summary><div>${pane.viewMode === 'native' ? `<button data-action="native-view" data-workspace-action data-view="conversation" aria-pressed="${this.nativeView === 'conversation'}">${this.nativeView === 'conversation' ? '✓ ' : ''}Conversation</button><button data-action="native-view" data-workspace-action data-view="detailed" aria-pressed="${this.nativeView === 'detailed'}">${this.nativeView === 'detailed' ? '✓ ' : ''}Detailed</button>` : ''}${more}</div></details>`;
   }
 
   private mountTerminal(pane: WorkspacePane, tab: TerminalTabDescriptor): void {
@@ -1424,7 +1467,7 @@ export class SessionWorkspace {
     if (tab.tool === 'shell' || this.conversationStarted.has(tab.id)) return;
     this.conversationStarted.add(tab.id);
     this.nativeState(tab.id).connection = 'Connecting…';
-    void window.limitsWidget.startConversation(tab.id).then((started) => {
+    void window.limitsWidget.startConversation(tab.id, this.nativeView).then((started) => {
       if (!started) {
         const state = this.nativeState(tab.id);
         state.error = 'Native view could not start. Terminal remains available.';
@@ -1442,7 +1485,7 @@ export class SessionWorkspace {
     const signature = desired.join('\0');
     if (signature === [...this.conversationStarted].join('\0')) return;
     this.conversationStarted = new Set(desired);
-    void window.limitsWidget.syncConversations(desired);
+    void window.limitsWidget.syncConversations(desired, this.nativeView);
   }
 
   private syncTerminal(): void {
@@ -1549,7 +1592,7 @@ export class SessionWorkspace {
     const pending = actions.find((item) => item.id === state.questionSheetId)
       ?? [...actions].reverse().find((item) => item.source !== 'codex_async_question') ?? actions[0];
     const feedItems = state.items.filter((item) => !actions.some((action) => action.id === item.id));
-    const viewerItem = state.viewer ? state.items.find((item) => item.id === state.viewer?.itemId) : undefined;
+    const viewerItem = state.viewer ? this.findConversationItem(tab.id, state.viewer.itemId) : undefined;
     const attention = this.fleetSnapshot?.attention.find((item) =>
       item.kind === 'hard-limit' && item.targetSessionId === tab.sessionId && !this.dismissedAttention.has(item.id)
     );
@@ -1559,7 +1602,7 @@ export class SessionWorkspace {
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
-        ${renderConversationRows(feedItems, state.expandedDetails)}
+        ${this.renderFeed(tab.id, conversationRows(feedItems, this.nativeView), state.expandedDetails)}
         ${!state.items.length && !state.error ? '<div class="native-empty"><strong>Loading conversation…</strong><span>The newest messages appear first; older history loads only when requested.</span></div>' : ''}
       </div>
       ${state.newMessages ? '<button class="new-messages-button" data-new-messages data-action="native-new-messages" data-workspace-action>New messages ↓</button>' : ''}
@@ -1568,6 +1611,46 @@ export class SessionWorkspace {
       ${!pending || pending.source === 'codex_async_question' ? this.renderComposer(tab, state) : ''}
       ${viewerItem && state.viewer ? renderConversationViewer(viewerItem, state.viewer) : ''}
     </div>`;
+  }
+
+  private renderFeed(tabId: string, items: ConversationItem[], expanded: Set<string>): string {
+    if (this.nativeView === 'detailed') return renderConversationRows(items, expanded);
+    const supported = items.some((item) => item.activitySummary || item.messagePurpose);
+    const guidance = !supported ? '<small class="native-compatibility">Update this host for turn grouping and on-demand Activity.</small>' : '';
+    return guidance + items.map((item) => {
+      const summary = item.activitySummary;
+      if (!summary) {
+        const content = renderConversationItem(item, expanded);
+        const visible = ['message', 'plan', 'question', 'approval', 'error', 'attachment', 'fallback'].includes(item.kind) || item.attachments.length || item.state === 'error';
+        return `<div data-message-anchor="${escapeAttr(item.id)}">${visible ? content : `<details data-detail-id="legacy-${escapeAttr(item.id)}" ${expanded.has(`legacy-${item.id}`) ? 'open' : ''}><summary>Activity · ${escapeHtml(item.title || item.kind)}</summary>${content}</details>`}</div>`;
+      }
+      const open = expanded.has(`activity-${item.id}`);
+      const cached = this.activityCache.get(`${tabId}:${item.id}`);
+      const counts = [summary.toolCount ? `${summary.toolCount} tools` : '', summary.changeCount ? `${summary.changeCount} edits` : '', summary.progressCount ? `${summary.progressCount} updates` : '', summary.otherCount ? `${summary.otherCount} events` : ''].filter(Boolean).join(' · ');
+      return `<section class="native-turn-activity" data-conversation-item="${escapeAttr(item.id)}" data-message-anchor="${escapeAttr(item.id)}"><button data-action="native-activity" data-workspace-action aria-expanded="${open}">${open ? '▾' : '▸'} Activity${counts ? ` · ${escapeHtml(counts)}` : ''}${summary.partial ? ' · partial' : ''}${summary.state === 'running' ? ' · working' : ''}</button>${open ? `<div class="native-activity-content">${cached?.loading ? '<small>Loading activity…</small>' : ''}${cached?.error ? `<p>${escapeHtml(cached.error)}</p>` : ''}${cached ? renderConversationRows(cached.items, expanded) : '<p>Connect to load activity details.</p>'}${cached?.cursor ? '<button data-action="native-activity-more" data-workspace-action>Load earlier activity</button>' : ''}${!cached || cached.error || cached.sourceCursor !== summary.cursor ? '<button data-action="native-activity-refresh" data-workspace-action>Refresh activity</button>' : ''}</div>` : ''}</section>`;
+    }).join('');
+  }
+
+  private findConversationItem(tabId: string, id: string): ConversationItem | undefined {
+    return this.nativeState(tabId).items.find((item) => item.id === id) ?? this.activityCache.values(`${tabId}:`).flatMap((page) => page.items).find((item) => item.id === id);
+  }
+
+  private async loadActivity(tabId: string, item: ConversationItem, older: boolean): Promise<void> {
+    const summary = item.activitySummary!;
+    const key = `${tabId}:${item.id}`;
+    const previous = this.activityCache.get(key);
+    if (previous?.loading) return;
+    const cursor = older ? previous?.cursor : summary.cursor;
+    if (!cursor) return;
+    const generation = this.viewGeneration;
+    this.activityCache.set(key, { items: older ? previous?.items ?? [] : [], cursor: null, sourceCursor: summary.cursor, loading: true, error: '' });
+    const result = await window.limitsWidget.conversationActivity(tabId, summary.turnId, cursor);
+    if (generation !== this.viewGeneration || !this.nativeStates.has(tabId)) return;
+    const frame = result.frame;
+    if (frame?.type === 'conversation.activity' && frame.turnId === summary.turnId) {
+      this.activityCache.set(key, { items: mergeItems(frame.items ?? [], older ? previous?.items ?? [] : []), cursor: frame.nextCursor ?? null, sourceCursor: summary.cursor, loading: false, error: '' });
+    } else this.activityCache.set(key, { items: previous?.items ?? [], cursor: previous?.cursor ?? null, sourceCursor: summary.cursor, loading: false, error: result.message });
+    this.renderNativePanel(tabId);
   }
 
   private renderPendingAction(item: ConversationItem, state: NativeState): string {
@@ -1591,7 +1674,7 @@ export class SessionWorkspace {
     return `<div class="native-composer ${state.interactionMode === 'plan' ? 'planning' : ''}" data-composer-tab="${escapeAttr(tab.id)}">
       ${state.attachments.length ? `<div class="attachment-strip">${state.attachments.map((item) => `<button data-action="native-remove-attachment" data-workspace-action data-attachment-id="${escapeAttr(item.id)}" title="Remove ${escapeAttr(item.name)}"><img src="${item.thumbnail}" alt=""><span>${escapeHtml(item.name)}</span><b>×</b></button>`).join('')}</div>` : ''}
       ${state.notice ? `<small class="composer-notice">${escapeHtml(state.notice)}</small>` : ''}
-      <textarea data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
+      <textarea rows="1" data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
       ${state.suggestion.target?.kind === 'composer' ? renderSuggestionChoices(state.suggestion) : ''}
       <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action>Shift+Tab</button><button data-action="native-control-c" data-workspace-action>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action>Send</button></div>
     </div>`;
@@ -1709,10 +1792,13 @@ export class SessionWorkspace {
   }
 
   private async loadOlder(): Promise<void> {
-    const state = this.nativeState(this.selectedId);
+    const tabId = this.selectedId;
+    const generation = this.viewGeneration;
+    const state = this.nativeState(tabId);
     if (!state.nextCursor || state.loadingOlder) return;
     state.loadingOlder = true; this.renderSelectedNative();
     const result = await window.limitsWidget.pageConversation(this.selectedId, state.nextCursor);
+    if (generation !== this.viewGeneration) return;
     state.loadingOlder = false;
     if (result.frame?.type === 'conversation.snapshot') {
       state.items = mergeItems(result.frame.items ?? [], state.items);
@@ -1724,7 +1810,7 @@ export class SessionWorkspace {
 
   private itemFromControl(control: HTMLElement): ConversationItem | undefined {
     const id = control.closest<HTMLElement>('[data-conversation-item]')?.dataset.conversationItem;
-    return this.nativeState(this.selectedId).items.find((item) => item.id === id);
+    return id ? this.findConversationItem(this.selectedId, id) : undefined;
   }
 
   private async approve(item: ConversationItem, choice: string): Promise<void> {
@@ -1949,7 +2035,10 @@ export class SessionWorkspace {
     }
     const active = (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)
       && root.contains(document.activeElement) ? document.activeElement : null;
+    const anchors = [...messages.querySelectorAll<HTMLElement>('[data-message-anchor]')].filter((row) => row.querySelector('.native-message.user, .native-message.assistant'));
+    const anchor = anchors.find((row) => row.getBoundingClientRect().bottom > messages.getBoundingClientRect().top) ?? anchors.at(-1);
     return {
+      anchorId: anchor?.dataset.messageAnchor ?? '', anchorTop: anchor ? anchor.getBoundingClientRect().top - messages.getBoundingClientRect().top : 0,
       tabId, scrollTop: messages.scrollTop, scrollHeight: messages.scrollHeight,
       nearBottom: isNearBottom(messages), focusKey: active?.dataset.focusKey ?? '',
       selectionStart: active?.selectionStart ?? null, selectionEnd: active?.selectionEnd ?? null
@@ -1979,6 +2068,13 @@ export class SessionWorkspace {
     state.followOutput = isNearBottom(messages); state.renderMode = 'preserve';
     for (const detail of root.querySelectorAll<HTMLDetailsElement>('details[data-detail-id]')) {
       detail.open = Boolean(detail.dataset.detailId && state.expandedDetails.has(detail.dataset.detailId));
+    }
+    if (previous?.tabId === tabId && !previous.nearBottom && previous.anchorId) {
+      const anchor = messages.querySelector<HTMLElement>(`[data-message-anchor="${CSS.escape(previous.anchorId)}"]`);
+      if (anchor) messages.scrollTop += anchor.getBoundingClientRect().top - messages.getBoundingClientRect().top - previous.anchorTop;
+    }
+    for (const input of root.querySelectorAll<HTMLTextAreaElement>('[data-native-message]')) {
+      input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
     }
     if (previous?.tabId === tabId && previous.focusKey) {
       const focus = [...root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-focus-key]')]
@@ -2285,7 +2381,8 @@ export function renderConversationRows(items: ConversationItem[], expanded = new
       html += tools.length > 1 ? renderToolGroup(tools) : renderTool(tools[0]);
       continue;
     }
-    html += renderConversationItem(items[index++], expanded);
+    const value = items[index++];
+    html += `<div data-message-anchor="${escapeAttr(value.id)}">${renderConversationItem(value, expanded)}</div>`;
   }
   return html;
 }

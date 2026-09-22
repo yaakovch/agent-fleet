@@ -501,3 +501,22 @@ Both clients use neutral user bubbles, plain assistant text, compact tool rows,
 rounded composers and theme-aware neutral question surfaces. Navigation stays
 unchanged. Existing source fields identify async questions; no protocol schema
 change or intentional user-visible platform divergence is introduced.
+
+
+## Native Conversation and Detailed views (2026-09-22)
+
+The approved wtmux SPEC and implementation plan govern this shared workflow.
+Conversation is the device default and Actions remembers Conversation/Detailed
+across sessions. Conversation keeps user/final/unknown prose, review plans and
+artifacts, with the latest identified progress while running and one expandable
+Activity per turn. Detailed retains the event timeline. Existing pinned question
+and approval sheets remain actionable. Preserve drafts, attachments, text sizing,
+manual expansion and the visible message when changing views.
+
+Negotiate conversation.turns.v1 only with capable hosts; older hosts retain
+conservative per-event disclosures and an update hint. Load Activity read-only in
+25-entry pages, at most eight cached turns, 200 entries per turn and 4 MiB, with
+obsolete requests cancelled. No extra AI calls, idle polling or transcript files.
+Windows delivers source parity without an installer publication; Android uses
+the signed in-app updater after emulator and release gates. Physical phone smoke
+is user-operated. This is the only intentional delivery difference.
