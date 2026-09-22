@@ -492,7 +492,7 @@ export class TerminalManager {
       });
       spawnedProcess = process;
       try {
-        this.options.processOwnership?.own(wslProcessOwner('terminal', tab.descriptor.id), process);
+        this.options.processOwnership?.own(wslProcessOwner('terminal', tab.descriptor.id), process, 'signal-free');
       } catch (error) {
         try { process.kill(); } catch { /* the failed registration still owns cleanup */ }
         spawnedProcess = null;

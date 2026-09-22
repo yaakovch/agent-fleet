@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as nodePty from 'node-pty';
 import {
   WslProcessOwnership,
   wslProcessOwner,
@@ -14,6 +15,60 @@ function child(): KillableWslProcess & EventEmitter {
 afterEach(() => vi.useRealTimers());
 
 describe('WSL interop process ownership', () => {
+  it.skipIf(process.platform !== 'win32')('closes real Windows ConPTY processes and observes their exits', async () => {
+    const ownership = new WslProcessOwnership();
+    for (let generation = 0; generation < 3; generation += 1) {
+      const terminal = nodePty.spawn(process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', [
+        '/d', '/q', '/k', 'echo OWNERSHIP_PTY_READY'
+      ], { name: 'xterm-256color', cols: 80, rows: 24, env: process.env });
+      let hasExited = false;
+      const exited = new Promise<void>((resolve) => terminal.onExit(() => {
+        hasExited = true;
+        ownership.forget(terminal);
+        resolve();
+      }));
+      try {
+        ownership.own('terminal:real-windows', terminal, 'signal-free');
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('ConPTY did not become ready')), 5_000);
+          const listener = terminal.onData((data) => {
+            if (!data.includes('OWNERSHIP_PTY_READY')) return;
+            clearTimeout(timer);
+            listener.dispose();
+            resolve();
+          });
+        });
+        ownership.release(terminal, 'cancel');
+        await exited;
+        expect(ownership.snapshot()).toMatchObject({ active: 0, abandoned: 0 });
+      } finally {
+        if (!hasExited) terminal.kill();
+      }
+    }
+  }, 20_000);
+
+  it('uses signal-free termination for Windows PTYs during supersession and escalation', async () => {
+    vi.useFakeTimers();
+    const ownership = new WslProcessOwnership({ terminationGraceMs: 10 });
+    const first = child();
+    const next = child();
+    first.kill = vi.fn((signal?: string) => {
+      if (signal) throw new Error('Signals not supported on windows.');
+    });
+    ownership.own('terminal:tab', first, 'signal-free');
+    ownership.own('terminal:tab', next, 'signal-free');
+    expect(first.kill).toHaveBeenCalledWith();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(first.kill).toHaveBeenCalledTimes(2);
+    expect(first.kill).toHaveBeenLastCalledWith();
+    expect(ownership.snapshot().active).toBe(2);
+    first.emit('exit');
+    ownership.releaseAll('app_shutdown');
+    expect(next.kill).toHaveBeenCalledWith();
+    next.emit('exit');
+    expect(ownership.snapshot()).toMatchObject({ active: 0, abandoned: 0 });
+  });
+
   it('derives stable bounded owner keys for long persisted renderer identities', () => {
     const identity = `Uppercase:${'x'.repeat(320)}`;
     const owner = wslProcessOwner('terminal', identity);

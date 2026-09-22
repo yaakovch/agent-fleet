@@ -46,6 +46,7 @@ const OWNER_PATTERN = /^[a-z][a-z0-9._:-]{0,127}$/u;
 export class WslProcessOwnership {
   private readonly active = new Map<KillableWslProcess, {
     owner: string;
+    termination: 'signals' | 'signal-free';
     releaseCause?: WslProcessReleaseCause;
     escalationTimer?: NodeJS.Timeout;
     abandonmentTimer?: NodeJS.Timeout;
@@ -72,14 +73,14 @@ export class WslProcessOwnership {
     );
   }
 
-  own(owner: string, child: KillableWslProcess): void {
+  own(owner: string, child: KillableWslProcess, termination: 'signals' | 'signal-free' = 'signals'): void {
     if (!OWNER_PATTERN.test(owner)) throw new Error('WSL process owner is invalid');
     if (this.active.has(child)) throw new Error('WSL process is already owned');
     // A UI slot may replace its WSL process before the old exit event arrives.
     // Supersede only that exact owner; distinct tabs and deliberate duplicate
     // session attachments use distinct owner keys and remain independent.
     this.releaseOwner(owner, 'superseded');
-    this.active.set(child, { owner });
+    this.active.set(child, { owner, termination });
     child.once?.('exit', () => this.forget(child));
     child.once?.('close', () => this.forget(child));
     // ChildProcess emits `error` for failed spawn/kill/send operations, not only
@@ -104,7 +105,9 @@ export class WslProcessOwnership {
     lease.releaseCause = cause;
     this.releaseCounts[cause] += 1;
     try {
-      child.kill('SIGTERM');
+      // Windows node-pty rejects every signal argument before closing its PTY.
+      if (lease.termination === 'signal-free') child.kill();
+      else child.kill('SIGTERM');
     } catch {
       // The process exited between ownership resolution and termination.
     }
@@ -114,7 +117,8 @@ export class WslProcessOwnership {
       lease.escalationTimer = undefined;
       this.forcedTerminations += 1;
       try {
-        child.kill('SIGKILL');
+        if (lease.termination === 'signal-free') child.kill();
+        else child.kill('SIGKILL');
       } catch {
         // The process may have exited without delivering a close event.
       }

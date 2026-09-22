@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readWorkspaceState, TerminalManager, type PtyProcess } from '../src/main/terminal-manager';
 import type { FleetSession } from '../src/shared/fleet';
+import { WslProcessOwnership } from '../src/main/wsl-process-ownership';
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })));
@@ -22,6 +23,40 @@ class FakePty implements PtyProcess {
 }
 
 describe('embedded terminal manager', () => {
+  it('replaces Windows PTYs without leaking signal-rejecting terminal processes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const ownership = new WslProcessOwnership();
+    const ptys: FakePty[] = [];
+    const manager = new TerminalManager({
+      statePath: join(root, 'workspace.json'),
+      logger: { info: vi.fn(), warn: vi.fn() }, getDistro: () => 'Ubuntu',
+      resolveSession: () => session,
+      onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(),
+      resolveWslExecutable: () => WINDOWS_WSL,
+      processOwnership: ownership,
+      spawnPty: () => {
+        const pty = new FakePty();
+        // Match the shipped Windows node-pty API, including its exit callback.
+        pty.kill = (signal?: string) => {
+          if (signal) throw new Error('Signals not supported on windows.');
+          pty.killed = true;
+          pty.exit?.({ exitCode: 0 });
+        };
+        ptys.push(pty);
+        return pty;
+      }
+    });
+    const tab = manager.open(session);
+    for (let generation = 0; generation < 75; generation += 1) {
+      manager.retry(tab.id);
+      expect(ptys.filter((pty) => !pty.killed)).toHaveLength(1);
+      expect(ownership.snapshot().active).toBe(1);
+    }
+    manager.dispose();
+    expect(ptys.every((pty) => pty.killed)).toBe(true);
+    expect(ownership.snapshot()).toMatchObject({ active: 0, abandoned: 0 });
+  }, 15_000);
+
   it('kills a spawned PTY when ownership registration fails', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const pty = new FakePty();
