@@ -56,7 +56,8 @@ import {
 } from './terminal-history';
 import { ActivityCache, conversationRows } from '../../shared/conversation-view';
 import type { ConversationView } from '../../shared/conversation';
-import { renderSafeMarkdownSource } from './safe-markdown';
+import { linkedText, renderSafeMarkdownSource } from './safe-markdown';
+import { hostFileReferences, hostFileTarget } from '../../shared/host-file';
 
 interface TerminalRuntime {
   terminal: Terminal;
@@ -678,6 +679,13 @@ export class SessionWorkspace {
     }
     if (action === 'native-copy') { void this.copyFromControl(control); return true; }
     if (action === 'native-open-external') { void this.openExternalLink(control); return true; }
+    if (action === 'native-open-file') {
+      const paneId = control.closest<HTMLElement>('[data-pane-id]')?.dataset.paneId;
+      const pane = workspacePanes(this.workspaceState.layout).find((candidate) => candidate.id === paneId);
+      const tab = pane && this.tabForPane(pane);
+      if (tab && control.dataset.fileReference) void this.openHostFile(tab, control.dataset.fileReference);
+      return true;
+    }
     if (action === 'native-open-tool' || action === 'native-open-plan') {
       const item = this.itemFromControl(control);
       if (item) {
@@ -960,6 +968,7 @@ export class SessionWorkspace {
     let runtime = this.runtimes.get(tab.id);
     if (!runtime) {
       const terminal = new Terminal(this.terminalOptions());
+      this.bindHostFileLinks(terminal, tab);
       const fit = new FitAddon();
       const search = new SearchAddon();
       terminal.loadAddon(fit);
@@ -2294,6 +2303,7 @@ export class SessionWorkspace {
       scrollback: Math.max(5_000, this.settings.terminalAppearance.scrollback)
     });
     const historyFit = new FitAddon();
+    if (tab) this.bindHostFileLinks(historyTerminal, tab);
     historyTerminal.loadAddon(historyFit);
     const historyElement = document.createElement('div');
     historyElement.className = 'xterm-runtime terminal-scrollback-runtime';
@@ -2388,6 +2398,43 @@ export class SessionWorkspace {
     }
   }
 
+  private bindHostFileLinks(terminal: Terminal, tab: TerminalTabDescriptor): void {
+    const activate = (event: MouseEvent, target: string): void => {
+      if (!event.ctrlKey) return;
+      const file = hostFileTarget(target, true);
+      if (file) { event.preventDefault(); void this.openHostFile(tab, file); }
+      else void window.limitsWidget.openExternalLink(target);
+    };
+    terminal.options.linkHandler = { activate };
+    terminal.registerLinkProvider({
+      provideLinks: (line, callback) => {
+        const buffer = terminal.buffer.active;
+        let first = line - 1; let last = first;
+        while (first > 0 && line - first < 32 && buffer.getLine(first)?.isWrapped) first--;
+        while (last + 1 < buffer.length && last - first < 32 && buffer.getLine(last + 1)?.isWrapped) last++;
+        const rows = Array.from({ length: last - first + 1 }, (_, index) => buffer.getLine(first + index)?.translateToString(index === last - first) ?? '');
+        const text = rows.join('');
+        if (text.length > 8192) { callback([]); return; }
+        const position = (offset: number): { x: number; y: number } => {
+          for (let index = 0; index < rows.length; index++) {
+            if (offset < rows[index].length || index === rows.length - 1) return { x: terminalColumn(buffer.getLine(first + index), offset), y: first + index + 1 };
+            offset -= rows[index].length;
+          }
+          return { x: 1, y: first + 1 };
+        };
+        callback(hostFileReferences(text).map((ref) => ({
+          range: { start: position(ref.start), end: position(ref.end - 1) },
+          text: ref.target, activate: (event) => activate(event, ref.target)
+        })));
+      }
+    });
+  }
+
+  private async openHostFile(tab: TerminalTabDescriptor, reference: string): Promise<void> {
+    const result = await window.limitsWidget.openHostFile(tab.sessionId, reference);
+    if (!result.ok) window.alert(result.message);
+  }
+
   private terminalOptions(): ConstructorParameters<typeof Terminal>[0] {
     const appearance = this.settings.terminalAppearance;
     const themes = {
@@ -2407,6 +2454,18 @@ export class SessionWorkspace {
       theme: themes[appearance.theme]
     };
   }
+}
+
+function terminalColumn(line: ReturnType<Terminal['buffer']['active']['getLine']>, offset: number): number {
+  if (!line) return offset + 1;
+  let characters = 0;
+  for (let column = 0; column < line.length;) {
+    if (characters >= offset) return column + 1;
+    const cell = line.getCell(column);
+    characters += cell?.getChars().length || 1;
+    column += Math.max(1, cell?.getWidth() ?? 1);
+  }
+  return line.length + 1;
 }
 
 export function renderConversationRows(items: ConversationItem[], expanded = new Set<string>()): string {
@@ -2559,7 +2618,7 @@ function renderToolPreview(block: ToolPresentationBlock): string {
   let content = lines.join('\n');
   if (content.length > 700) content = `${content.slice(0, 697)}…`;
   if (block.content.split(/\r?\n/u).length > 6) content += '\n…';
-  return `<div class="tool-preview"><small>${escapeHtml(block.title)}</small><pre><code>${escapeHtml(content)}</code></pre></div>`;
+  return `<div class="tool-preview"><small>${escapeHtml(block.title)}</small><pre><code>${linkedText(content)}</code></pre></div>`;
 }
 
 function renderToolBlock(block: ToolPresentationBlock, compact = false, wrap = false): string {
@@ -2568,7 +2627,7 @@ function renderToolBlock(block: ToolPresentationBlock, compact = false, wrap = f
     : `<h4><span>${escapeHtml(block.title)}</span><button data-action="native-copy" data-workspace-action>Copy</button></h4>`;
   if (block.kind === 'markdown') return `<section data-copy-source>${controls}<span hidden data-copy-value>${escapeHtml(block.content)}</span>${markdown(block.content)}</section>`;
   const content = block.kind === 'json' ? prettyJson(block.content) : block.content;
-  const highlighted = content.length <= 24_000 ? hljs.highlightAuto(content).value : escapeHtml(content);
+  const highlighted = hostFileReferences(content).length ? linkedText(content) : content.length <= 24_000 ? hljs.highlightAuto(content).value : escapeHtml(content);
   const rendered = block.kind === 'diff' ? renderDiff(content)
     : `<pre class="tool-block-${escapeAttr(block.kind)} ${wrap || block.kind === 'terminal' || block.kind === 'text' ? 'wrap' : 'no-wrap'}"><code>${highlighted}</code></pre>`;
   return `<section data-copy-source>${controls}<span hidden data-copy-value>${escapeHtml(content)}</span>${rendered}</section>`;

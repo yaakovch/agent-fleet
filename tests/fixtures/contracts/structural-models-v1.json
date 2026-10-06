@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.11.0",
+  "packageVersion": "1.12.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,
@@ -10,7 +10,8 @@
     "transport": 1,
     "host-runtime": 1,
     "diagnostics": 2,
-    "provider-confidence": 1
+    "provider-confidence": 1,
+    "linked-file": 1
   },
   "objectShapes": [
     {
@@ -1539,6 +1540,19 @@
         "legacyMachineId",
         "name",
         "platform"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "linked-file-v1:#",
+      "required": [
+        "mediaKind",
+        "modifiedAt",
+        "name",
+        "protocolVersion",
+        "revision",
+        "size"
       ],
       "optional": [],
       "rejectUnknown": true

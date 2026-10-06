@@ -30,6 +30,20 @@ function target(name = 'file.bin', size = 1) {
 }
 
 describe('fleet repository downloads', () => {
+  it('fetches a linked Linux filename with a safe Windows staging name and immutable revision', async () => {
+    const child = fakeChild();
+    const spawnProcess = vi.fn(() => child);
+    const manager = new FleetDownloadManager({
+      distro: () => 'Ubuntu', downloadsDirectory: () => 'D:\\private', onUpdate: () => undefined,
+      spawnProcess: spawnProcess as never, wslExecutable: () => 'wsl.exe', verifyArtifact: async () => true
+    });
+    const job = manager.start({ ...target('Linux:report.pdf'), relativePath: '/tmp/Linux:report.pdf', localName: 'Linux_report.pdf', expectedRevision: 'a'.repeat(64) });
+    expect(spawnProcess).toHaveBeenCalledWith('wsl.exe', expect.arrayContaining(['file', 'fetch', '--expected-revision', 'a'.repeat(64), '--output-name', 'Linux_report.pdf']), expect.any(Object));
+    child.stdout.write(JSON.stringify({ status: 'downloaded', name: 'Linux_report.pdf', size: 1, sha256: 'ab'.repeat(32) }) + '\n');
+    child.emit('close', 0);
+    await vi.waitFor(() => expect(manager.get(job.id)).toMatchObject({ state: 'completed', name: 'Linux_report.pdf' }));
+    await manager.stop();
+  });
   it('maps a local Windows Downloads path into a direct WSL argument', () => {
     expect(windowsPathToWsl('C:\\Users\\Yaakov\\Downloads')).toBe('/mnt/c/Users/Yaakov/Downloads');
     expect(() => windowsPathToWsl('\\\\server\\share')).toThrow(/local drive/i);

@@ -3,3 +3,4 @@ out/
 dist/
 .run/
 *.log
+/build/reports/

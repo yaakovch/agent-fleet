@@ -7,6 +7,7 @@ import type { FleetDownloadJob } from '../shared/app';
 import { resolveWslExecutable } from './fleet-terminal';
 import { activatedRuntimeCommand } from '../shared/runtime';
 import type { WslProcessOwnership } from './wsl-process-ownership';
+import { hostFileTarget } from '../shared/host-file';
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_MAX_CONCURRENT = 3;
@@ -23,6 +24,8 @@ export interface FleetDownloadTarget {
   relativePath: string;
   name: string;
   size: number;
+  expectedRevision?: string;
+  localName?: string;
 }
 
 export interface FleetDownloadManagerOptions {
@@ -169,10 +172,12 @@ export class FleetDownloadManager {
     this.emit(active);
     const wslOutputDirectory = windowsPathToWsl(active.outputDirectory);
     const args = [
-      '-d', active.distro, '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'file', 'download',
+      '-d', active.distro, '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'file', target.expectedRevision ? 'fetch' : 'download',
       '--host', target.hostId, '--session', target.internalName, '--path', target.relativePath,
       '--output-dir', wslOutputDirectory, '--yes', '--json', '--json-progress'
     ];
+    if (target.expectedRevision) args.push('--expected-revision', target.expectedRevision);
+    if (target.localName) args.push('--output-name', target.localName);
     try {
       const child = this.spawnProcess(this.options.wslExecutable?.() ?? resolveWslExecutable(), args, {
         windowsHide: true,
@@ -257,6 +262,12 @@ export class FleetDownloadManager {
     return { ...active.job };
   }
 
+  async verifiedArtifact(id: string): Promise<{ path: string; size: number; sha256: string } | undefined> {
+    const job = await this.verifyForUse(id);
+    const active = this.jobs.get(id);
+    return job?.state === 'completed' && active?.integrity ? { ...active.integrity } : undefined;
+  }
+
   private acceptStdout(active: ActiveDownload, chunk: Buffer): void {
     active.stdout = appendTail(active.stdout, chunk, MAX_OUTPUT_BYTES);
   }
@@ -308,7 +319,7 @@ export class FleetDownloadManager {
       const lines = active.stdout.toString('utf8').trim().split(/\r?\n/u);
       value = JSON.parse(lines.at(-1) ?? '') as Record<string, unknown>;
       if (value.status !== 'downloaded' || typeof value.name !== 'string' || win32.basename(value.name) !== value.name
-        || !isExpectedDownloadName(active.target.name, value.name) || value.name.includes('/')
+        || !isExpectedDownloadName(active.target.localName ?? active.target.name, value.name) || value.name.includes('/')
         || value.size !== active.expectedSize
         || typeof value.sha256 !== 'string'
         || !/^[a-f0-9]{64}$/u.test(value.sha256)) throw new Error();
@@ -494,14 +505,19 @@ function validateTarget(target: FleetDownloadTarget): void {
   if (!SAFE_ID.test(target.sessionId) || !SAFE_ID.test(target.hostId) || !SAFE_SESSION.test(target.internalName)) {
     throw new Error('Download session is invalid');
   }
-  if (!target.relativePath || target.relativePath.length > 2048 || target.relativePath.startsWith('/')
+  if (target.expectedRevision) {
+    if (!/^[a-f0-9]{64}$/u.test(target.expectedRevision) || !hostFileTarget(target.relativePath, true)) {
+      throw new Error('Linked file reference or revision is invalid');
+    }
+  } else if (!target.relativePath || target.relativePath.length > 2048 || target.relativePath.startsWith('/')
     || target.relativePath.includes('\\') || target.relativePath.split('/').some((part) => !part || part === '.' || part === '..')
     || /[\u0000-\u001f\u007f]/u.test(target.relativePath)) {
     throw new Error('Download path is invalid');
   }
-  if (!target.name || win32.basename(target.name) !== target.name || target.name.includes('/')
-    || target.name.length > 255 || /[<>:"/\\|?*\u0000-\u001f\u007f]/u.test(target.name)
-    || /[. ]$/u.test(target.name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(target.name)) {
+  const localName = target.localName ?? target.name;
+  if ((target.localName && !target.expectedRevision) || !target.name || target.name.length > 255 || /[/\\\u0000-\u001f\u007f-\u009f]/u.test(target.name)
+    || !localName || win32.basename(localName) !== localName || localName.length > 255 || /[<>:"/\\|?*\u0000-\u001f\u007f]/u.test(localName)
+    || /[. ]$/u.test(localName) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(localName)) {
     throw new Error('Download name is invalid');
   }
   if (!Number.isSafeInteger(target.size) || target.size < 0 || target.size > 2 * 1024 * 1024 * 1024) throw new Error('Download size is invalid');

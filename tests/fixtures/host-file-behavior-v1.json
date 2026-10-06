@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "relativeBase": "verifiedSessionProjectRoot",
+  "maximumReferenceLength": 2048,
+  "targets": [
+    {
+      "value": "/tmp/report.pdf",
+      "explicit": true,
+      "target": "/tmp/report.pdf"
+    },
+    {
+      "value": "./reports/a b.html",
+      "explicit": true,
+      "target": "./reports/a b.html"
+    },
+    {
+      "value": "../report.txt",
+      "explicit": true,
+      "target": "../report.txt"
+    },
+    {
+      "value": "C:\\out\\result.png",
+      "explicit": true,
+      "target": "C:\\out\\result.png"
+    },
+    {
+      "value": "file:///home/me/a%20b.txt",
+      "explicit": true,
+      "target": "file:///home/me/a%20b.txt"
+    },
+    {
+      "value": "file://localhost/tmp/report.pdf",
+      "explicit": true,
+      "target": "file://localhost/tmp/report.pdf"
+    },
+    {
+      "value": "reports/report.md",
+      "explicit": true,
+      "target": "reports/report.md"
+    },
+    {
+      "value": "report.md",
+      "explicit": true,
+      "target": "report.md"
+    },
+    {
+      "value": "file://remote/tmp/x",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "file:relative",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "file:///tmp/%00x",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "file:///tmp/%ff",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "file:///tmp/%x0",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "//server/share/a",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "\\\\server\\a",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "javascript:alert(1)",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "https://example.com/a.txt",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "/tmp/a\n.txt",
+      "explicit": true,
+      "target": null
+    },
+    {
+      "value": "some prose",
+      "explicit": true,
+      "target": null
+    }
+  ],
+  "extractions": [
+    {
+      "text": "See /tmp/report.pdf, \"./reports/a b.html\" and C:\\out\\result.png then file:///home/me/a.txt",
+      "targets": [
+        "/tmp/report.pdf",
+        "./reports/a b.html",
+        "C:\\out\\result.png",
+        "file:///home/me/a.txt"
+      ]
+    },
+    {
+      "text": "https://example.com/private/file.txt and normal words",
+      "targets": []
+    },
+    {
+      "text": "`./report.html` and reports/result.md",
+      "targets": [
+        "./report.html",
+        "reports/result.md"
+      ]
+    },
+    {
+      "text": "\"/tmp/report with spaces.html\"",
+      "targets": [
+        "/tmp/report with spaces.html"
+      ]
+    }
+  ]
+}

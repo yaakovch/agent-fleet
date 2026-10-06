@@ -537,3 +537,29 @@ equal timestamps; unknown timestamps remain current. Preserve drafts and the
 composer. Blocking questions and approvals retain the current action surface.
 Windows and Android share this behavior; Windows source delivery only remains
 the intentional release difference.
+
+
+### Host file links and previews — approved review scope (2026-10-06)
+
+The approved specification is in
+`/home/sapir_cz/projects/wtmux-host-files-20261006/SPEC.md`, section
+“Host File Links And Previews”. A selected file opens in a separate preview
+bound to its originating managed session and host. Relative references use the
+stored project root. Readable regular files outside the project are supported.
+Native message/tool/code links and terminal file links share this routing.
+Preview bytes remain private; Save publishes verified bytes to Downloads.
+Refresh reads current host bytes. Standalone HTML supports inline scripts with
+network, neighboring files, application APIs and external navigation blocked.
+
+Images, PDFs, bounded text/Markdown, standalone HTML and Save/Open recovery have
+equivalent Windows and Android behavior. Text is bounded to 1 MiB, HTML to 16 MiB,
+confirmation begins above 50 MiB, and transfers stop above 2 GiB. Android cancels
+in-flight transfers when the viewer backgrounds and offers Retry on return.
+Windows terminals use Ctrl+click; Android uses a tap and tracks OSC 8 targets.
+Windows maps filesystem-reserved host filenames to safe local names while showing
+the original name. Android SVG previews also use the 16 MiB HTML bound to avoid
+unbounded base64 allocation. The VS Code Companion supports visible paths and an
+Open Host File command; hidden built-in OSC 8 targets retain the approved caveat.
+
+Delivery ends at local source, validation and review packages. Publication,
+physical-device installation and activation on live hosts require a later request.

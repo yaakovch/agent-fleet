@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.11.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.12.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -15,7 +15,8 @@ export const GENERATED_PROTOCOL_VERSIONS = {
   "transport": 1,
   "host-runtime": 1,
   "diagnostics": 2,
-  "provider-confidence": 1
+  "provider-confidence": 1,
+  "linked-file": 1
 } as const;
 export const GENERATED_OBJECT_SHAPES = {
   "activation-journal-v1:#": {
@@ -1427,6 +1428,18 @@ export const GENERATED_OBJECT_SHAPES = {
       "legacyMachineId",
       "name",
       "platform"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "linked-file-v1:#": {
+    "required": [
+      "mediaKind",
+      "modifiedAt",
+      "name",
+      "protocolVersion",
+      "revision",
+      "size"
     ],
     "optional": [],
     "rejectUnknown": true

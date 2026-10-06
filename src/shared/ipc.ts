@@ -70,6 +70,7 @@ export const IPC_CHANNELS = {
   listFleetRepository: 'fleet:listRepository',
   searchFleetRepository: 'fleet:searchRepository',
   startFleetDownload: 'fleet:startDownload',
+  openHostFile: 'fleet:openHostFile',
   cancelFleetDownload: 'fleet:cancelDownload',
   openFleetDownload: 'fleet:openDownload',
   openFleetDownloadFolder: 'fleet:openDownloadFolder',

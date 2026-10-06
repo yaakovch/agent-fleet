@@ -58,6 +58,7 @@ import type { SessionViewMode, TerminalOpenResult } from '../shared/terminal';
 import type { WorkspaceCommand, WorkspaceOpenRequest } from '../shared/workspace-layout';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { FleetDownloadManager } from './fleet-download';
+import { HostFilePreviewManager } from './host-file-preview';
 import { UpdaterManager } from './updater';
 import { applyInteractionMode } from './window-mode';
 import { loadWindowBounds, loadWindowPosition, saveWindowBounds, saveWindowPosition } from './window-state';
@@ -204,6 +205,9 @@ let mainWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
 let dashboardSaveTimer: NodeJS.Timeout | null = null;
 let settingsWindow: BrowserWindow | null = null;
+const hostFilePreviewManager = new HostFilePreviewManager({ cacheDirectory: join(dataDirectory, 'host-file-cache'),
+  downloadsDirectory: () => app.getPath('downloads'), distro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
+  processOwnership: wslProcessOwnership });
 let settingsWindowView: 'settings' | 'onboarding' = 'settings';
 let tray: Tray | null = null;
 let updater: UpdaterManager | null = null;
@@ -1396,6 +1400,16 @@ handle(IPC_CHANNELS.searchFleetRepository, async (_event, sessionId, query, incl
     return fleetMutationFailure(error);
   }
 });
+handle(IPC_CHANNELS.openHostFile, async (_event, sessionId, reference) => {
+  if (typeof sessionId !== 'string' || typeof reference !== 'string') return { ok: false, message: 'File reference is invalid' };
+  const snapshot = getFleetView().snapshot;
+  const session = snapshot.sessions.find((item) => item.id === sessionId);
+  const host = session && snapshot.hosts.find((item) => item.id === session.hostId && item.status === 'healthy');
+  if (!session?.internalName || !host) return { ok: false, message: 'The originating host is offline or no longer available' };
+  if (!host.capabilities?.includes('files.linked.v1')) return { ok: false, message: 'Update this host to enable file previews' };
+  try { await hostFilePreviewManager.open({ id: session.id, hostId: session.hostId, internalName: session.internalName }, reference); return { ok: true, message: 'Preview opened' }; }
+  catch (error) { return { ok: false, message: error instanceof Error ? error.message : 'Preview could not open' }; }
+});
 handle(IPC_CHANNELS.startFleetDownload, (_event, sessionId, relativePath, name, size) => {
   if (typeof sessionId !== 'string' || typeof relativePath !== 'string' || typeof name !== 'string'
     || typeof size !== 'number' || !validRepositoryPath(relativePath, false)) {
@@ -1855,7 +1869,7 @@ app.on('before-quit', (event) => {
 
     let downloadsStopped: Promise<unknown>;
     try {
-      downloadsStopped = fleetDownloadManager.stop();
+      downloadsStopped = Promise.all([fleetDownloadManager.stop(), hostFilePreviewManager.stop()]);
     } catch (error) {
       logger.warn('Shutdown cleanup failed: downloads', error);
       downloadsStopped = Promise.resolve();

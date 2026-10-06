@@ -54,6 +54,8 @@ function subscribe<Value>(channel: string, callback: (value: Value) => void): ()
 }
 
 const api = {
+  openHostFile: (sessionId: string, reference: string): Promise<{ ok: boolean; message: string }> =>
+    invoke(IPC_CHANNELS.openHostFile, sessionId, reference),
   connectFleetHost: (request: FleetConnectRequest): Promise<FleetConnectResult> => invoke(IPC_CHANNELS.connectFleetHost, request),
   getState: (): Promise<CombinedLimitState> => invoke(IPC_CHANNELS.getState),
   refreshNow: (): Promise<CombinedLimitState> => invoke(IPC_CHANNELS.refreshNow),
