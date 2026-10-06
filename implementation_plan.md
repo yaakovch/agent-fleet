@@ -967,3 +967,11 @@ commands and limitations in the host review handoff. Packaged Windows viewer
 validation must use extracted package assets with an isolated data profile; the
 normal app launch provisions a live WSL runtime and exceeds this review scope.
 No publish, push, remote host operation or physical phone operation is authorized.
+
+
+Host-file preview execution completed for local review on 2026-10-06.
+Host, Windows, Android and Companion final gates passed. Package identities,
+SHA-256 hashes, source patches, UI evidence and limitations are in
+`/home/sapir_cz/.cache/agent-fleet/host-file-review-20261006/review-manifest.json` and the sibling review.html.
+The physical phone and live user-host runtimes were not operated; publication
+and deployment remain outside this completed review scope.
