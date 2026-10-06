@@ -1,8 +1,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$CompanionPath,
-    [string]$Report = (Join-Path $PSScriptRoot '..\build\reports\vscode-hostfiles')
+    [string]$Report = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Report) { $Report = Join-Path $PSScriptRoot '..\build\reports\vscode-hostfiles' }
 $Report = [System.IO.Path]::GetFullPath($Report)
 $code = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\Code.exe'
 if (-not (Test-Path -LiteralPath $code)) { throw 'VS Code was not found.' }
