@@ -31,7 +31,7 @@ describe('originating host file references', () => {
   it('rejects changed or incomplete metadata contracts before fetching', () => {
     const valid = { protocolVersion: 1, name: 'report.pdf', size: 123, modifiedAt: '2026-10-06T12:00:00Z', revision: 'a'.repeat(64), mediaKind: 'pdf' };
     expect(parseHostFileMetadata(valid)).toEqual(valid);
-    for (const invalid of [{ ...valid, root: '/private' }, { ...valid, name: '../other' }, { ...valid, size: 2 ** 31 + 1 }, { ...valid, revision: '' }]) {
+    for (const invalid of [{ ...valid, root: '/private' }, { ...valid, name: '../other' }, { ...valid, size: 2 ** 31 + 1 }, { ...valid, revision: '' }, { ...valid, mediaKind: ['pdf'] }, { ...valid, name: 'control\u0085.pdf' }]) {
       expect(() => parseHostFileMetadata(invalid)).toThrow();
     }
   });

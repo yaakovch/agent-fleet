@@ -50,11 +50,12 @@ export function parseHostFileMetadata(value: unknown): HostFileMetadata {
   const data = value as Record<string, unknown>;
   if (Object.keys(data).sort().join(',') !== 'mediaKind,modifiedAt,name,protocolVersion,revision,size'
     || data.protocolVersion !== 1 || typeof data.name !== 'string' || !data.name || data.name.length > 255
-    || /[/\\\u0000-\u001f\u007f]/u.test(data.name) || data.name === '.' || data.name === '..'
+    || /[/\\\u0000-\u001f\u007f-\u009f]/u.test(data.name) || data.name === '.' || data.name === '..'
     || typeof data.size !== 'number' || !Number.isSafeInteger(data.size) || data.size < 0 || data.size > 2 ** 31
     || typeof data.modifiedAt !== 'string' || !Number.isFinite(Date.parse(data.modifiedAt))
     || typeof data.revision !== 'string' || !/^[a-f\d]{64}$/u.test(data.revision)
-    || !['image', 'pdf', 'html', 'markdown', 'text', 'other'].includes(String(data.mediaKind))) {
+    || typeof data.mediaKind !== 'string'
+    || !['image', 'pdf', 'html', 'markdown', 'text', 'other'].includes(data.mediaKind)) {
     throw new Error('Host returned invalid file metadata');
   }
   return data as unknown as HostFileMetadata;
