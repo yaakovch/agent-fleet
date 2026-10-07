@@ -2417,7 +2417,7 @@ export class SessionWorkspace {
         }));
         callback(hostFileRowReferences(rows).filter((ref) => ref.row + first === line - 1).map((ref) => ({
           range: { start: { x: terminalColumn(buffer.getLine(first + ref.row), ref.start), y: first + ref.row + 1 },
-            end: { x: terminalColumn(buffer.getLine(first + ref.row), ref.end - 1), y: first + ref.row + 1 } },
+            end: { x: terminalColumn(buffer.getLine(first + ref.row), ref.end - 1, true), y: first + ref.row + 1 } },
           text: ref.target, activate: (event) => activate(event, ref.target)
         })));
       }
@@ -2450,14 +2450,16 @@ export class SessionWorkspace {
   }
 }
 
-function terminalColumn(line: ReturnType<Terminal['buffer']['active']['getLine']>, offset: number): number {
+function terminalColumn(line: ReturnType<Terminal['buffer']['active']['getLine']>, offset: number, end = false): number {
   if (!line) return offset + 1;
   let characters = 0;
   for (let column = 0; column < line.length;) {
-    if (characters >= offset) return column + 1;
     const cell = line.getCell(column);
-    characters += cell?.getChars().length || 1;
-    column += Math.max(1, cell?.getWidth() ?? 1);
+    const length = cell?.getChars().length || 1;
+    const width = Math.max(1, cell?.getWidth() ?? 1);
+    if (offset < characters + length) return column + (end ? width : 1);
+    characters += length;
+    column += width;
   }
   return line.length + 1;
 }
