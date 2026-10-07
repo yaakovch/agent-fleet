@@ -52,7 +52,7 @@ export function buildFleetWslAttachCommand(target: FleetSessionOpenTarget, distr
     args: [
       '-d', distro, '--cd', '~', '--',
       activatedRuntimeCommand('wtmux'), '--host', target.hostId, '--project', target.project,
-      '--session', target.sessionName, '--fast'
+      '--session', target.sessionName, '--fast', '--attach-existing'
     ]
   };
 }

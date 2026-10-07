@@ -92,21 +92,8 @@ export class FleetNotificationTracker {
     for (const host of snapshot.hosts.slice(0, MAX_HOST_NOTIFICATION_STATES)) {
       if (nextHostStates.has(host.id)) continue;
       nextHostStates.set(host.id, host.status);
-      const previous = this.hostStates.get(host.id);
-      if (!options.emit || !preferences.hostState || !previous || previous === host.status) continue;
-      if (host.status === 'offline') {
-        candidates.push({
-          title: `${host.name} is offline`,
-          body: 'The host missed its heartbeat threshold. Open Fleet to review its current state.',
-          target: { kind: 'host', id: host.id }
-        });
-      } else if (previous === 'offline' && host.status === 'healthy') {
-        candidates.push({
-          title: `${host.name} recovered`,
-          body: 'The host is connected and live actions are available again.',
-          target: { kind: 'host', id: host.id }
-        });
-      }
+      // Connectivity is already visible in the host status dot. Legacy alert
+      // preferences must not turn routine transitions back into notifications.
     }
     this.hostStates = nextHostStates;
 

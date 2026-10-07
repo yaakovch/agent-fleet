@@ -35,6 +35,21 @@ function fixture() {
 }
 
 describe('Native provider discovery through the production frame handler', () => {
+  it('shows retained messages while refreshing and keeps mutations disabled', () => {
+    const { workspace, state, snapshot, html } = fixture();
+    snapshot([{ ...user(), text: 'Retained newest message' }]);
+    state.draft = 'Keep this draft';
+    state.scrollTop = 42;
+    workspace.beginConversationLoading('tab');
+    expect(html()).toContain('Retained newest message');
+    expect(html()).toContain('Refreshing…');
+    expect(html()).not.toContain('Loading conversation…');
+    expect(state.draft).toBe('Keep this draft');
+    expect(state.scrollTop).toBe(42);
+    expect(state.providerState.mutationsAllowed).toBe(false);
+    expect(html()).toMatch(/data-action="native-send"[^>]*disabled/);
+  });
+
   it('keeps a cold connection loading and read-only until verified', () => {
     const { workspace, state, tab, snapshot, html } = fixture();
     expect(state.providerStateKnown).toBe(false);

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "cache": {
+    "entries": 4,
+    "maximumEntryBytes": 262144,
+    "itemsPerPage": 20,
+    "persistent": false,
+    "restoredMutationsAllowed": false
+  },
+  "firstContent": {
+    "scanBytes": 262144,
+    "reasonCode": "PROVIDER_STATE_REFRESHING",
+    "mutationsAllowed": false
+  },
+  "terminal": {
+    "exactAttachCapability": "terminal.exact-attach.v1",
+    "retryDelaysMillis": [
+      1000,
+      2000,
+      5000,
+      10000,
+      30000
+    ],
+    "foregroundOnly": true,
+    "hostStateNotifications": false
+  },
+  "permanentFailures": [
+    {
+      "status": 255,
+      "text": "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!",
+      "code": "HOST_KEY_CHANGED"
+    },
+    {
+      "status": 255,
+      "text": "user@host: Permission denied (publickey,password).",
+      "code": "SSH_AUTH_REQUIRED"
+    },
+    {
+      "status": 1,
+      "text": "wtmux: SESSION_UNAVAILABLE: the exact session no longer exists",
+      "code": "SESSION_UNAVAILABLE"
+    }
+  ],
+  "retryableFailures": [
+    {
+      "status": 255,
+      "text": "client_loop: send disconnect: Broken pipe"
+    },
+    {
+      "status": 255,
+      "text": "Read from remote host host: Software caused connection abort"
+    }
+  ]
+}

@@ -88,7 +88,7 @@ export function createDefaultFleetNotifications(): FleetNotificationSettings {
     hardLimits: true,
     deliveryFailures: true,
     deliverySuccess: true,
-    hostState: true,
+    hostState: false,
     versionDrift: true,
     pairing: true
   };
@@ -214,7 +214,7 @@ function normalizeFleetNotifications(
     hardLimits: typeof raw.hardLimits === 'boolean' ? raw.hardLimits : defaults.hardLimits,
     deliveryFailures: typeof raw.deliveryFailures === 'boolean' ? raw.deliveryFailures : defaults.deliveryFailures,
     deliverySuccess: typeof raw.deliverySuccess === 'boolean' ? raw.deliverySuccess : defaults.deliverySuccess,
-    hostState: typeof raw.hostState === 'boolean' ? raw.hostState : defaults.hostState,
+    hostState: false,
     versionDrift: typeof raw.versionDrift === 'boolean' ? raw.versionDrift : defaults.versionDrift,
     pairing: typeof raw.pairing === 'boolean' ? raw.pairing : defaults.pairing
   };

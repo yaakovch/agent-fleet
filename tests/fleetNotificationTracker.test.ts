@@ -33,12 +33,23 @@ const fixture = JSON.parse(readFileSync('tests/fixtures/client-behavior-v1.json'
 const preferences = createDefaultFleetNotifications();
 
 describe('fleet notification tracker', () => {
+  it('keeps host transitions quiet even when a legacy preference is enabled', () => {
+    const tracker = new FleetNotificationTracker();
+    const initial = snapshot();
+    const legacy = { ...preferences, hostState: true };
+    run(tracker, initial, legacy, true, null);
+    const offline = structuredClone(initial);
+    offline.hosts[0].status = 'offline';
+    expect(run(tracker, offline, legacy, true, null)).toEqual([]);
+    expect(run(tracker, initial, legacy, true, null)).toEqual([]);
+    expect(tracker.state().hosts).toBe(1);
+  });
+
   it('maps every canonical alert source to its enabled notification category', () => {
     expect(fixture.alerts.categories).toEqual([
       { id: 'hardLimits', sources: ['attention.hard-limit'], target: 'session-or-dashboard' },
       { id: 'deliveryFailures', sources: ['schedule.failed', 'schedule.interrupted'], target: 'session-or-dashboard' },
       { id: 'deliverySuccess', sources: ['schedule.delivered'], target: 'session-or-dashboard' },
-      { id: 'hostState', sources: ['host.offline', 'host.recovered'], target: 'host-or-dashboard' },
       { id: 'versionDrift', sources: ['host-runtime.mismatch-verified-expected'], target: 'host-or-dashboard' },
       { id: 'pairing', sources: ['pairing.awaiting-review'], target: 'pairing-review' }
     ]);
@@ -56,11 +67,6 @@ describe('fleet notification tracker', () => {
       {
         title: 'Usage limit detected', body: 'Host gaming. Open Agent Fleet to review the limit.',
         target: { kind: 'session', id: 'session-hard-limit' }
-      },
-      {
-        title: 'gaming is offline',
-        body: 'The host missed its heartbeat threshold. Open Fleet to review its current state.',
-        target: { kind: 'host', id: 'gaming' }
       },
       {
         title: 'Scheduled continue failed', body: 'gaming · delivery failed',
@@ -111,7 +117,6 @@ describe('fleet notification tracker', () => {
     const notifications = run(tracker, resumed, preferences, true, 'git-expected');
     expect(notifications.map((item) => item.title)).toEqual([
       'Usage limit detected',
-      'gaming recovered',
       'Pairing request from device-pair-new'
     ]);
   });
@@ -144,7 +149,6 @@ describe('fleet notification tracker', () => {
     next.pairingRequests.push(pairing('replacement-pairing-next'));
     expect(run(tracker, next, preferences, true, 'git-expected').map((item) => item.title)).toEqual([
       'Usage limit detected',
-      'gaming recovered',
       'Scheduled continue delivered',
       'Pairing request from device-replacement-pairing-next'
     ]);
@@ -282,7 +286,7 @@ describe('fleet notification tracker', () => {
 
   it('matches canonical category and state bounds and caps a notification burst', () => {
     expect(fixture.alerts.categories.map((item) => item.id)).toEqual([
-      'hardLimits', 'deliveryFailures', 'deliverySuccess', 'hostState', 'versionDrift', 'pairing'
+      'hardLimits', 'deliveryFailures', 'deliverySuccess', 'versionDrift', 'pairing'
     ]);
     expect(FLEET_NOTIFICATION_PAUSE_MS / 1_000).toBe(fixture.alerts.pause.durationSeconds);
     expect({

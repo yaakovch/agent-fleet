@@ -988,3 +988,18 @@ Source: the owner-supplied wrapped-link plan and the appended specification. Exe
 5. Run required host/Windows/Android/Companion gates, synchronize contract mirrors and embedded runtimes, then prepare review packages with source identities and SHA-256 hashes. Record actual coverage and remaining limitations in the handoff. Production signing/publication and user-device installation are outside this execution.
 
 Wrapped-link execution completed for local review on 2026-10-07. Runtime/Windows/Android/Companion gates and affected UI acceptance passed. Final sources, package hashes, coverage and boundaries are recorded in `/home/sapir_cz/projects/wtmux-wrapped-links-20261007/docs/integration/WRAPPED_HOST_LINK_REVIEW_2026-10-07.md` and `/home/sapir_cz/.cache/agent-fleet/wrapped-link-review-20261007/review-manifest.json`. Publication and installation remain a later rollout step.
+
+
+## Native startup and recovery — approved implementation plan, 2026-10-07
+
+Execution authorized; active app restart/reload approval remains separate. This scope supersedes the wrapped-link delivery's publication/installation hold.
+
+1. Use isolated branches based on clean wrapped-link review sources; preserve unrelated trees. Record source identities and the approved specification.
+2. Add shared startup/recovery fixtures and failing regressions. Profile launch, transport, discovery, parsing, and first render with metadata-only timing. Validate Windows first where useful.
+3. Retain Native content and healthy streams for same bindings; add the bounded four-session memory cache and refreshing state, disable stale mutations, cancel obsolete work, and put newest bounded read-only content ahead of slow enrichment.
+4. Unify notification/resume recovery with a single pending attachment, exact binding, foreground-only backoff, availability-driven resume, inline Retry, and permanent-error handling. Add attach-existing CLI and exact remote target support; update client/Companion producers and validation together.
+5. Disable host-state alert emission and remove its settings control while accepting legacy settings fields. Preserve other notification categories and status dots.
+6. Exercise actual Windows Native/terminal UI, protected API36 Native switches and notification taps, interruption/recovery, stale/cross-session races, pending questions/drafts, missing sessions, and all wrapped-link UI acceptance. Run 20-run warm/cold timing gates.
+7. Run runtime full quality, Windows quality/package smoke, Android local checks and canonical signed release pipeline full API36/release checks. Synchronize contracts, embedded runtimes and viewer assets; allocate fresh monotonic versions from current state; commit/push clean release sources.
+8. Produce coordinated production packages, hashes and receipts. Inventory current installations, launch targets, Companion profiles and active windows. Roll out gaming-desktop then reachable work/work-m; journal and retain rollback material. Stage active-app activation, describe effects and wait for explicit approval before restart/reload. Publish signed Android update; owner installs and performs phone smoke.
+9. Record exact tests, timings, package/source hashes and per-device prepared/installed/active/verified status. Keep offline machines, unapproved active app activation and unconfirmed phone adoption pending; never reset trust floors or stop tmux sessions.

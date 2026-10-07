@@ -4,32 +4,38 @@
     "categories": [
       {
         "id": "hardLimits",
-        "sources": ["attention.hard-limit"],
+        "sources": [
+          "attention.hard-limit"
+        ],
         "target": "session-or-dashboard"
       },
       {
         "id": "deliveryFailures",
-        "sources": ["schedule.failed", "schedule.interrupted"],
+        "sources": [
+          "schedule.failed",
+          "schedule.interrupted"
+        ],
         "target": "session-or-dashboard"
       },
       {
         "id": "deliverySuccess",
-        "sources": ["schedule.delivered"],
+        "sources": [
+          "schedule.delivered"
+        ],
         "target": "session-or-dashboard"
       },
       {
-        "id": "hostState",
-        "sources": ["host.offline", "host.recovered"],
-        "target": "host-or-dashboard"
-      },
-      {
         "id": "versionDrift",
-        "sources": ["host-runtime.mismatch-verified-expected"],
+        "sources": [
+          "host-runtime.mismatch-verified-expected"
+        ],
         "target": "host-or-dashboard"
       },
       {
         "id": "pairing",
-        "sources": ["pairing.awaiting-review"],
+        "sources": [
+          "pairing.awaiting-review"
+        ],
         "target": "pairing-review"
       }
     ],
@@ -62,12 +68,18 @@
         "delivery": "in-app",
         "notificationPermission": "explicit-user-action-only"
       }
-    }
+    },
+    "statusOnly": [
+      "hostState"
+    ]
   },
   "externalLinks": {
     "maxCharacters": 2048,
     "lengthMetric": "utf16-code-units",
-    "automaticSchemes": ["http", "https"],
+    "automaticSchemes": [
+      "http",
+      "https"
+    ],
     "blockedSchemes": [
       "about",
       "android-app",
@@ -134,7 +146,7 @@
       },
       {
         "id": "unicode-web-host",
-        "value": "https://éxample.com/status",
+        "value": "https://\u00e9xample.com/status",
         "decision": "block",
         "scheme": "https"
       },

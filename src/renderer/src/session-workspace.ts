@@ -55,6 +55,7 @@ import {
   type TerminalHistoryState
 } from './terminal-history';
 import { ActivityCache, conversationRows } from '../../shared/conversation-view';
+import { ConversationContentCache } from '../../shared/conversation-content-cache';
 import type { ConversationView } from '../../shared/conversation';
 import { linkedText, renderSafeMarkdownSource } from './safe-markdown';
 import { hostFileReferences, hostFileRowReferences, hostFileTarget } from '../../shared/host-file';
@@ -130,6 +131,7 @@ export class SessionWorkspace {
   private tabs = new Map<string, TerminalTabDescriptor>();
   private runtimes = new Map<string, TerminalRuntime>();
   private nativeStates = new Map<string, NativeState>();
+  private conversationContentCache = new ConversationContentCache();
   private conversationStarted = new Set<string>();
   private workspaceState: TerminalWorkspaceState = {
     version: 2,
@@ -375,6 +377,11 @@ export class SessionWorkspace {
     const capabilitiesChanged = snapshot.hosts.some((host) =>
       host.capabilities?.includes('conversation.turns.v1') !== this.fleetSnapshot?.hosts.find((old) => old.id === host.id)?.capabilities?.includes('conversation.turns.v1'));
     this.fleetSnapshot = snapshot;
+    for (const [id, native] of this.nativeStates) {
+      const tab = this.tabs.get(id);
+      if (tab && snapshot.hosts.some((host) => host.id === tab.hostId && host.status === 'healthy') &&
+          !snapshot.sessions.some((session) => session.id === tab.sessionId)) this.conversationContentCache?.removeSession(native.sessionIdentity);
+    }
     if (capabilitiesChanged) {
       this.conversationStarted.clear();
       this.syncConversation();
@@ -759,13 +766,15 @@ export class SessionWorkspace {
     }
     if (action === 'native-suggestion-use') { this.useSuggestion(control); return true; }
     if (action === 'native-suggestion-cancel') { this.clearSuggestions(this.selectedId, true); this.renderSelectedNative(); return true; }
-    if (action === 'native-shift-tab') { void window.limitsWidget.terminalInput(this.selectedId, '\u001b[Z'); return true; }
-    if (action === 'native-control-c') { void window.limitsWidget.terminalInput(this.selectedId, '\u0003'); return true; }
+    if (action === 'native-shift-tab') { if (!this.nativeState(this.selectedId).providerState.mutationsAllowed) return true; void window.limitsWidget.terminalInput(this.selectedId, '\u001b[Z'); return true; }
+    if (action === 'native-control-c') { if (!this.nativeState(this.selectedId).providerState.mutationsAllowed) return true; void window.limitsWidget.terminalInput(this.selectedId, '\u0003'); return true; }
     return false;
   }
 
   private remove(tabId: string): void {
     const previousStructure = this.currentStructureSignature();
+    const native = this.nativeStates.get(tabId);
+    if (native) this.conversationContentCache?.removeSession(native.sessionIdentity);
     this.tabs.delete(tabId);
     this.workspaceState = { ...this.workspaceState, tabs: [...this.tabs.values()] };
     this.clearTerminalHistory(tabId);
@@ -785,7 +794,10 @@ export class SessionWorkspace {
     for (const [id, runtime] of this.runtimes) {
       if (!nextIds.has(id)) { this.clearTerminalHistory(id); runtime.terminal.dispose(); this.runtimes.delete(id); }
     }
-    for (const id of this.nativeStates.keys()) if (!nextIds.has(id)) this.nativeStates.delete(id);
+    for (const [id, native] of this.nativeStates) if (!nextIds.has(id)) {
+      this.conversationContentCache?.removeSession(native.sessionIdentity);
+      this.nativeStates.delete(id);
+    }
     for (const id of this.terminalHistories.keys()) if (!nextIds.has(id)) this.clearTerminalHistory(id);
     this.tabs = new Map(state.tabs.map((tab) => [tab.id, tab]));
     this.workspaceState = state;
@@ -1460,13 +1472,19 @@ export class SessionWorkspace {
 
   private nativeState(tabId: string): NativeState {
     const tab = this.tabs.get(tabId);
-    const sessionIdentity = JSON.stringify([tab?.hostId, tab?.sessionId, tab?.internalName, tab?.tool]);
+    const session = this.fleetSnapshot?.sessions.find((value) => value.id === tab?.sessionId);
+    const host = this.fleetSnapshot?.hosts.find((value) => value.id === tab?.hostId);
+    const target = this.fleetSnapshot?.executionTargets?.find((value) => value.id === session?.executionTargetId && value.physicalHostId === session?.physicalHostId);
+    const sessionIdentity = JSON.stringify([tab?.hostId, tab?.sessionId, tab?.internalName, tab?.tool, tab?.backend, tab?.project,
+      session?.projectPath, session?.executionTargetId, target?.fingerprint, host?.wtmuxVersion]);
     let state = this.nativeStates.get(tabId);
     if (!state || state.sessionIdentity !== sessionIdentity) {
-      state = { sessionIdentity, items: [], interactionMode: 'unknown', connection: 'Connecting…', providerActivity: null,
+      if (state) this.conversationContentCache?.removeSession(state.sessionIdentity);
+      const cached = (this.conversationContentCache ??= new ConversationContentCache()).get(`${sessionIdentity}\0${this.nativeView}`);
+      state = { sessionIdentity, items: cached?.items ?? [], interactionMode: 'unknown', connection: cached?.items.length ? 'Refreshing…' : 'Connecting…', providerActivity: null,
         providerState: unavailableProviderState(), providerStateKnown: false, confirmedQuestions: new ConfirmedQuestionCompletions(),
-        providerActivityReceivedAt: 0, nextCursor: null,
-        hasMore: false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
+        providerActivityReceivedAt: 0, nextCursor: cached?.nextCursor ?? null,
+        hasMore: cached?.hasMore ?? false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
         scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
         renderMode: 'initial', questionDrafts: new Map(), questionSteps: new Map(),
         submittingQuestions: new Set(), expandedDetails: new Set(), questionSheetId: '', viewer: null,
@@ -1492,7 +1510,7 @@ export class SessionWorkspace {
 
   private beginConversationLoading(tabId: string): void {
     const state = this.nativeState(tabId);
-    state.connection = 'Connecting…';
+    state.connection = state.items.length ? 'Refreshing…' : 'Connecting…';
     state.providerState = unavailableProviderState();
     state.providerStateKnown = false;
     state.providerActivity = null;
@@ -1542,12 +1560,12 @@ export class SessionWorkspace {
       state.providerActivityReceivedAt = state.providerActivity ? Date.now() : 0;
       state.providerState = frame.providerState ?? unavailableProviderState();
       state.providerStateKnown = true;
-      state.connection = 'Live'; state.error = '';
+      state.connection = state.providerState.reasonCode === 'PROVIDER_STATE_REFRESHING' ? 'Refreshing…' : 'Live'; state.error = '';
       state.nextCursor = frame.nextCursor ?? null; state.hasMore = Boolean(frame.hasMore); state.loadingOlder = false;
     } else if (frame.type === 'conversation.event' && frame.item) {
       state.renderMode = 'append';
       state.confirmedQuestions.remember([frame.item], state.items);
-      state.items = mergeItems(state.items, state.confirmedQuestions.restore([frame.item])); state.connection = 'Live'; state.error = '';
+      state.items = mergeItems(state.items, state.confirmedQuestions.restore([frame.item])); state.connection = state.providerState.reasonCode === 'PROVIDER_STATE_REFRESHING' ? 'Refreshing…' : 'Live'; state.error = '';
       if (frame.providerState) { state.providerState = frame.providerState; state.providerStateKnown = true; }
     } else if (frame.type === 'conversation.error') {
       state.connection = 'Unavailable'; state.error = frame.error?.message ?? 'Native view is unavailable';
@@ -1578,6 +1596,11 @@ export class SessionWorkspace {
       this.clearSuggestions(tabId, true);
     }
     this.maybeStartAutomaticSuggestion(tabId, frame.type === 'conversation.snapshot');
+    if (state.providerStateKnown && state.providerState.mutationsAllowed) {
+      (this.conversationContentCache ??= new ConversationContentCache()).put(`${state.sessionIdentity}\0${this.nativeView}`, {
+        items: state.items, nextCursor: state.nextCursor, hasMore: state.hasMore
+      });
+    }
     this.queueNativeRender(tabId);
   }
 
@@ -1630,7 +1653,7 @@ export class SessionWorkspace {
     );
     return `<div class="native-conversation ${state.interactionMode === 'plan' ? 'planning' : ''}" data-native-tab="${escapeAttr(tab.id)}">
       <div class="native-conversation-header"><span><i class="terminal-status status-${state.connection === 'Live' ? 'live' : 'offline'}"></i><span data-provider-activity-tab="${escapeAttr(tab.id)}">${escapeHtml(providerActivityText(tab.tool, state.providerActivity, state.providerActivityReceivedAt) || state.connection)}</span></span>${state.interactionMode === 'plan' ? '<b>Planning mode</b>' : ''}</div>
-      ${!state.providerStateKnown || state.providerState.mutationsAllowed ? '' : `<div class="native-error"><strong>${state.providerState.fallback === 'terminal_only' ? 'Terminal-only provider state' : 'Native view is read-only'}</strong><span>${escapeHtml(providerConfidenceMessage(state.providerState))}</span></div>`}
+      ${!state.providerStateKnown || state.providerState.mutationsAllowed || state.providerState.reasonCode === 'PROVIDER_STATE_REFRESHING' ? '' : `<div class="native-error"><strong>${state.providerState.fallback === 'terminal_only' ? 'Terminal-only provider state' : 'Native view is read-only'}</strong><span>${escapeHtml(providerConfidenceMessage(state.providerState))}</span></div>`}
       <div class="native-messages" data-native-scroll-tab="${escapeAttr(tab.id)}">
         ${state.hasMore ? `<button class="load-older" data-action="native-load-older" data-workspace-action ${state.loadingOlder ? 'disabled' : ''}>${state.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>` : ''}
         ${state.error ? `<div class="native-error"><strong>Native view needs attention</strong><span>${escapeHtml(state.error)}</span><button data-action="native-retry" data-workspace-action>Retry</button></div>` : ''}
@@ -1719,7 +1742,7 @@ export class SessionWorkspace {
       ${state.notice ? `<small class="composer-notice">${escapeHtml(state.notice)}</small>` : ''}
       <textarea rows="1" data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
       ${state.suggestion.target?.kind === 'composer' ? renderSuggestionChoices(state.suggestion) : ''}
-      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action>Shift+Tab</button><button data-action="native-control-c" data-workspace-action>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Send</button></div>
+      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Shift+Tab</button><button data-action="native-control-c" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Send</button></div>
     </div>`;
   }
 
@@ -2705,6 +2728,7 @@ export function providerActivityText(
 }
 
 function providerConfidenceMessage(state: ProviderState): string {
+  if (state.reasonCode === 'PROVIDER_STATE_REFRESHING') return 'Refreshing provider state…';
   if (state.confidence === 'reconstructed') return 'Provider output was reconstructed, so actions are disabled until a verified update arrives.';
   if (state.confidence === 'stale') return 'Provider state changed or became stale; refresh Native view or continue in Terminal.';
   if (state.confidence === 'unsupported') return 'This provider state cannot safely accept Native actions. Terminal remains available.';

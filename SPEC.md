@@ -574,3 +574,16 @@ Recognize complete parentheses, quote and backtick path groups across hard rows,
 History uses tmux capture-pane -e -J and truncates at complete records. Companion uses read-only pane.links.v1 over wtmux pane links; it reads bounded scrollback and the copy-mode screen, rejects duplicate or conflicting rows, and returns a snapshot revision. One pending lookup per terminal, cancellation and a one-second cache keep hover bounded. Activation revalidates snapshot, reference and binding. No file bytes or Native snapshots are loaded during detection.
 
 Delivery is local reviewed sources, runtime/Windows/Android/Companion packages, hashes and evidence. Publication, installation on the three PCs, and the phone updater rollout remain a later decision. No physical-phone automation.
+
+
+## Native startup, quiet host status, and notification recovery — approved 2026-10-07
+
+The owner approved SPEC, PLAN, and execution, including combined deployment with the completed wrapped-file-link changes. Active app restarts and VS Code reloads require a prepared, separate approval.
+
+- Show the last loaded same-session Native conversation immediately while refreshing. Keep a four-session memory-only newest-page cache, at most 256 KiB per entry and 1 MiB total. Preserve drafts and retained reading position; require fresh authoritative state for mutations. Invalidate changed bindings and removed sessions.
+- Retain healthy foreground streams across same-target bindings and Native/Terminal switches. Cancel obsolete/background work. Produce bounded newest content before slow startup enrichment, without extra AI calls or persistent transcript caches.
+- Suppress routine offline/recovered alerts on Android and Windows, including existing enabled preferences. Keep status dots, session notifications, and actionable errors.
+- Notification launch preserves the intended session and remembered surface. Quiet automatic recovery permits one pending attachment per terminal, backs off at 1/2/5/10/30 seconds while visible, pauses on confirmed offline state, and resumes on availability changes or Retry. Trust, authentication, configuration, missing-session, and explicit-close outcomes do not loop.
+- Managed recovery must attach only to the existing exact session; it must never create a replacement or select an adjacent/prefix session. Add explicit existing-only CLI support and negotiate exact remote attachment.
+- Acceptance uses actual Windows interactions and protected API 36 Native switches/notification taps, usable recovered SSH terminal input/output, and stale-action/duplicate-work rejection. Measure 20 warm and 20 cold entries: p95 cached content <=500 ms; first fresh content <=5 s on a healthy reachable host with provisioned runtime and RTT <100 ms. Include large histories and the earlier wrapped-link acceptance.
+- Deploy verified coordinated packages to gaming-desktop first, then reachable work/work-m; offline targets stay pending. Include Windows Agent Fleet, WSL runtimes, all discovered Companion profiles, and signed Android fleet/latest. Phone updater installation and smoke are owner-operated. Preserve sessions, history, configuration, pairing, and trust. Track prepared/installed/active/verified separately.

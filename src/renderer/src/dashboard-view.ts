@@ -1242,7 +1242,6 @@ export class DashboardPrototype {
         ${notificationToggle('hardLimits', 'Hard limits', 'Critical usage-limit attention', draft)}
         ${notificationToggle('deliveryFailures', 'Delivery failures', 'Interrupted or failed schedules', draft)}
         ${notificationToggle('deliverySuccess', 'Schedule delivery success', 'Deduplicated across restarts', draft)}
-        ${notificationToggle('hostState', 'Host offline and recovery', 'After three missed heartbeats', draft)}
         ${notificationToggle('versionDrift', 'Version drift', 'Actionable runtime changes', draft)}
         ${notificationToggle('pairing', 'Pairing requests', 'New verified device proposals', draft)}
       </div><div class="inline-dashboard-actions"><button class="quiet-button" data-action="dashboard-pause">${icon('pause')}Pause for one hour</button><button class="primary-button" data-action="dashboard-save-settings" ${dirty ? '' : 'disabled'}>${icon('check')}Save changes</button></div></section>

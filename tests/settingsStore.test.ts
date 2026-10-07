@@ -33,7 +33,7 @@ describe('settings store', () => {
     expect(result.settings.fleetControllerDistro).toBe('Ubuntu');
     expect(result.settings.fleetOpenTarget).toBe('agentFleet');
     expect(result.settings.terminalAppearance.fontSize).toBe(16);
-    expect(result.settings.fleetNotifications.hostState).toBe(true);
+    expect(result.settings.fleetNotifications.hostState).toBe(false);
     expect(result.settings.automaticSessionTitles).toBe(true);
   });
 
