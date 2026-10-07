@@ -156,6 +156,7 @@ export class SessionWorkspace {
   private notificationSessions = new Set<string>();
   private notificationHandled = new Set<string>();
   private savedStates = new Map<string, SavedSessionState>();
+  private savedViewSelections = new Map<string, number>();
   private savedRestoreTokens = new Map<string, number>();
   private pendingHistoryOpen = new Map<string, number>();
   private savedClearClock = 0;
@@ -624,7 +625,10 @@ export class SessionWorkspace {
       const mode = control.dataset.mode === 'terminal' ? 'terminal' : 'native';
       const pane = focusedPane(this.workspaceState.layout);
       const tab = this.tabForPane(pane);
-      if (tab && pane) void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: mode }).then(() => this.saveSession(tab.id));
+      if (tab && pane) {
+        (this.savedViewSelections ??= new Map()).set(tab.id, (this.savedViewSelections?.get(tab.id) ?? 0) + 1);
+        void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: mode }).then(() => this.saveSession(tab.id));
+      }
       return true;
     }
     if (action === 'workspace-history' || action === 'workspace-history-refresh' || action === 'workspace-history-live') {
@@ -1569,6 +1573,7 @@ export class SessionWorkspace {
   private async restoreSavedSession(tabId: string, state: NativeState): Promise<void> {
     if (typeof window === 'undefined' || !window.limitsWidget?.getSavedSessionState) return;
     const token = (this.savedRestoreTokens.get(tabId) ?? 0) + 1;
+    const viewSelection = this.savedViewSelections?.get(tabId) ?? 0;
     this.savedRestoreTokens.set(tabId, token);
     const saved = await window.limitsWidget.getSavedSessionState(tabId).catch(() => null);
     if (!saved || this.nativeStates.get(tabId) !== state || this.savedRestoreTokens.get(tabId) !== token) return;
@@ -1585,7 +1590,9 @@ export class SessionWorkspace {
       state.followOutput = saved.followOutput;
       if (!saved.followOutput && saved.anchor) { state.scrollInitialized = false; this.restoredAnchors.set(tabId, saved.anchor); }
       const pane = tab ? paneForSession(this.workspaceState.layout, tab.sessionId) : undefined;
-      if (pane && pane.viewMode !== saved.selectedView) void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: saved.selectedView });
+      if (pane && pane.viewMode !== saved.selectedView && viewSelection === (this.savedViewSelections?.get(tabId) ?? 0)) {
+        void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: saved.selectedView });
+      }
     }
     this.savedRecovery.set(tabId, saved.questions);
     await this.restoreQuestionDrafts(tabId, state);

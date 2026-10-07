@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { SessionWorkspace } from '../src/renderer/src/session-workspace';
 import { ConfirmedQuestionCompletions, partitionPendingActions, unavailableProviderState, type ConversationItem, type ProviderState } from '../src/shared/conversation';
 import type { TerminalTabDescriptor } from '../src/shared/terminal';
+import { assignWorkspaceSession, emptyWorkspaceLayout } from '../src/shared/workspace-layout';
 
 vi.mock('dompurify', () => ({ default: { sanitize: (value: string) => value } }));
 afterEach(() => vi.unstubAllGlobals());
@@ -38,6 +39,21 @@ function fixture() {
 }
 
 describe('Native provider discovery through the production frame handler', () => {
+  it('keeps the user view choice when saved state finishes loading later', async () => {
+    const { workspace, tab, state } = fixture();
+    const layout = emptyWorkspaceLayout();
+    workspace.workspaceState = { layout: assignWorkspaceSession(layout, layout.focusedPaneId, tab.sessionId) };
+    workspace.savedViewSelections = new Map();
+    workspace.applyCommand = vi.fn();
+    let complete!: (value: unknown) => void;
+    vi.stubGlobal('window', { limitsWidget: { getSavedSessionState: () => new Promise((resolve) => { complete = resolve; }) } });
+    const pending = workspace.restoreSavedSession(tab.id, state);
+    workspace.savedViewSelections.set(tab.id, 1);
+    complete({ identity: { incarnationId: 'a'.repeat(64) }, message: '', questions: [],
+      selectedView: 'terminal', followOutput: true, anchor: null });
+    await pending;
+    expect(workspace.applyCommand).not.toHaveBeenCalled();
+  });
   it('shows retained messages while refreshing and keeps mutations disabled', () => {
     const { workspace, state, snapshot, html } = fixture();
     snapshot([{ ...user(), text: 'Retained newest message' }]);
