@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hostFileTarget, hostFileReferences, parseHostFileMetadata } from '../src/shared/host-file';
+import { hostFileTarget, hostFileReferences, hostFileRowReferences, parseHostFileMetadata } from '../src/shared/host-file';
 import { renderSafeMarkdownSource } from '../src/renderer/src/safe-markdown';
 import golden from './fixtures/host-file-behavior-v1.json';
 import goodMetadata from './fixtures/contracts/linked-file-v1.json';
@@ -9,6 +9,15 @@ describe('originating host file references', () => {
   it('matches every canonical extraction and metadata fixture', () => {
     for (const row of golden.targets) expect(hostFileTarget(row.value, row.explicit), row.value).toEqual(row.target);
     for (const row of golden.extractions) expect(hostFileReferences(row.text).map((ref) => ref.target), row.text).toEqual(row.targets);
+    for (const row of golden.terminalRows) {
+      const refs = hostFileRowReferences(row.rows);
+      expect(refs.map(ref => ref.target), row.name).toEqual(row.targets);
+      for (const ref of refs) {
+        expect(row.rows[ref.row].text.slice(ref.start, ref.end)).not.toMatch(/^ +|[)'"`]$/u);
+      }
+    }
+    expect(hostFileRowReferences([{text: '(' + '/a'.repeat(2048) + ')'}])).toEqual([]);
+    expect(hostFileRowReferences([{text: 'x'.repeat(8193)}])).toEqual([]);
     expect(parseHostFileMetadata(goodMetadata)).toEqual(goodMetadata);
     expect(() => parseHostFileMetadata(badMetadata)).toThrow();
   });

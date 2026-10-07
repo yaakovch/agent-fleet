@@ -1,0 +1,16 @@
+{
+  "protocolVersion": 1,
+  "type": "pane.links",
+  "hostId": "origin-host",
+  "session": "origin-session",
+  "projectRoot": "/home/user/project",
+  "line": "  report.md)",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "links": [
+    {
+      "start": 2,
+      "end": 11,
+      "target": "reports/long-report.md"
+    }
+  ]
+}

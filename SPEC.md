@@ -563,3 +563,14 @@ Open Host File command; hidden built-in OSC 8 targets retain the approved caveat
 
 Delivery ends at local source, validation and review packages. Publication,
 physical-device installation and activation on live hosts require a later request.
+
+
+## Wrapped host-file links — approved correction (2026-10-07)
+
+The supplied execution plan authorizes implementation and review packages; no new interview or rollout is requested. Both reported cases are tmux scrollback displayed in Terminal. The Live badge indicates connectivity, not the age of the displayed output. Fleet History is a separate reconstructed reader.
+
+Recognize complete parentheses, quote and backtick path groups across hard rows, including short rows. Keep filename spaces and Unicode; remove only the origin indentation, list content indentation or the exact hanging column. Reject incomplete groups, ambiguous whitespace, multiple independent paths and over-limit groups. Apply verified OSC 8 targets first; reserve all delimited groups before ordinary extraction. Return one UTF-16 range per visible segment, excluding indentation and delimiters, with the complete target and originating host/session/project binding. Bounds remain 32 rows, 8192 text units and 2048 target units.
+
+History uses tmux capture-pane -e -J and truncates at complete records. Companion uses read-only pane.links.v1 over wtmux pane links; it reads bounded scrollback and the copy-mode screen, rejects duplicate or conflicting rows, and returns a snapshot revision. One pending lookup per terminal, cancellation and a one-second cache keep hover bounded. Activation revalidates snapshot, reference and binding. No file bytes or Native snapshots are loaded during detection.
+
+Delivery is local reviewed sources, runtime/Windows/Android/Companion packages, hashes and evidence. Publication, installation on the three PCs, and the phone updater rollout remain a later decision. No physical-phone automation.

@@ -57,7 +57,7 @@ import {
 import { ActivityCache, conversationRows } from '../../shared/conversation-view';
 import type { ConversationView } from '../../shared/conversation';
 import { linkedText, renderSafeMarkdownSource } from './safe-markdown';
-import { hostFileReferences, hostFileTarget } from '../../shared/host-file';
+import { hostFileReferences, hostFileRowReferences, hostFileTarget } from '../../shared/host-file';
 
 interface TerminalRuntime {
   terminal: Terminal;
@@ -2409,21 +2409,15 @@ export class SessionWorkspace {
     terminal.registerLinkProvider({
       provideLinks: (line, callback) => {
         const buffer = terminal.buffer.active;
-        let first = line - 1; let last = first;
-        while (first > 0 && line - first < 32 && buffer.getLine(first)?.isWrapped) first--;
-        while (last + 1 < buffer.length && last - first < 32 && buffer.getLine(last + 1)?.isWrapped) last++;
-        const rows = Array.from({ length: last - first + 1 }, (_, index) => buffer.getLine(first + index)?.translateToString(index === last - first) ?? '');
-        const text = rows.join('');
-        if (text.length > 8192) { callback([]); return; }
-        const position = (offset: number): { x: number; y: number } => {
-          for (let index = 0; index < rows.length; index++) {
-            if (offset < rows[index].length || index === rows.length - 1) return { x: terminalColumn(buffer.getLine(first + index), offset), y: first + index + 1 };
-            offset -= rows[index].length;
-          }
-          return { x: 1, y: first + 1 };
-        };
-        callback(hostFileReferences(text).map((ref) => ({
-          range: { start: position(ref.start), end: position(ref.end - 1) },
+        const first = Math.max(0, line - 32);
+        const last = Math.min(buffer.length - 1, line + 30);
+        const rows = Array.from({ length: last - first + 1 }, (_, index) => ({
+          text: buffer.getLine(first + index)?.translateToString(!buffer.getLine(first + index + 1)?.isWrapped) ?? '',
+          wrapped: buffer.getLine(first + index)?.isWrapped ?? false
+        }));
+        callback(hostFileRowReferences(rows).filter((ref) => ref.row + first === line - 1).map((ref) => ({
+          range: { start: { x: terminalColumn(buffer.getLine(first + ref.row), ref.start), y: first + ref.row + 1 },
+            end: { x: terminalColumn(buffer.getLine(first + ref.row), ref.end - 1), y: first + ref.row + 1 } },
           text: ref.target, activate: (event) => activate(event, ref.target)
         })));
       }

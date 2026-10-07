@@ -975,3 +975,14 @@ SHA-256 hashes, source patches, UI evidence and limitations are in
 `/home/sapir_cz/.cache/agent-fleet/host-file-review-20261006/review-manifest.json` and the sibling review.html.
 The physical phone and live user-host runtimes were not operated; publication
 and deployment remain outside this completed review scope.
+
+
+## Wrapped host-file links — approved execution (2026-10-07)
+
+Source: the owner-supplied wrapped-link plan and the appended specification. Execution is authorized; review-only delivery.
+
+1. Work in isolated branches based on the delivered host-file revisions. Preserve original dirty trees and active sessions.
+2. Extend canonical host-file fixtures and implement the same bounded delimited row-group rules in Windows, Android and the Companion/runtime lookup. Give OSC 8 priority and return separate row ranges.
+3. Join actual tmux wraps in History while preserving hard breaks and complete-record truncation. Add the read-only pane links command, binding and snapshot checks, cancellation and hover cache.
+4. Validate Windows first; test real Ctrl-click and preview contents, protected API 36 Android taps, and isolated VS Code hover/Ctrl-click. Cover soft and hard wraps, absolute/relative paths, spaces, Unicode, OSC 8, ambiguous/incomplete groups, stale bindings, zoom, resize, reattachment and genuine missing files.
+5. Run required host/Windows/Android/Companion gates, synchronize contract mirrors and embedded runtimes, then prepare review packages with source identities and SHA-256 hashes. Record actual coverage and remaining limitations in the handoff. Production signing/publication and user-device installation are outside this execution.

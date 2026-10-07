@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.12.0",
+  "packageVersion": "1.13.0",
   "protocolVersions": {
     "control": 1,
     "conversation": 2,
@@ -11,7 +11,8 @@
     "host-runtime": 1,
     "diagnostics": 2,
     "provider-confidence": 1,
-    "linked-file": 1
+    "linked-file": 1,
+    "pane-links": 1
   },
   "objectShapes": [
     {
@@ -1699,6 +1700,31 @@
       "required": [
         "algorithm",
         "digest"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "pane-links-v1:#",
+      "required": [
+        "hostId",
+        "line",
+        "links",
+        "projectRoot",
+        "protocolVersion",
+        "revision",
+        "session",
+        "type"
+      ],
+      "optional": [],
+      "rejectUnknown": true
+    },
+    {
+      "id": "pane-links-v1:#/properties/links/items",
+      "required": [
+        "end",
+        "start",
+        "target"
       ],
       "optional": [],
       "rejectUnknown": true

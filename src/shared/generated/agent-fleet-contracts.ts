@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.12.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.13.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -16,7 +16,8 @@ export const GENERATED_PROTOCOL_VERSIONS = {
   "host-runtime": 1,
   "diagnostics": 2,
   "provider-confidence": 1,
-  "linked-file": 1
+  "linked-file": 1,
+  "pane-links": 1
 } as const;
 export const GENERATED_OBJECT_SHAPES = {
   "activation-journal-v1:#": {
@@ -1575,6 +1576,29 @@ export const GENERATED_OBJECT_SHAPES = {
     "required": [
       "algorithm",
       "digest"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "pane-links-v1:#": {
+    "required": [
+      "hostId",
+      "line",
+      "links",
+      "projectRoot",
+      "protocolVersion",
+      "revision",
+      "session",
+      "type"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "pane-links-v1:#/properties/links/items": {
+    "required": [
+      "end",
+      "start",
+      "target"
     ],
     "optional": [],
     "rejectUnknown": true

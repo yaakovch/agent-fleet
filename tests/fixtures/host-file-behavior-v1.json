@@ -126,5 +126,713 @@
         "/tmp/report with spaces.html"
       ]
     }
-  ]
+  ],
+  "terminalRows": [
+    {
+      "name": "absolute-parentheses",
+      "rows": [
+        {
+          "text": "  Open (/home/user/projects/very-long-project/"
+        },
+        {
+          "text": "  reports/wrapped-report.html)."
+        }
+      ],
+      "targets": [
+        "/home/user/projects/very-long-project/reports/wrapped-report.html",
+        "/home/user/projects/very-long-project/reports/wrapped-report.html"
+      ]
+    },
+    {
+      "name": "relative-parentheses",
+      "rows": [
+        {
+          "text": "  See (reports/long-report-"
+        },
+        {
+          "text": "  continued.md)."
+        }
+      ],
+      "targets": [
+        "reports/long-report-continued.md",
+        "reports/long-report-continued.md"
+      ]
+    },
+    {
+      "name": "quoted-spaces",
+      "rows": [
+        {
+          "text": "  \"/tmp/a long folder/"
+        },
+        {
+          "text": "  a report.md\""
+        }
+      ],
+      "targets": [
+        "/tmp/a long folder/a report.md",
+        "/tmp/a long folder/a report.md"
+      ]
+    },
+    {
+      "name": "backticks",
+      "rows": [
+        {
+          "text": "`reports/very-long-"
+        },
+        {
+          "text": "report.md`"
+        }
+      ],
+      "targets": [
+        "reports/very-long-report.md",
+        "reports/very-long-report.md"
+      ]
+    },
+    {
+      "name": "unicode",
+      "rows": [
+        {
+          "text": "(reports/长目录/"
+        },
+        {
+          "text": "🐱.md)"
+        }
+      ],
+      "targets": [
+        "reports/长目录/🐱.md",
+        "reports/长目录/🐱.md"
+      ]
+    },
+    {
+      "name": "hanging-indent",
+      "rows": [
+        {
+          "text": "Open (/tmp/very-"
+        },
+        {
+          "text": "      long.md)"
+        }
+      ],
+      "targets": [
+        "/tmp/very-long.md",
+        "/tmp/very-long.md"
+      ]
+    },
+    {
+      "name": "list-indent",
+      "rows": [
+        {
+          "text": "- (/tmp/very-"
+        },
+        {
+          "text": "  long.md)"
+        }
+      ],
+      "targets": [
+        "/tmp/very-long.md",
+        "/tmp/very-long.md"
+      ]
+    },
+    {
+      "name": "short-rows",
+      "rows": [
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": "b.md)"
+        }
+      ],
+      "targets": [
+        "/tmp/a-b.md",
+        "/tmp/a-b.md"
+      ]
+    },
+    {
+      "name": "incomplete",
+      "rows": [
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": "b.md"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "ambiguous-indent",
+      "rows": [
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": " b.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "multiple-paths",
+      "rows": [
+        {
+          "text": "(/tmp/a.md"
+        },
+        {
+          "text": "/tmp/b.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "multiple-paths-in-one-row",
+      "rows": [
+        {
+          "text": "(/tmp/a.md /tmp/b.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "blank-continuation",
+      "rows": [
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": ""
+        },
+        {
+          "text": "b.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "padding-ambiguous",
+      "rows": [
+        {
+          "text": "(/tmp/a-  "
+        },
+        {
+          "text": "b.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "separate-paths",
+      "rows": [
+        {
+          "text": "/tmp/a.md"
+        },
+        {
+          "text": "/tmp/b.md"
+        }
+      ],
+      "targets": [
+        "/tmp/a.md",
+        "/tmp/b.md"
+      ]
+    },
+    {
+      "name": "automatic-wrap",
+      "rows": [
+        {
+          "text": "/tmp/long-"
+        },
+        {
+          "text": "report.md",
+          "wrapped": true
+        }
+      ],
+      "targets": [
+        "/tmp/long-report.md",
+        "/tmp/long-report.md"
+      ]
+    },
+    {
+      "name": "automatic-quoted-space",
+      "rows": [
+        {
+          "text": "\"/tmp/a "
+        },
+        {
+          "text": "report.md\"",
+          "wrapped": true
+        }
+      ],
+      "targets": [
+        "/tmp/a report.md",
+        "/tmp/a report.md"
+      ]
+    },
+    {
+      "name": "unbounded-prefix",
+      "rows": [
+        {
+          "text": "report.md",
+          "wrapped": true
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "32-rows",
+      "rows": [
+        {
+          "text": "(/tmp/"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": ".md)"
+        }
+      ],
+      "targets": [
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+        "/tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md"
+      ]
+    },
+    {
+      "name": "33-rows-rejected",
+      "rows": [
+        {
+          "text": "(/tmp/"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": "a"
+        },
+        {
+          "text": ".md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "tab-indent",
+      "rows": [
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": "\tb.md)"
+        }
+      ],
+      "targets": []
+    },
+    {
+      "name": "wide-surrounding-output",
+      "rows": [
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "(/tmp/a-"
+        },
+        {
+          "text": "b.md)"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ],
+      "targets": [
+        "/tmp/a-b.md",
+        "/tmp/a-b.md"
+      ]
+    }
+  ],
+  "wrappedPolicy": {
+    "maximumRows": 32,
+    "maximumTextUnits": 8192,
+    "maximumTargetUnits": 2048,
+    "offsetUnits": "UTF-16",
+    "hardBreaks": "completeEnclosingDelimiter",
+    "indentation": "originIndentOrHangingColumnOrListContentIndent",
+    "hyperlinkPriority": "verifiedOSC8",
+    "textBudgetScope": "oneDelimitedGroupOrAutomaticWrapRun"
+  }
 }
