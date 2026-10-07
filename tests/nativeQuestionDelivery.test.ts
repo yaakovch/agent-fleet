@@ -11,10 +11,13 @@ function fixture(count: number) {
       type: 'single' as const, required: true, allowOther: true, options: [{ id: 'a', label: 'First', description: '' }] })) };
   const state = { items: [item], providerState: { mutationsAllowed: true, eventPosition: 10 },
     confirmedQuestions: new ConfirmedQuestionCompletions(),
-    questionDrafts: new Map(), questionSteps: new Map(), submittingQuestions: new Set(), questionSheetId: item.id, notice: '' };
+    questionDrafts: new Map(), questionFormSources: new Map(), questionSteps: new Map(), submittingQuestions: new Set(), questionSheetId: item.id, notice: '' };
   // Exercise the production event handlers, replacing only DOM rendering and IPC.
   const workspace = Object.create(SessionWorkspace.prototype) as any;
   Object.assign(workspace, { selectedId: 'session', nativeState: () => state, captureVisibleQuestionDraft: () => {},
+    savedStates: new Map(), savedRestoreTokens: new Map(), savedTails: new Map(), savedRecovery: new Map(),
+    restoredAnchors: new Map(), notificationSessions: new Set(), notificationHandled: new Set(),
+    savedQuestionClears: new Map(), savedClearClock: 0,
     renderSelectedNative: vi.fn(), maybeStartAutomaticSuggestion: () => {} });
   const answer = vi.fn(); vi.stubGlobal('window', { limitsWidget: { answerConversation: answer } });
   return { item, state, workspace, answer };

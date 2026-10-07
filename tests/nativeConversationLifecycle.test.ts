@@ -24,6 +24,9 @@ function fixture() {
   // replace only DOM scheduling, local suggestions and external answer transport.
   const workspace = Object.create(SessionWorkspace.prototype) as any;
   Object.assign(workspace, { tabs: new Map([[tab.id, tab]]), nativeStates: new Map(), selectedId: tab.id,
+    savedStates: new Map(), savedRestoreTokens: new Map(), savedTails: new Map(), savedRecovery: new Map(),
+    restoredAnchors: new Map(), notificationSessions: new Set(), notificationHandled: new Set(),
+    savedQuestionClears: new Map(), savedClearClock: 0,
     nativeView: 'detailed', viewGeneration: 0, localSuggestionSettings: { mode: 'off' },
     suggestionRevision: () => '', maybeStartAutomaticSuggestion: () => {}, queueNativeRender: vi.fn(),
     renderSelectedNative: vi.fn(), captureVisibleQuestionDraft: () => {} });
@@ -97,7 +100,7 @@ describe('Native provider discovery through the production frame handler', () =>
 });
 
 describe('Native confirmed completions across actual snapshots', () => {
-  it('keeps delivery-confirmed answers complete through empty and stale snapshots and preserves drafts', async () => {
+  it('keeps delivery-confirmed answers complete through empty and stale snapshots and clears only the sent draft', async () => {
     const { workspace, state, snapshot, html } = fixture();
     const item = question();
     snapshot([item]);
@@ -115,7 +118,7 @@ describe('Native confirmed completions across actual snapshots', () => {
     expect(state.items[0].answers).toEqual([{ questionId: 'q1', choiceIds: ['a'], text: '' }]);
     expect(html()).not.toContain('native-answer-bar');
     expect(state.draft).toBe('Unsent composer');
-    expect(state.questionDrafts.get(item.id)).toHaveLength(1);
+    expect(state.questionDrafts.has(item.id)).toBe(false);
   });
 
   it('retains provider-confirmed async completion without transferring it to a new revision or session', () => {
@@ -144,6 +147,28 @@ describe('Native confirmed completions across actual snapshots', () => {
     } }) } });
     await workspace.loadOlder();
     expect(state.items[0].state).toBe('complete');
+  });
+
+  it('routes anchor paging to its own tab and falls back after an unavailable page', async () => {
+    const { workspace, tab, state } = fixture();
+    state.nextCursor = 'expired'; state.hasMore = true;
+    workspace.restoredAnchors.set(tab.id, { itemId: 'missing', offset: 12 });
+    workspace.selectedId = 'another-tab';
+    const page = vi.fn().mockResolvedValue({ ok: false, message: 'Cursor expired' });
+    vi.stubGlobal('window', { limitsWidget: { pageConversation: page } });
+    await workspace.loadOlder(tab.id);
+    expect(page).toHaveBeenCalledWith(tab.id, 'expired');
+    expect(state.loadingOlder).toBe(false);
+    expect(workspace.restoredAnchors.has(tab.id)).toBe(false);
+  });
+
+  it('stops automatic anchor paging at the shared 2000-row limit', async () => {
+    const { workspace, tab, state } = fixture();
+    state.items = Array.from({ length: 2000 }, (_, index) => ({ ...user(), id: `row-${index}` }));
+    state.nextCursor = 'more'; state.hasMore = true;
+    const page = vi.fn(); vi.stubGlobal('window', { limitsWidget: { pageConversation: page } });
+    await workspace.loadOlder(tab.id);
+    expect(page).not.toHaveBeenCalled(); expect(state.hasMore).toBe(false); expect(state.nextCursor).toBeNull();
   });
 
   it('bounds retained receipts and recovers a missing completion revision only from an exact current request', () => {

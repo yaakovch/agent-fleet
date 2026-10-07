@@ -6,6 +6,7 @@ import {
   shouldCaptureTerminalHistoryScroll,
   terminalHistoryAtBottom,
   terminalHistoryDimensionsMatch,
+  terminalHistoryFitsViewport,
   terminalHistoryEligible
 } from '../src/renderer/src/terminal-history';
 
@@ -46,5 +47,31 @@ describe('terminal pane scrollback state', () => {
     expect(terminalHistoryDimensionsMatch(snapshot, 119, 32)).toBe(false);
     expect(terminalHistoryAtBottom(800, 800)).toBe(true);
     expect(terminalHistoryAtBottom(799, 800)).toBe(false);
+  });
+
+  it('displays a pane below tmux chrome without accepting a changed wrapping width', () => {
+    expect(terminalHistoryFitsViewport(snapshot, 120, 33)).toBe(true);
+    expect(terminalHistoryFitsViewport(snapshot, 120, 32)).toBe(true);
+    expect(terminalHistoryFitsViewport(snapshot, 120, 31)).toBe(false);
+    expect(terminalHistoryFitsViewport(snapshot, 119, 33)).toBe(false);
+    expect(terminalHistoryDimensionsMatch(snapshot, 120, 33)).toBe(false);
+  });
+
+  it('keeps the displayed snapshot stable until the reader returns to live', () => {
+    const first = applyTerminalHistorySnapshot(createTerminalHistoryState(), snapshot);
+    const changed = {...snapshot, revision:'b'.repeat(64), ansiBase64:'bmV3'};
+    const reading = applyTerminalHistorySnapshot({...first, active:true}, changed);
+    expect(reading.snapshot).toBe(snapshot);
+    expect(reading.pendingSnapshot).toBe(changed);
+    const live = applyTerminalHistorySnapshot({...reading, active:false}, reading.pendingSnapshot!);
+    expect(live.snapshot).toBe(changed);
+    expect(live.pendingSnapshot).toBeNull();
+  });
+
+  it('reuses unchanged capture bytes and invalidates incompatible dimensions', () => {
+    const first = applyTerminalHistorySnapshot(createTerminalHistoryState(), snapshot);
+    expect(applyTerminalHistorySnapshot(first, {...snapshot}).snapshot).toBe(snapshot);
+    const resized = {...snapshot, columns:80};
+    expect(applyTerminalHistorySnapshot(first, resized).snapshot).toBe(resized);
   });
 });

@@ -61,7 +61,7 @@ export interface ConversationActionResponse {
 }
 export type ConversationProtocolFrame = ConversationFrame | ConversationDirectoryFrame | ConversationActionResponse;
 export interface ConversationEvent { tabId: string; frame: ConversationFrame }
-export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame; pane?: PaneScrollbackSnapshot }
+export interface NativeActionResult { ok: boolean; message: string; frame?: ConversationFrame; pane?: PaneScrollbackSnapshot; identity?: import('./session-state').SessionIdentity }
 export interface StagedAttachment { id: string; name: string; mime: string; bytes: number; thumbnail: string }
 
 const MAX_CONVERSATION_FRAME_BYTES = 256 * 1024;

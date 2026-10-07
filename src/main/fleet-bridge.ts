@@ -108,6 +108,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
   private retryAttempt = 0;
   private retryTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private reconciliationTimer: NodeJS.Timeout | null = null;
   private settleTimer: NodeJS.Timeout | null = null;
   private terminationTimer: NodeJS.Timeout | null = null;
   private settlePolls = 0;
@@ -139,6 +140,8 @@ export class FleetBridgeSupervisor extends EventEmitter {
     this.startChild();
     this.heartbeatTimer = setInterval(() => this.checkHeartbeat(), 5_000);
     this.heartbeatTimer.unref();
+    this.reconciliationTimer = setInterval(() => this.requestSnapshot(), 30_000);
+    this.reconciliationTimer.unref();
   }
 
   stop(): void {
@@ -146,10 +149,12 @@ export class FleetBridgeSupervisor extends EventEmitter {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.reconciliationTimer) clearInterval(this.reconciliationTimer);
     if (this.settleTimer) clearTimeout(this.settleTimer);
     if (this.terminationTimer) clearTimeout(this.terminationTimer);
     this.retryTimer = null;
     this.heartbeatTimer = null;
+    this.reconciliationTimer = null;
     this.settleTimer = null;
     this.terminationTimer = null;
     if (!this.options.processOwnership?.release(this.child, 'app_shutdown')) safeKill(this.child);
@@ -162,6 +167,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
 
   setForeground(foreground: boolean): void {
     this.applySupervisorAction({ type: foreground ? 'foreground-resume' : 'background-retain' });
+    if (foreground && !this.stopped) this.refresh();
   }
 
   getSupervisorState(): SupervisorState {
@@ -407,7 +413,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
       exactKeys(data, ['hostCount'], 'heartbeat data');
       if (!Number.isInteger(data.hostCount)) throw new Error('Invalid heartbeat host count');
       if (!this.snapshot || value.revision !== this.snapshot.revision
-        || value.presentationRevision !== this.snapshot.presentationRevision) this.requestSnapshot();
+        || (value.presentationRevision !== undefined && value.presentationRevision !== this.snapshot.presentationRevision)) this.requestSnapshot();
       return;
     }
     if (this.pendingMutation && value.requestId === this.pendingMutation.requestId) {

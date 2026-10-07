@@ -22,6 +22,44 @@ afterEach(() => {
 });
 
 describe('fleet bridge supervisor', () => {
+  it('reconciles a quiet five-minute host with at least 80% fewer snapshots and reacts immediately to changed status', () => {
+    vi.useFakeTimers();
+    const reply = { ...fixture, presentationRevision: 'presentation-1' };
+    const transport = createRespondingChild(reply);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(temporaryDirectory(), 'quiet-cache.json'),
+      launch: { command: 'fixture', args: [], distro: 'Test Linux' },
+      spawnProcess: (() => transport.child) as never,
+      logger
+    });
+    const heartbeat = (revision = reply.revision, presentationRevision: string | null = reply.presentationRevision) =>
+      transport.stdout.write(`${JSON.stringify({ protocolVersion: 1, type: 'event', eventId: 'quiet',
+        event: 'fleet.heartbeat', timestamp: new Date().toISOString(), revision,
+        ...(presentationRevision === null ? {} : { presentationRevision }), data: { hostCount: 1 } })}\n`);
+    try {
+      supervisor.start();
+      for (let second = 0; second < 300; second += 5) {
+        heartbeat();
+        vi.advanceTimersByTime(5_000);
+      }
+      expect(transport.writes).toHaveBeenCalledTimes(11); // First entry plus ten reconciliations.
+      expect(1 - transport.writes.mock.calls.length / 101).toBeGreaterThanOrEqual(.8);
+      expect(transport.child.kill).not.toHaveBeenCalled();
+      reply.presentationRevision = 'presentation-2';
+      heartbeat();
+      expect(transport.writes).toHaveBeenCalledTimes(12);
+      expect(supervisor.getView().status).toBe('live');
+      // Older heartbeat writers omit the optional presentation revision.
+      heartbeat(reply.revision, null);
+      expect(transport.writes).toHaveBeenCalledTimes(12);
+      supervisor.setForeground(true);
+      expect(transport.writes).toHaveBeenCalledTimes(13);
+    } finally {
+      supervisor.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('retains a safe configuration failure without logging raw bridge output', async () => {
     const directory = temporaryDirectory();
     const script = join(directory, 'failed-bridge.cjs');

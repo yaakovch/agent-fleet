@@ -46,6 +46,22 @@ function tab(id: string): TerminalTabDescriptor {
   };
 }
 
+it('shares concurrent identity reads and rechecks identity after the request completes', async () => {
+  const children: ChildProcess[] = [];
+  const spawnMock = vi.fn(() => { const child = fakeProcess(); children.push(child); return child; });
+  const manager = new ConversationManager({ tempPath: tempPath(), getDistro: () => 'Ubuntu',
+    resolveTab: () => tab('identity'), sendTerminalInput: vi.fn(), onEvent: vi.fn(),
+    logger: { info: vi.fn(), warn: vi.fn() }, spawnProcess: spawnMock as unknown as typeof spawn });
+  const first = manager.identity('identity');
+  const second = manager.identity('identity');
+  expect(spawnMock).toHaveBeenCalledTimes(1);
+  children[0].emit('exit', 1);
+  expect(await first).toBeNull(); expect(await second).toBeNull();
+  const fresh = manager.identity('identity');
+  expect(spawnMock).toHaveBeenCalledTimes(2);
+  children[1].emit('exit', 1); expect(await fresh).toBeNull(); manager.dispose();
+});
+
 describe('native conversation streams', () => {
   it('renegotiates when a running legacy host gains turn support', () => {
     let capabilities: string[] = [];
@@ -165,7 +181,9 @@ describe('native conversation streams', () => {
       sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
       spawnProcess: spawnMock as unknown as typeof spawn, processOwnership
     });
+    vi.spyOn(manager, 'identity').mockResolvedValue(null);
     const pending = manager.history('history');
+    await Promise.resolve();
     const startingOwnership = processOwnership.snapshot();
     expect(startingOwnership.active).toBe(1);
     expect(Object.entries(startingOwnership.owners)).toEqual([
@@ -192,7 +210,9 @@ describe('native conversation streams', () => {
       sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
       spawnProcess: vi.fn(() => process) as unknown as typeof spawn
     });
+    vi.spyOn(manager, 'identity').mockResolvedValue(null);
     const pending = manager.history('history');
+    await Promise.resolve();
     (process.stdout as PassThrough).end(`${JSON.stringify({
       protocolVersion: 1, type: 'pane.scrollback', session: 'history', columns: 120, rows: 32,
       historyLines: 1, capturedLines: 1, truncated: false, revision: '0'.repeat(64), ansiBase64: 'cm93'
@@ -208,7 +228,9 @@ describe('native conversation streams', () => {
       sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
       spawnProcess: vi.fn(() => process) as unknown as typeof spawn
     });
+    vi.spyOn(manager, 'identity').mockResolvedValue(null);
     const pending = manager.history('history');
+    await Promise.resolve();
     (process.stdout as PassThrough).write(Buffer.alloc(512 * 1024 + 1, 0x61));
     expect(process.kill).toHaveBeenCalledOnce();
     process.emit('exit', null);
@@ -232,7 +254,9 @@ describe('native conversation streams', () => {
       processOwnership
     });
 
+    vi.spyOn(manager, 'identity').mockResolvedValue(null);
     const pending = manager.history('history');
+    await Promise.resolve();
     await vi.advanceTimersByTimeAsync(20_000);
     await expect(pending).resolves.toMatchObject({
       ok: false,

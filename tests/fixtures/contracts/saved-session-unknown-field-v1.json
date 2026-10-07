@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "schemaVersion": 1,
+    "host": "synthetic-host",
+    "session": "synthetic-session",
+    "incarnationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "projectRoot": "/synthetic/project",
+    "backend": "linux",
+    "tool": "codex"
+  },
+  "executionTarget": "linux",
+  "revision": 4,
+  "message": "Unsent 😀 draft",
+  "questions": [
+    {
+      "requestId": "request-1",
+      "form": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "answers": [
+        {
+          "questionId": "q1",
+          "choiceIds": [],
+          "text": "Unsent answer"
+        }
+      ]
+    }
+  ],
+  "selectedView": "native",
+  "followOutput": false,
+  "anchor": {
+    "itemId": "message-1",
+    "offset": 12
+  },
+  "attachments": [
+    "unrestorable"
+  ]
+}

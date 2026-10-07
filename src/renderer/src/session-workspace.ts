@@ -1,3 +1,5 @@
+import type { SavedSessionState, SavedSessionContent, SavedQuestionDraft } from '../../shared/session-state';
+import { questionFormContent } from '../../shared/session-state';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
@@ -49,9 +51,10 @@ import {
   createTerminalHistoryState,
   shouldCaptureTerminalHistoryScroll,
   terminalHistoryAtBottom,
-  terminalHistoryDimensionsMatch,
+  terminalHistoryFitsViewport,
   terminalHistoryEligible,
   TERMINAL_HISTORY_QUIET_MS,
+  TERMINAL_HISTORY_MIN_INTERVAL_MS,
   type TerminalHistoryState
 } from './terminal-history';
 import { ActivityCache, conversationRows } from '../../shared/conversation-view';
@@ -68,6 +71,7 @@ interface TerminalRuntime {
   historyTerminal?: Terminal;
   historyFit?: FitAddon;
   historyElement?: HTMLElement;
+  historyRevision?: string;
 }
 
 interface NativeState {
@@ -94,6 +98,7 @@ interface NativeState {
   newMessages: boolean;
   renderMode: 'initial' | 'append' | 'prepend' | 'preserve';
   questionDrafts: Map<string, ConversationAnswer[]>;
+  questionFormSources: Map<string, ConversationQuestion[]>;
   questionSteps: Map<string, number>;
   submittingQuestions: Set<string>;
   expandedDetails: Set<string>;
@@ -148,9 +153,21 @@ export class SessionWorkspace {
   private resizeObserver: ResizeObserver;
   private nativeRenderQueued = new Set<string>();
   private draggedPaneId = '';
+  private notificationSessions = new Set<string>();
+  private notificationHandled = new Set<string>();
+  private savedStates = new Map<string, SavedSessionState>();
+  private savedRestoreTokens = new Map<string, number>();
+  private pendingHistoryOpen = new Map<string, number>();
+  private savedClearClock = 0;
+  private savedQuestionClears = new Map<string, number>();
+  private savedMessageEdits = new Set<string>();
+  private sendingMessages = new Set<string>();
+  private savedTails = new Map<string, Promise<void>>();
+  private restoredAnchors = new Map<string, { itemId: string; offset: number }>();
+  private savedRecovery = new Map<string, SavedQuestionDraft[]>();
   private terminalHistories = new Map<string, TerminalHistoryState>();
   private terminalHistoryTimers = new Map<string, number>();
-  private terminalHistoryQueue: Array<{ tabId: string; generation: number }> = [];
+  private terminalHistoryQueue: Array<{ tabId: string; generation: number; dirtyVersion: number }> = [];
   private terminalHistoryRequestActive = false;
   private terminalHistoryQueued = new Set<string>();
   private localSuggestionSettings: LocalSuggestionSettingsView = createDefaultLocalSuggestionSettings();
@@ -188,6 +205,10 @@ export class SessionWorkspace {
     window.limitsWidget.onTerminalOpened((tab) => this.open(tab));
     window.limitsWidget.onWorkspaceUpdated((state) => this.applyWorkspaceState(state));
     window.limitsWidget.onConversationEvent(({ tabId, frame }) => this.applyConversationFrame(tabId, frame));
+    window.limitsWidget.onSavedSessionFailure?.(({ tabId }) => {
+      const state = this.nativeStates.get(tabId);
+      if (state) { state.notice = 'This draft could not be saved. Keep this session open and try again.'; this.queueNativeRender(tabId); }
+    });
     window.limitsWidget.onLocalSuggestionSettingsUpdated((settings) => {
       const changed = settings.mode !== this.localSuggestionSettings.mode;
       this.localSuggestionSettings = settings;
@@ -204,6 +225,7 @@ export class SessionWorkspace {
     });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) for (const [tabId] of this.nativeStates) {
+        this.saveSession(tabId, true);
         this.clearSuggestions(tabId, true);
         this.baselineAutomaticSuggestion(tabId);
       }
@@ -212,6 +234,9 @@ export class SessionWorkspace {
       this.syncTerminal();
       if (!document.hidden) for (const tabId of this.boundTerminalIds) this.scheduleTerminalHistory(tabId);
       if (!document.hidden) void this.pollVisibleModelStates();
+    });
+    window.addEventListener('beforeunload', () => {
+      for (const tabId of this.nativeStates.keys()) this.saveSession(tabId, true);
     });
     window.addEventListener('keydown', (event) => {
       if (!this.mounted || document.hidden || event.defaultPrevented) return;
@@ -272,7 +297,9 @@ export class SessionWorkspace {
         const tabId = this.tabIdFromControl(input);
         if (tabId) {
           input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+          (this.savedMessageEdits ??= new Set()).add(tabId);
           this.nativeState(tabId).draft = input.value; this.clearSuggestions(tabId, true);
+          this.saveSession(tabId);
           input.closest('.native-composer')?.querySelector('.local-suggestions')?.remove();
         }
       } else if (input instanceof HTMLTextAreaElement && input.matches('[data-question-text]')) {
@@ -313,6 +340,7 @@ export class SessionWorkspace {
       state.scrollTop = messages.scrollTop;
       state.scrollHeight = messages.scrollHeight;
       state.followOutput = isNearBottom(messages);
+      this.saveSession(tabId);
       if (state.followOutput && state.newMessages) {
         state.newMessages = false;
         messages.closest('[data-pane-id]')?.querySelector('[data-new-messages]')?.remove();
@@ -443,7 +471,9 @@ export class SessionWorkspace {
     this.upsertTab(tab);
   }
 
-  async openSession(sessionId: string): Promise<void> {
+  async openSession(sessionId: string, notification = false): Promise<void> {
+    if (notification) { this.notificationSessions.add(sessionId); this.notificationHandled.delete(sessionId); }
+    else { this.notificationSessions.delete(sessionId); this.notificationHandled.delete(sessionId); }
     await this.assignSession(focusedPane(this.workspaceState.layout).id, sessionId);
   }
 
@@ -570,11 +600,42 @@ export class SessionWorkspace {
       );
       return true;
     }
+    if (action === 'native-message-clear') {
+      const tabId = this.selectedId;
+      (this.savedMessageEdits ??= new Set()).add(tabId);
+      this.nativeState(tabId).draft = '';
+      void this.clearSavedDraft(tabId).then(() => this.renderSelectedNative());
+      this.renderSelectedNative();
+      return true;
+    }
+    if (action === 'native-recover-answer' || action === 'native-clear-recovered-answer') {
+      const tabId = this.selectedId;
+      const index = Number(control.dataset.recoveryIndex);
+      const draft = this.savedRecovery.get(tabId)?.[index];
+      if (!draft) return true;
+      if (action === 'native-recover-answer') {
+        (this.savedMessageEdits ??= new Set()).add(tabId);
+        this.nativeState(tabId).draft = draft.answers.map((answer) => answer.text || answer.choiceIds.join(', ')).join('\n');
+        this.saveSession(tabId);
+      } else void this.clearSavedDraft(tabId, draft.requestId, draft.form).then(() => this.renderSelectedNative());
+      this.renderSelectedNative(); return true;
+    }
     if (action === 'workspace-view') {
       const mode = control.dataset.mode === 'terminal' ? 'terminal' : 'native';
       const pane = focusedPane(this.workspaceState.layout);
       const tab = this.tabForPane(pane);
-      if (tab && pane) void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: mode });
+      if (tab && pane) void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: mode }).then(() => this.saveSession(tab.id));
+      return true;
+    }
+    if (action === 'workspace-history' || action === 'workspace-history-refresh' || action === 'workspace-history-live') {
+      const tab = this.focusedTab();
+      if (tab && terminalHistoryEligible(tab)) {
+        if (action === 'workspace-history-live') this.closeTerminalHistory(tab.id);
+        else {
+          if (action === 'workspace-history-refresh') this.closeTerminalHistory(tab.id);
+          this.openTerminalHistory(tab.id);
+        }
+      }
       return true;
     }
     if (action === 'workspace-search') {
@@ -958,6 +1019,8 @@ export class SessionWorkspace {
     const modelControl = session && ['codex', 'claude', 'copilot'].includes(session.tool)
       ? `<button class="workspace-model-control status-${escapeAttr(modelState?.status ?? 'unknown')}" data-action="workspace-model-open" data-workspace-action ${unavailable ? 'disabled' : ''} title="Change model and reasoning effort for this session"><span>${escapeHtml(modelLabel)}</span></button>`
       : '';
+    const history = pane.viewMode === 'terminal' && terminalHistoryEligible(this.tabForPane(pane))
+      ? `<button data-action="workspace-history" data-workspace-action>History</button><button data-action="workspace-history-refresh" data-workspace-action>Refresh History</button><button data-action="workspace-history-live" data-workspace-action>Return to live terminal</button>` : '';
     const more = presentation.hasSessionActions
       ? `<button data-action="workspace-search" data-workspace-action>Find terminal</button><button data-action="workspace-download" data-workspace-action ${unavailable ? 'disabled' : ''}>Download a file…</button><button data-action="workspace-open-vscode" data-workspace-action ${unavailable ? 'disabled' : ''}>Open in VS Code</button><button data-action="workspace-open-windows" data-workspace-action ${unavailable ? 'disabled' : ''}>Open in Windows Terminal</button><button data-action="workspace-pane-close" data-workspace-action>Detach from pane</button><button class="danger-quiet" data-action="workspace-kill" data-workspace-action ${unavailable ? 'disabled' : ''}>Kill session…</button>`
       : '<button data-action="workspace-pane-close" data-workspace-action>Close pane</button>';
@@ -967,7 +1030,7 @@ export class SessionWorkspace {
       ${modelControl}
       <div class="workspace-pane-modes" data-workspace-mode-controls><button data-action="workspace-view" data-workspace-action data-mode="native" class="${pane.viewMode === 'native' ? 'active' : ''}" ${presentation.nativeEnabled ? '' : 'disabled'}>Native</button><button data-action="workspace-view" data-workspace-action data-mode="terminal" class="${pane.viewMode === 'terminal' ? 'active' : ''}" ${presentation.terminalEnabled ? '' : 'disabled'}>Terminal</button></div>
       <button class="primary-button workspace-toolbar-retry ${presentation.retryVisible ? '' : 'invisible'}" data-action="workspace-retry" data-workspace-action ${presentation.retryVisible ? '' : 'disabled'}>Retry</button>
-      <details class="workspace-actions-menu workspace-toolbar-more"><summary aria-label="More actions for ${escapeAttr(presentation.title)}">•••</summary><div>${pane.viewMode === 'native' ? `<button data-action="native-view" data-workspace-action data-view="conversation" aria-pressed="${this.nativeView === 'conversation'}">${this.nativeView === 'conversation' ? '✓ ' : ''}Conversation</button><button data-action="native-view" data-workspace-action data-view="detailed" aria-pressed="${this.nativeView === 'detailed'}">${this.nativeView === 'detailed' ? '✓ ' : ''}Detailed</button>` : ''}${more}</div></details>`;
+      <details class="workspace-actions-menu workspace-toolbar-more"><summary aria-label="More actions for ${escapeAttr(presentation.title)}">•••</summary><div>${pane.viewMode === 'native' ? `<button data-action="native-view" data-workspace-action data-view="conversation" aria-pressed="${this.nativeView === 'conversation'}">${this.nativeView === 'conversation' ? '✓ ' : ''}Conversation</button><button data-action="native-view" data-workspace-action data-view="detailed" aria-pressed="${this.nativeView === 'detailed'}">${this.nativeView === 'detailed' ? '✓ ' : ''}Detailed</button>` : ''}${history}${more}</div></details>`;
   }
 
   private mountTerminal(pane: WorkspacePane, tab: TerminalTabDescriptor): void {
@@ -1486,13 +1549,110 @@ export class SessionWorkspace {
         providerActivityReceivedAt: 0, nextCursor: cached?.nextCursor ?? null,
         hasMore: cached?.hasMore ?? false, loadingOlder: false, error: '', attachments: [], notice: '', draft: '',
         scrollTop: 0, scrollHeight: 0, scrollInitialized: false, followOutput: true, newMessages: false,
-        renderMode: 'initial', questionDrafts: new Map(), questionSteps: new Map(),
+        renderMode: 'initial', questionDrafts: new Map(), questionFormSources: new Map(), questionSteps: new Map(),
         submittingQuestions: new Set(), expandedDetails: new Set(), questionSheetId: '', viewer: null,
         suggestion: { requestId: '', revision: '', target: null, loading: false, values: [], error: '', automatic: false },
         automaticSuggestionKey: '' };
+      this.savedStates.delete(tabId);
       this.nativeStates.set(tabId, state);
+      void this.restoreSavedSession(tabId, state);
     }
     return state;
+  }
+
+  private async formFingerprint(item: ConversationItem): Promise<string> {
+    const bytes = new TextEncoder().encode(questionFormContent(item.questions ?? []));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  private async restoreSavedSession(tabId: string, state: NativeState): Promise<void> {
+    if (typeof window === 'undefined' || !window.limitsWidget?.getSavedSessionState) return;
+    const token = (this.savedRestoreTokens.get(tabId) ?? 0) + 1;
+    this.savedRestoreTokens.set(tabId, token);
+    const saved = await window.limitsWidget.getSavedSessionState(tabId).catch(() => null);
+    if (!saved || this.nativeStates.get(tabId) !== state || this.savedRestoreTokens.get(tabId) !== token) return;
+    const prior = this.savedStates.get(tabId);
+    if (prior && prior.identity.incarnationId !== saved.identity.incarnationId) {
+      state.draft = ''; state.questionDrafts.clear(); state.questionFormSources.clear(); state.questionSteps.clear();
+      state.scrollInitialized = false; state.followOutput = true; this.restoredAnchors.delete(tabId);
+    }
+    this.savedStates.set(tabId, saved);
+    if (!state.draft && !this.savedMessageEdits?.has(tabId)) state.draft = saved.message;
+    const tab = this.tabs.get(tabId);
+    const notification = Boolean(tab && this.notificationSessions.has(tab.sessionId));
+    if (!notification) {
+      state.followOutput = saved.followOutput;
+      if (!saved.followOutput && saved.anchor) { state.scrollInitialized = false; this.restoredAnchors.set(tabId, saved.anchor); }
+      const pane = tab ? paneForSession(this.workspaceState.layout, tab.sessionId) : undefined;
+      if (pane && pane.viewMode !== saved.selectedView) void this.applyCommand({ type: 'view', paneId: pane.id, viewMode: saved.selectedView });
+    }
+    this.savedRecovery.set(tabId, saved.questions);
+    await this.restoreQuestionDrafts(tabId, state);
+    if (this.savedMessageEdits?.has(tabId)) this.saveSession(tabId);
+    if (this.mounted) this.renderNativePanel(tabId);
+  }
+
+  private async restoreQuestionDrafts(tabId: string, state: NativeState): Promise<void> {
+    if (!state.providerStateKnown || !state.providerState.mutationsAllowed) return;
+    let changed = false;
+    for (const draft of this.savedRecovery.get(tabId) ?? []) {
+      if (this.savedQuestionClears.has(JSON.stringify([tabId, draft.requestId, draft.form])) ||
+          this.savedQuestionClears.has(JSON.stringify([tabId, draft.requestId, '*']))) continue;
+      const item = state.items.find((value) => value.id === draft.requestId && value.kind === 'question' && value.state === 'pending');
+      if (item && !state.questionDrafts.has(item.id) && await this.formFingerprint(item) === draft.form && this.nativeStates.get(tabId) === state
+          && state.providerStateKnown && state.providerState.mutationsAllowed && !state.questionDrafts.has(item.id)
+          && state.items.find((value) => value.id === item.id) === item) {
+        state.questionDrafts.set(item.id, draft.answers); state.questionFormSources.set(item.id, item.questions ?? []); changed = true;
+      }
+    }
+    if (changed && this.mounted) this.renderNativePanel(tabId);
+  }
+
+  private saveSession(tabId: string, flush = false): void {
+    if (!this.savedStates.has(tabId)) return;
+    const previous = this.savedTails.get(tabId) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const saved = this.savedStates.get(tabId);
+      const state = this.nativeStates.get(tabId);
+      const tab = this.tabs.get(tabId);
+      if (!saved || !state || !tab) return;
+      const questions = new Map((this.savedRecovery.get(tabId) ?? []).map((draft) => [JSON.stringify([draft.requestId, draft.form]), draft]));
+      for (const [requestId, answers] of state.questionDrafts) {
+        const item = state.items.find((value) => value.id === requestId);
+        if (item && item.state !== 'complete') {
+          const form = await this.formFingerprint({ ...item, questions: state.questionFormSources.get(requestId) ?? item.questions });
+          questions.set(JSON.stringify([requestId, form]), { requestId, answers, form });
+        }
+      }
+      const host = this.element.querySelector<HTMLElement>(`[data-native-host="${CSS.escape(tabId)}"]`);
+      const messages = host?.querySelector<HTMLElement>('.native-messages');
+      let anchor = saved.anchor;
+      if (messages && state.scrollInitialized) {
+        const top = messages.getBoundingClientRect().top;
+        const row = [...messages.querySelectorAll<HTMLElement>('[data-message-anchor]')].find((item) => item.getBoundingClientRect().bottom > top);
+        anchor = row?.dataset.messageAnchor ? { itemId: row.dataset.messageAnchor, offset: Math.round(row.getBoundingClientRect().top - top) } : null;
+      }
+      const pane = paneForSession(this.workspaceState.layout, tab.sessionId);
+      const content: SavedSessionContent = { message: state.draft, questions: [...questions.values()],
+        selectedView: pane?.viewMode ?? 'native', followOutput: state.followOutput, anchor };
+      const result = await window.limitsWidget.updateSavedSessionState(tabId, saved.revision, content, flush);
+      if (result && this.savedStates.get(tabId) === saved) {
+        this.savedStates.set(tabId, result);
+        this.savedRecovery.set(tabId, result.questions);
+      }
+    }).catch(() => { const state = this.nativeStates.get(tabId); if (state) state.notice = 'This draft could not be saved. Keep this session open and try again.'; });
+    this.savedTails.set(tabId, next);
+  }
+
+  private async clearSavedDraft(tabId: string, questionId?: string, form?: string): Promise<void> {
+    if (!questionId) (this.savedMessageEdits ??= new Set()).add(tabId);
+    if (questionId) this.savedQuestionClears.set(JSON.stringify([tabId, questionId, form ?? '*']), ++this.savedClearClock);
+    await this.savedTails.get(tabId);
+    const saved = this.savedStates.get(tabId);
+    if (!saved) return;
+    const next = await window.limitsWidget.clearSavedSessionState(tabId, saved.revision, questionId, form);
+    if (next) { this.savedStates.set(tabId, next); this.savedRecovery.set(tabId, next.questions); }
   }
 
   private startConversation(tab: TerminalTabDescriptor): void {
@@ -1510,6 +1670,7 @@ export class SessionWorkspace {
 
   private beginConversationLoading(tabId: string): void {
     const state = this.nativeState(tabId);
+    void this.restoreSavedSession(tabId, state);
     state.connection = state.items.length ? 'Refreshing…' : 'Connecting…';
     state.providerState = unavailableProviderState();
     state.providerStateKnown = false;
@@ -1587,6 +1748,23 @@ export class SessionWorkspace {
       if (frame.providerState) { state.providerState = frame.providerState; state.providerStateKnown = true; }
     }
     const activeQuestionIds = new Set(state.items.filter((item) => item.kind === 'question' && item.state !== 'complete').map((item) => item.id));
+    for (const [id, answers] of state.questionDrafts) {
+      const priorForm = state.questionFormSources.get(id);
+      const current = state.items.find((item) => item.id === id && item.kind === 'question');
+      if (priorForm && current && JSON.stringify(priorForm) !== JSON.stringify(current.questions ?? [])) {
+        state.questionDrafts.delete(id); state.questionFormSources.delete(id); state.questionSteps.delete(id);
+        const source = { id, questions: priorForm } as ConversationItem;
+        const clearClock = this.savedClearClock;
+        void this.formFingerprint(source).then((form) => {
+          if (this.nativeStates.get(tabId) !== state) return;
+          if ((this.savedQuestionClears.get(JSON.stringify([tabId, id, form])) ?? 0) > clearClock ||
+              (this.savedQuestionClears.get(JSON.stringify([tabId, id, '*'])) ?? 0) > clearClock) return;
+          const previous = this.savedRecovery.get(tabId) ?? [];
+          this.savedRecovery.set(tabId, [...previous.filter((draft) => draft.requestId !== id || draft.form !== form), { requestId: id, form, answers }]);
+          this.saveSession(tabId);
+        });
+      }
+    }
     for (const id of state.submittingQuestions) if (!activeQuestionIds.has(id)) state.submittingQuestions.delete(id);
     const pendingAfter = [...state.items].reverse().find((item) => ['question', 'approval'].includes(item.kind) && item.state !== 'complete')?.id ?? '';
     if (!state.items.some((item) => item.id === state.questionSheetId && item.state !== 'complete')) state.questionSheetId = '';
@@ -1629,6 +1807,17 @@ export class SessionWorkspace {
   }
 
   private renderNativePanel(tabId: string): void {
+    const notificationTab = this.tabs.get(tabId);
+    const notificationState = this.nativeStates.get(tabId);
+    if (notificationTab && notificationState?.providerStateKnown && this.notificationSessions.has(notificationTab.sessionId) && !this.notificationHandled.has(notificationTab.sessionId)) {
+      this.notificationHandled.add(notificationTab.sessionId);
+      this.restoredAnchors.delete(tabId);
+      notificationState.scrollInitialized = false; notificationState.followOutput = true;
+      const pending = notificationState.items.filter((item) => item.kind === 'question' && item.state === 'pending').at(-1);
+      if (pending && notificationState.providerState.mutationsAllowed) notificationState.questionSheetId = pending.id;
+    }
+    const restoreState = this.nativeStates.get(tabId);
+    if (restoreState) void this.restoreQuestionDrafts(tabId, restoreState);
     const tab = this.tabs.get(tabId);
     const pane = tab ? paneForSession(this.workspaceState.layout, tab.sessionId) : undefined;
     const host = this.element.querySelector<HTMLElement>(`[data-native-host="${CSS.escape(tabId)}"]`);
@@ -1740,9 +1929,10 @@ export class SessionWorkspace {
     return `<div class="native-composer ${state.interactionMode === 'plan' ? 'planning' : ''}" data-composer-tab="${escapeAttr(tab.id)}">
       ${state.attachments.length ? `<div class="attachment-strip">${state.attachments.map((item) => `<button data-action="native-remove-attachment" data-workspace-action data-attachment-id="${escapeAttr(item.id)}" title="Remove ${escapeAttr(item.name)}"><img src="${item.thumbnail}" alt=""><span>${escapeHtml(item.name)}</span><b>×</b></button>`).join('')}</div>` : ''}
       ${state.notice ? `<small class="composer-notice">${escapeHtml(state.notice)}</small>` : ''}
+      ${(this.savedRecovery.get(tab.id) ?? []).map((draft, index) => !state.questionDrafts.has(draft.requestId) ? `<div class="composer-notice">Saved answer available <button data-action="native-recover-answer" data-workspace-action data-recovery-index="${index}">Recover</button><button data-action="native-clear-recovered-answer" data-workspace-action data-recovery-index="${index}">Clear</button></div>` : '').join('')}
       <textarea rows="1" data-native-message data-focus-key="native-message" maxlength="32768" placeholder="Message ${escapeAttr(tab.tool)}… (Ctrl+Enter to send)">${escapeHtml(state.draft)}</textarea>
       ${state.suggestion.target?.kind === 'composer' ? renderSuggestionChoices(state.suggestion) : ''}
-      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Shift+Tab</button><button data-action="native-control-c" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Send</button></div>
+      <div class="composer-actions"><button data-action="native-attach" data-workspace-action title="Choose images">Attach</button><button data-action="native-clipboard" data-workspace-action title="Paste image from clipboard">Paste image</button><button data-action="native-shift-tab" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Shift+Tab</button><button data-action="native-control-c" data-workspace-action ${state.providerState.mutationsAllowed ? '' : 'disabled'}>Ctrl+C</button>${canSuggest && !state.suggestion.target ? `<button data-action="native-suggest" data-workspace-action data-suggestion-target="composer">${suggestionLabel}</button>` : ''}${state.draft ? '<button data-action="native-message-clear" data-workspace-action>Clear draft</button>' : ''}<span></span><button class="primary-button" data-action="native-send" data-workspace-action ${state.providerState.mutationsAllowed && !this.sendingMessages?.has(tab.id) ? '' : 'disabled'}>Send</button></div>
     </div>`;
   }
 
@@ -1792,6 +1982,7 @@ export class SessionWorkspace {
     const target = state.suggestion.target;
     if (!value || !target) return;
     if (target.kind === 'composer') {
+      (this.savedMessageEdits ??= new Set()).add(this.selectedId);
       state.draft = value;
     } else {
       const answers = [...(state.questionDrafts.get(target.itemId) ?? [])];
@@ -1799,7 +1990,9 @@ export class SessionWorkspace {
       const answer = { questionId: target.questionId, choiceIds: index >= 0 ? answers[index].choiceIds : [], text: value };
       if (index >= 0) answers[index] = answer; else answers.push(answer);
       state.questionDrafts.set(target.itemId, answers);
+      this.saveSession(this.selectedId);
     }
+    this.saveSession(this.selectedId);
     this.clearSuggestions(this.selectedId);
     state.renderMode = 'preserve';
     this.renderSelectedNative();
@@ -1859,22 +2052,29 @@ export class SessionWorkspace {
     if (start && target) void this.requestSuggestionTarget(tabId, target, true);
   }
 
-  private async loadOlder(): Promise<void> {
-    const tabId = this.selectedId;
+  private async loadOlder(tabId = this.selectedId): Promise<void> {
     const generation = this.viewGeneration;
     const state = this.nativeState(tabId);
     if (!state.nextCursor || state.loadingOlder) return;
+    if (state.items.length >= 2_000) {
+      state.nextCursor = null; state.hasMore = false;
+      this.renderSelectedNative(); return;
+    }
     state.loadingOlder = true; this.renderSelectedNative();
-    const result = await window.limitsWidget.pageConversation(this.selectedId, state.nextCursor);
-    if (generation !== this.viewGeneration || !this.tabs.has(tabId) || this.nativeState(tabId) !== state) return;
+    const result = await window.limitsWidget.pageConversation(tabId, state.nextCursor);
     state.loadingOlder = false;
+    if (generation !== this.viewGeneration || !this.tabs.has(tabId) || this.nativeState(tabId) !== state) return;
     if (result.frame?.type === 'conversation.snapshot'
       && (!result.frame.session || result.frame.session === this.tabs.get(tabId)?.internalName)) {
       state.confirmedQuestions.remember(result.frame.items ?? [], state.items);
       state.items = mergeItems(state.confirmedQuestions.restore(result.frame.items ?? []), state.items);
       state.nextCursor = result.frame.nextCursor ?? null; state.hasMore = Boolean(result.frame.hasMore);
+      if (state.items.length >= 2_000) { state.nextCursor = null; state.hasMore = false; }
       state.renderMode = 'prepend';
-    } else state.notice = result.message;
+    } else {
+      state.notice = result.message;
+      this.restoredAnchors.delete(tabId);
+    }
     this.renderSelectedNative();
   }
 
@@ -1920,8 +2120,11 @@ export class SessionWorkspace {
     state.submittingQuestions.add(item.id);
     state.notice = 'Submitting answers…';
     this.renderSelectedNative();
+    const tabId = this.selectedId;
+    this.saveSession(tabId);
+    await this.savedTails.get(tabId);
     const result = await window.limitsWidget.answerConversation(
-      this.selectedId, item.id, item.revision, state.providerState.eventPosition, answers
+      tabId, item.id, item.revision, state.providerState.eventPosition, answers
     ).catch(() => ({ ok: false, message: 'Delivery was not confirmed. Check again before retrying.' }));
     state.notice = result.message;
     state.submittingQuestions.delete(item.id);
@@ -1930,6 +2133,8 @@ export class SessionWorkspace {
       state.confirmedQuestions.remember([completed]);
       state.items = mergeItems(state.items, [completed]);
       if (state.questionSheetId === item.id) state.questionSheetId = '';
+      state.questionDrafts.delete(item.id);
+      await this.clearSavedDraft(tabId, item.id, await this.formFingerprint(item));
     } else {
       state.items = mergeItems(state.items, [{ ...item, state: 'error', title: 'Answer not sent', text: result.message, answers }]);
     }
@@ -1960,7 +2165,8 @@ export class SessionWorkspace {
     const next = { questionId, choiceIds: question?.type !== 'multi' && textInput.value.trim() ? [] : previous?.choiceIds ?? [], text: textInput.value };
     const index = answers.findIndex((value) => value.questionId === questionId);
     if (index >= 0) answers[index] = next; else answers.push(next);
-    state.questionDrafts.set(itemId, answers);
+    state.questionDrafts.set(itemId, answers); state.questionFormSources.set(itemId, item.questions ?? []);
+    this.saveSession(this.selectedId);
   }
 
   private async chooseQuestionOption(item: ConversationItem, questionId: string, choice: string): Promise<void> {
@@ -1978,7 +2184,8 @@ export class SessionWorkspace {
       : [choice];
     const next = { ...previous, choiceIds };
     if (index >= 0) answers[index] = next; else answers.push(next);
-    state.questionDrafts.set(item.id, answers);
+    state.questionDrafts.set(item.id, answers); state.questionFormSources.set(item.id, item.questions ?? []);
+    this.saveSession(this.selectedId);
     if (question.type === 'multi') { this.renderSelectedNative(); return; }
     if (step < item.questions.length - 1) {
       state.questionSteps.set(item.id, step + 1);
@@ -2125,7 +2332,15 @@ export class SessionWorkspace {
     if (!messages) return;
     this.enhanceMarkdownCopy(root);
     if ((!state.scrollInitialized || state.renderMode === 'initial') && state.items.length) {
-      messages.scrollTop = messages.scrollHeight;
+      const anchor = this.restoredAnchors.get(tabId);
+      const row = anchor ? messages.querySelector<HTMLElement>(`[data-message-anchor="${CSS.escape(anchor.itemId)}"]`) : null;
+      if (anchor && !row && state.hasMore && state.nextCursor && !state.loadingOlder && !state.error) {
+        void this.loadOlder(tabId);
+        return;
+      }
+      if (anchor && !row && state.loadingOlder) return;
+      messages.scrollTop = row && anchor ? messages.scrollTop + row.getBoundingClientRect().top - messages.getBoundingClientRect().top - anchor.offset : messages.scrollHeight;
+      this.restoredAnchors.delete(tabId);
       state.scrollInitialized = true; state.followOutput = true; state.newMessages = false;
     } else if (!state.scrollInitialized) {
       messages.scrollTop = 0;
@@ -2195,9 +2410,24 @@ export class SessionWorkspace {
     }
     const input = this.element.querySelector<HTMLTextAreaElement>(`[data-native-host="${CSS.escape(this.selectedId)}"] [data-native-message]`);
     const text = input?.value ?? '';
-    const result = await window.limitsWidget.sendConversationMessage(this.selectedId, text);
-    state.notice = result.message;
-    if (result.ok) { state.attachments = []; state.draft = ''; if (input) input.value = ''; }
+    const tabId = this.selectedId;
+    if (this.sendingMessages?.has(tabId)) return;
+    (this.sendingMessages ??= new Set()).add(tabId);
+    this.renderSelectedNative();
+    try {
+      this.saveSession(tabId);
+      await this.savedTails.get(tabId);
+      const result = await window.limitsWidget.sendConversationMessage(tabId, text);
+      state.notice = result.message;
+      if (result.ok) {
+        state.attachments = [];
+        if (state.draft === text) { state.draft = ''; await this.clearSavedDraft(tabId); }
+        else this.saveSession(tabId);
+      }
+    } catch {
+      state.notice = 'Delivery was not confirmed. Check before retrying.';
+    } finally { this.sendingMessages.delete(tabId); }
+
     this.renderSelectedNative();
   }
 
@@ -2217,6 +2447,13 @@ export class SessionWorkspace {
       state.generation += 1;
     }
     this.closeTerminalHistory(tabId);
+    this.pendingHistoryOpen.delete(tabId);
+    const runtime = this.runtimes.get(tabId);
+    runtime?.historyTerminal?.dispose(); runtime?.historyElement?.remove();
+    if (runtime) {
+      delete runtime.historyTerminal; delete runtime.historyElement;
+      delete runtime.historyFit; delete runtime.historyRevision;
+    }
     const timer = this.terminalHistoryTimers.get(tabId);
     if (timer !== undefined) window.clearTimeout(timer);
     this.terminalHistoryTimers.delete(tabId);
@@ -2233,6 +2470,7 @@ export class SessionWorkspace {
     if (timer !== undefined) window.clearTimeout(timer);
     this.terminalHistoryTimers.delete(tabId);
     if (state.status === 'error') state.status = 'idle';
+    if (!input) state.dirtyVersion += 1;
     if (!input && state.status === 'ready' && state.snapshot) {
       state.updated = true;
     }
@@ -2253,7 +2491,7 @@ export class SessionWorkspace {
       const runtime = this.runtimes.get(tabId);
       if (!runtime || runtime.terminal.buffer.active.type !== 'alternate') return;
       this.enqueueTerminalHistory(tabId);
-    }, immediate ? 0 : TERMINAL_HISTORY_QUIET_MS);
+    }, immediate ? 0 : Math.max(TERMINAL_HISTORY_QUIET_MS, state.capturedAt + TERMINAL_HISTORY_MIN_INTERVAL_MS - Date.now()));
     this.terminalHistoryTimers.set(tabId, timer);
   }
 
@@ -2263,7 +2501,7 @@ export class SessionWorkspace {
     state.generation += 1;
     state.status = 'loading';
     state.error = '';
-    const request = { tabId, generation: state.generation };
+    const request = { tabId, generation: state.generation, dirtyVersion: state.dirtyVersion };
     this.terminalHistoryQueued.add(tabId);
     if (tabId === this.selectedId) this.terminalHistoryQueue.unshift(request);
     else this.terminalHistoryQueue.push(request);
@@ -2282,15 +2520,38 @@ export class SessionWorkspace {
           this.terminalHistoryQueued.delete(request.tabId);
           continue;
         }
+        state.capturedAt = Date.now();
         const result = await window.limitsWidget.loadTerminalHistory(request.tabId);
         this.terminalHistoryQueued.delete(request.tabId);
         if (!this.terminalHistories.has(request.tabId) || state.generation !== request.generation) continue;
         if (!result.ok || !result.pane) {
+          this.pendingHistoryOpen.delete(request.tabId);
           state.status = 'error';
           state.error = result.message || 'Pane scrollback could not be loaded.';
         } else {
+          const binding = result.identity ? JSON.stringify([result.identity.host, result.identity.incarnationId, result.identity.projectRoot, result.identity.backend]) : '';
+          if (state.binding && binding !== state.binding) { this.closeTerminalHistory(request.tabId); state.snapshot = null; }
+          state.binding = binding;
+          if (!binding) { state.snapshot = null; const runtime = this.runtimes.get(request.tabId); if (runtime) delete runtime.historyRevision; }
           const next = applyTerminalHistorySnapshot(state, result.pane);
           Object.assign(state, next);
+          state.updated ||= state.dirtyVersion !== request.dirtyVersion;
+          const captures = [...this.terminalHistories.entries()].filter(([, value]) => value.snapshot);
+          const count = () => [...this.terminalHistories.values()].reduce((total, value) => total + Number(Boolean(value.snapshot)) + Number(Boolean(value.pendingSnapshot && value.pendingSnapshot !== value.snapshot)), 0);
+          while (count() > 4) {
+            const victim = captures.filter(([id, value]) => id !== request.tabId && !value.active).sort((left, right) => left[1].capturedAt - right[1].capturedAt)[0];
+            if (victim?.[1].snapshot) {
+              victim[1].snapshot = null; victim[1].pendingSnapshot = null; victim[1].status = 'idle';
+              const runtime = this.runtimes.get(victim[0]);
+              runtime?.historyTerminal?.dispose(); runtime?.historyElement?.remove();
+              if (runtime) { delete runtime.historyTerminal; delete runtime.historyElement; delete runtime.historyRevision; }
+              captures.splice(captures.indexOf(victim), 1);
+            } else if (state.pendingSnapshot) state.pendingSnapshot = null;
+            else { state.snapshot = null; state.status = 'idle'; break; }
+          }
+          const openDelta = this.pendingHistoryOpen.get(request.tabId);
+          if (openDelta !== undefined) { this.pendingHistoryOpen.delete(request.tabId); this.openTerminalHistory(request.tabId, openDelta, true); }
+          if (state.updated && !state.active) this.scheduleTerminalHistory(request.tabId);
         }
       }
     } finally {
@@ -2299,7 +2560,7 @@ export class SessionWorkspace {
     }
   }
 
-  private openTerminalHistory(tabId: string, scrollDelta = 0): void {
+  private openTerminalHistory(tabId: string, scrollDelta = 0, verified = false): void {
     const tab = this.tabs.get(tabId);
     const runtime = this.runtimes.get(tabId);
     if (!terminalHistoryEligible(tab) || !runtime) return;
@@ -2308,18 +2569,28 @@ export class SessionWorkspace {
       this.scrollTerminalHistory(tabId, scrollDelta);
       return;
     }
-    if (state.snapshot && !terminalHistoryDimensionsMatch(
+    if (!verified) {
+      this.pendingHistoryOpen.set(tabId, scrollDelta);
+      this.enqueueTerminalHistory(tabId);
+      return;
+    }
+    if (state.snapshot && !terminalHistoryFitsViewport(
       state.snapshot, runtime.terminal.cols, runtime.terminal.rows
     )) {
       state.snapshot = null;
       state.status = 'idle';
     }
-    if (!state.snapshot || state.status !== 'ready') {
+    if (!state.snapshot) {
       if (state.status === 'idle') this.enqueueTerminalHistory(tabId);
       return;
     }
     const host = runtime.element.parentElement;
     if (!host) return;
+    if (runtime.historyTerminal && runtime.historyElement && runtime.historyRevision === state.snapshot.revision &&
+        terminalHistoryFitsViewport(state.snapshot, runtime.historyTerminal.cols, runtime.historyTerminal.rows)) {
+      state.active = true; runtime.historyElement.style.display = ''; this.scrollTerminalHistory(tabId, scrollDelta || -3); runtime.historyTerminal.focus(); return;
+    }
+    runtime.historyTerminal?.dispose(); runtime.historyElement?.remove();
     const historyTerminal = new Terminal({
       ...this.terminalOptions(),
       cursorBlink: false,
@@ -2333,7 +2604,7 @@ export class SessionWorkspace {
     host.append(historyElement);
     historyTerminal.open(historyElement);
     historyFit.fit();
-    if (!terminalHistoryDimensionsMatch(state.snapshot, historyTerminal.cols, historyTerminal.rows)) {
+    if (!terminalHistoryFitsViewport(state.snapshot, historyTerminal.cols, historyTerminal.rows)) {
       historyTerminal.dispose();
       historyElement.remove();
       state.snapshot = null;
@@ -2353,6 +2624,7 @@ export class SessionWorkspace {
     runtime.historyTerminal = historyTerminal;
     runtime.historyFit = historyFit;
     runtime.historyElement = historyElement;
+    runtime.historyRevision = state.snapshot.revision;
     state.active = true;
     historyTerminal.write(decodePaneAnsi(state.snapshot.ansiBase64), () => {
       if (!state.active) return;
@@ -2364,14 +2636,13 @@ export class SessionWorkspace {
 
   private closeTerminalHistory(tabId: string): void {
     const state = this.terminalHistories.get(tabId);
-    if (state) state.active = false;
+    if (state) {
+      state.active = false;
+      if (state.pendingSnapshot) Object.assign(state, applyTerminalHistorySnapshot(state, state.pendingSnapshot));
+    }
     const runtime = this.runtimes.get(tabId);
-    runtime?.historyTerminal?.dispose();
-    runtime?.historyElement?.remove();
+    if (runtime?.historyElement) runtime.historyElement.style.display = 'none';
     if (runtime) {
-      delete runtime.historyTerminal;
-      delete runtime.historyFit;
-      delete runtime.historyElement;
       runtime.terminal.focus();
     }
     if (state?.updated) {

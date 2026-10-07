@@ -321,7 +321,7 @@ export class DashboardPrototype {
     if (route.action === 'open-session') {
       this.view = 'workspace';
       this.render();
-      void this.workspace.openSession(route.id);
+      void this.workspace.openSession(route.id, true);
       return;
     }
     if (route.action === 'dashboard-fallback') {

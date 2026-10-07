@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "host": "synthetic-host",
+  "session": "synthetic-session",
+  "incarnationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "projectRoot": "/synthetic/project",
+  "backend": "linux",
+  "tool": "codex",
+  "tabId": "reused-tab"
+}

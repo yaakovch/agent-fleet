@@ -1,3 +1,5 @@
+import { SessionStateStore } from './session-state-store';
+import { validSessionContent, type SessionIdentity } from '../shared/session-state';
 import {
   app,
   BrowserWindow,
@@ -162,6 +164,13 @@ const terminalManager = new TerminalManager({
   },
   onWorkspace: (state) => sendDashboard(IPC_CHANNELS.terminalWorkspaceUpdated, state),
   processOwnership: wslProcessOwnership
+});
+const savedSessionBindings = new Map<string, { identity: SessionIdentity; target: string; route: string }>();
+const savedSessionStore = new SessionStateStore(join(dataDirectory, 'session-state-v1'), (state) => {
+  for (const [key, binding] of savedSessionBindings) {
+    if (binding.identity.host === state.identity.host && binding.identity.incarnationId === state.identity.incarnationId && binding.target === state.executionTarget)
+      sendDashboard(IPC_CHANNELS.sessionStateFailure, { tabId: key.slice(key.indexOf(':') + 1) });
+  }
 });
 const conversationManager = new ConversationManager({
   tempPath: join(app.getPath('temp'), 'agent-fleet-attachments'),
@@ -360,7 +369,7 @@ function showDashboard(target?: FleetNotificationTarget): void {
     terminalManager.unbindAll();
     conversationManager.sync([]);
   };
-  dashboardWindow.on('hide', clearDashboardContent);
+  dashboardWindow.on('hide', () => { savedSessionStore.flush(); clearDashboardContent(); });
   dashboardWindow.webContents.on('did-start-loading', clearDashboardContent);
   secureWindow(dashboardWindow);
   const scheduleSave = (): void => {
@@ -826,6 +835,7 @@ handle(IPC_CHANNELS.terminalWorkspaceCommand, (event, command) => {
   const value: unknown = command;
   if (!isWorkspaceCommand(value)) return terminalManager.getWorkspaceState();
   const parsed = value;
+  savedSessionStore.flush();
   if (parsed.type === 'assign') {
     const snapshot = getFleetView().snapshot;
     const session = snapshot.sessions.find((item) => item.id === parsed.sessionId);
@@ -853,6 +863,7 @@ handle(IPC_CHANNELS.terminalResize, (event, tabId, columns, rows) =>
     && terminalManager.resize(requireContent(event, 'terminal', tabId), columns, rows));
 handle(IPC_CHANNELS.terminalClose, (event, tabId) => {
   const authorized = requireTabAccess(event, tabId);
+  savedSessionStore.flush();
   const closed = terminalManager.close(authorized);
   if (!closed) rendererAccess.revokeTab(authorized);
   return closed;
@@ -873,6 +884,43 @@ handle(IPC_CHANNELS.terminalSetView, (event, tabId, viewMode) => {
     conversationManager.stop(authorized);
   }
   return tab;
+});
+function savedSessionTab(event: Electron.IpcMainInvokeEvent, tabId: unknown) {
+  requireDashboard(event);
+  if (typeof tabId !== 'string') return undefined;
+  return terminalManager.list().find((tab) => tab.id === tabId);
+}
+function savedSessionRoute(tab: import('../shared/terminal').TerminalTabDescriptor): string {
+  return JSON.stringify([tab.hostId, tab.internalName, tab.project, tab.tool, tab.backend]);
+}
+handle(IPC_CHANNELS.sessionStateGet, async (event, tabId) => {
+  const tab = savedSessionTab(event, tabId);
+  if (!tab) return null;
+  const identity = await conversationManager.identity(tab.id);
+  const current = savedSessionTab(event, tabId);
+  if (!identity || !current || savedSessionRoute(current) !== savedSessionRoute(tab) || identity.backend !== tab.backend || identity.tool !== tab.tool) return null;
+  const session = getFleetView().snapshot.sessions.find((value) => value.id === tab.sessionId);
+  const target = session?.executionTargetId ?? tab.backend;
+  const binding = { identity, target, route: savedSessionRoute(tab) };
+  savedSessionBindings.set(`${event.sender.id}:${tab.id}`, binding);
+  return savedSessionStore.get(identity, target);
+});
+handle(IPC_CHANNELS.sessionStateUpdate, (event, tabId, revision, content, flush = false) => {
+  const tab = savedSessionTab(event, tabId);
+  const binding = tab && savedSessionBindings.get(`${event.sender.id}:${tab.id}`);
+  if (!tab || !binding || binding.route !== savedSessionRoute(tab) || !Number.isSafeInteger(revision) || !validSessionContent(content)) return null;
+  if (typeof flush !== 'boolean') return null;
+  const saved = savedSessionStore.update(binding.identity, binding.target, revision as number, content);
+  if (flush) savedSessionStore.flush();
+  return saved;
+});
+handle(IPC_CHANNELS.sessionStateClear, (event, tabId, revision, questionId: unknown, form: unknown) => {
+  const tab = savedSessionTab(event, tabId);
+  const binding = tab && savedSessionBindings.get(`${event.sender.id}:${tab.id}`);
+  if (!tab || !binding || binding.route !== savedSessionRoute(tab) || !Number.isSafeInteger(revision) ||
+      (questionId !== undefined && (typeof questionId !== 'string' || questionId.length > 160)) ||
+      (form !== undefined && (typeof form !== 'string' || form.length < 1 || form.length > 160))) return null;
+  return savedSessionStore.clear(binding.identity, binding.target, revision as number, questionId as string | undefined, form as string | undefined);
 });
 handle(IPC_CHANNELS.conversationStart, (event, tabId, view) => {
   const senderId = requireDashboard(event);
@@ -1860,6 +1908,7 @@ app.on('before-quit', (event) => {
         logger.warn(`Shutdown cleanup failed: ${label}`, error);
       }
     };
+    cleanup('saved session state', () => savedSessionStore.flush());
     cleanup('updater', () => updater?.stop());
     cleanup('state manager', () => stateManager.stop());
     cleanup('fleet bridge', () => fleetBridge.stop());

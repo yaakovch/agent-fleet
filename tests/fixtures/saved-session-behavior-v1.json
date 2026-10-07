@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "persistence": {
+    "debounceMillis": 300,
+    "restoredMutationsAllowed": false,
+    "restoredUploads": false
+  },
+  "history": {
+    "captures": 4,
+    "maximumCaptureBytes": 4194304,
+    "backgroundMinimumMillis": 5000
+  },
+  "freshness": {
+    "reconciliationMillis": 30000,
+    "legacyPollingMillis": 3000,
+    "quietDurationMillis": 300000,
+    "maximumQuietRequests": 11
+  },
+  "form": {
+    "encoding": "sha256 of UTF-8 JSON ordered arrays [id,header,prompt,type,required,allowOther,options [id,label,description]]",
+    "questions": [
+      {
+        "id": "q-1",
+        "header": "Choice",
+        "prompt": "Choose 😀",
+        "type": "single",
+        "required": true,
+        "allowOther": false,
+        "options": [
+          {
+            "id": "one",
+            "label": "First",
+            "description": "Description"
+          }
+        ]
+      }
+    ],
+    "sha256": "bdb20639a5ebaaf33189534c10f4d74f0cff48cfe4b2ad1dea3f23a915fdc452"
+  },
+  "identityChanges": [
+    "incarnationId",
+    "projectRoot",
+    "tool",
+    "executionTarget"
+  ],
+  "reopening": {
+    "normal": "saved-anchor",
+    "notification": "pending-question-or-newest",
+    "expiredAnchor": "newest",
+    "uncertainIdentity": "no-automatic-restore"
+  }
+}

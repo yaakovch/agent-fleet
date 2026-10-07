@@ -9,6 +9,7 @@ import { nativeImage } from 'electron';
 import { parseConversationProtocolFrame, parseConversationFrame, type ConversationView, type ConversationAnswer, type ConversationEvent, type ConversationFrame, type NativeActionResult, type StagedAttachment } from '../shared/conversation';
 import type { PaneScrollbackSnapshot, TerminalTabDescriptor } from '../shared/terminal';
 import { activatedRuntimeCommand } from '../shared/runtime';
+import { parseSessionIdentity, type SessionIdentity } from '../shared/session-state';
 import { wslProcessOwner, type WslProcessOwnership } from './wsl-process-ownership';
 
 const MAX_FRAME = 256 * 1024;
@@ -42,6 +43,7 @@ export class ConversationManager {
   private views = new Map<string, ConversationView>();
   private reads = new Map<string, AbortController>();
   private streams = new Map<string, StreamState>();
+  private identityReads = new Map<string, Promise<SessionIdentity | null>>();
   private generations = new Map<string, number>();
   private attachments = new Map<string, StoredAttachment[]>();
   private readonly attachmentGenerations = new Map<string, number>();
@@ -144,14 +146,46 @@ export class ConversationManager {
   async history(tabId: string): Promise<NativeActionResult> {
     const tab = this.options.resolveTab(tabId);
     if (!tab || tab.tool === 'shell') return { ok: false, message: 'Terminal history is unavailable for this session' };
+    const identity = await this.identity(tabId);
     const result = await runBounded('wsl.exe', [
       '-d', this.options.getDistro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'pane', 'scrollback',
       '--host', tab.hostId, '--session', tab.internalName, '--limit', '2000'
     ], 20_000, this.options.spawnProcess ?? spawn, this.options.processOwnership, actionOwner('history'));
     const line = result.stdout.split(/\r?\n/u).filter(Boolean).at(-1) ?? '';
     const pane = parsePaneScrollback(line, tab.internalName);
-    if (result.code === 0 && pane) return { ok: true, message: 'Pane scrollback ready', pane };
+    if (result.code === 0 && pane) {
+      const verified = identity ? await this.identity(tabId) : null;
+      if (identity && (!verified || verified.incarnationId !== identity.incarnationId || verified.projectRoot !== identity.projectRoot)) {
+        return { ok: false, message: 'Session changed while History was captured. Refresh to continue.' };
+      }
+      return { ok: true, message: 'Pane scrollback ready', pane, ...(verified ? { identity: verified } : {}) };
+    }
     return { ok: false, message: result.stderr.trim().slice(0, 500) || 'Pane scrollback is unavailable' };
+  }
+
+  identity(tabId: string): Promise<SessionIdentity | null> {
+    const tab = this.options.resolveTab(tabId);
+    if (!tab || this.disposed) return Promise.resolve(null);
+    const key = JSON.stringify([tabId, this.options.getDistro(), tab.hostId, tab.internalName, tab.backend, tab.tool, tab.project]);
+    const pending = this.identityReads.get(key);
+    if (pending) return pending;
+    const read = this.readIdentity(tabId, tab).finally(() => {
+      if (this.identityReads.get(key) === read) this.identityReads.delete(key);
+    });
+    this.identityReads.set(key, read);
+    return read;
+  }
+
+  private async readIdentity(tabId: string, tab: TerminalTabDescriptor): Promise<SessionIdentity | null> {
+    const result = await runBounded('wsl.exe', [
+      '-d', this.options.getDistro(), '--cd', '~', '--', activatedRuntimeCommand('wtmux'), 'session', 'identity',
+      '--host', tab.hostId, '--session', tab.internalName
+    ], 10_000, this.options.spawnProcess ?? spawn, this.options.processOwnership, actionOwner('session-identity'));
+    const current = this.options.resolveTab(tabId);
+    if (this.disposed || result.code !== 0 || !current || current.hostId !== tab.hostId || current.internalName !== tab.internalName ||
+      current.backend !== tab.backend || current.tool !== tab.tool || current.project !== tab.project) return null;
+    try { return parseSessionIdentity(JSON.parse(result.stdout.trim()), tab.hostId, tab.internalName); }
+    catch { return null; }
   }
 
   async approve(tabId: string, approval: string, choice: string, revision: string, eventPosition: number): Promise<NativeActionResult> {

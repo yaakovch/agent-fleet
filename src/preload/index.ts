@@ -17,6 +17,7 @@ import type {
 import type { CombinedLimitState } from '../shared/limits';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import { IPC_CHANNELS } from '../shared/ipc';
+import type { SavedSessionContent, SavedSessionState } from '../shared/session-state';
 import type { CodexProfileSettings, InteractionMode, SettingsLoadResult, WidgetSettings } from '../shared/settings';
 import type {
   SessionViewMode, TerminalClosedEvent, TerminalDataEvent, TerminalOpenResult,
@@ -89,6 +90,12 @@ const api = {
   syncConversations: (tabIds: string[], view: 'conversation' | 'detailed' = 'conversation'): Promise<string[]> => invoke(IPC_CHANNELS.conversationSync, tabIds, view),
   loadTerminalHistory: (tabId: string): Promise<NativeActionResult> =>
     invoke(IPC_CHANNELS.conversationHistory, tabId),
+  getSavedSessionState: (tabId: string): Promise<SavedSessionState | null> => invoke(IPC_CHANNELS.sessionStateGet, tabId),
+  onSavedSessionFailure: (callback: (event: { tabId: string }) => void): (() => void) => subscribe(IPC_CHANNELS.sessionStateFailure, callback),
+  updateSavedSessionState: (tabId: string, revision: number, content: SavedSessionContent, flush = false): Promise<SavedSessionState | null> =>
+    invoke(IPC_CHANNELS.sessionStateUpdate, tabId, revision, content, flush),
+  clearSavedSessionState: (tabId: string, revision: number, questionId?: string, form?: string): Promise<SavedSessionState | null> =>
+    invoke(IPC_CHANNELS.sessionStateClear, tabId, revision, questionId, form),
   pageConversation: (tabId: string, cursor: string): Promise<NativeActionResult> =>
     invoke(IPC_CHANNELS.conversationPage, tabId, cursor),
   cancelConversationRead: (tabId: string): Promise<void> => invoke(IPC_CHANNELS.conversationCancelRead, tabId),

@@ -5,7 +5,7 @@ export interface GeneratedStructuralShape {
   readonly rejectUnknown?: boolean;
 }
 
-export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.13.0";
+export const GENERATED_CONTRACT_PACKAGE_VERSION = "1.14.0";
 export const GENERATED_PROTOCOL_VERSIONS = {
   "control": 1,
   "conversation": 2,
@@ -17,7 +17,9 @@ export const GENERATED_PROTOCOL_VERSIONS = {
   "diagnostics": 2,
   "provider-confidence": 1,
   "linked-file": 1,
-  "pane-links": 1
+  "pane-links": 1,
+  "session-identity": 1,
+  "saved-session": 1
 } as const;
 export const GENERATED_OBJECT_SHAPES = {
   "activation-journal-v1:#": {
@@ -1811,6 +1813,60 @@ export const GENERATED_OBJECT_SHAPES = {
       "payload",
       "schemaVersion",
       "signature"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "saved-session-v1:#": {
+    "required": [
+      "anchor",
+      "executionTarget",
+      "followOutput",
+      "identity",
+      "message",
+      "questions",
+      "revision",
+      "schemaVersion",
+      "selectedView"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "saved-session-v1:#/properties/anchor/oneOf/1": {
+    "required": [
+      "itemId",
+      "offset"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "saved-session-v1:#/properties/questions/items": {
+    "required": [
+      "answers",
+      "form",
+      "requestId"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "saved-session-v1:#/properties/questions/items/properties/answers/items": {
+    "required": [
+      "choiceIds",
+      "questionId",
+      "text"
+    ],
+    "optional": [],
+    "rejectUnknown": true
+  },
+  "session-identity-v1:#": {
+    "required": [
+      "backend",
+      "host",
+      "incarnationId",
+      "projectRoot",
+      "schemaVersion",
+      "session",
+      "tool"
     ],
     "optional": [],
     "rejectUnknown": true

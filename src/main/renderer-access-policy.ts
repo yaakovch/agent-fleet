@@ -16,7 +16,7 @@ const DASHBOARD_AND_SETTINGS = ['dashboard', 'settings'] as const;
 const APP_WINDOWS = ['widget', 'dashboard', 'settings'] as const;
 
 export function allowedRendererRoles(channel: string): readonly RendererRole[] {
-  if (/^(?:fleet|terminal):/u.test(channel)) return DASHBOARD_ONLY;
+  if (/^(?:fleet|terminal|sessionState):/u.test(channel)) return DASHBOARD_ONLY;
   if (channel.startsWith('conversation:')) {
     return channel === 'conversation:copyText' ? DASHBOARD_AND_SETTINGS : DASHBOARD_ONLY;
   }
