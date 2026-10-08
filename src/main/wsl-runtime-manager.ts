@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { connectArguments, parseConnectResult, type FleetConnectResult } from '../shared/fleet-connect';
 import {
   ACTIVATED_RUNTIME_ROOT,
@@ -14,12 +12,12 @@ import type {
   VerifiedReleaseSetAdmission
 } from './release-set-authority';
 import { readFileSnapshot } from './durable-file';
+import { runRuntimeCommand } from './runtime-command';
 import {
   WSL_RUNTIME_INSTALLER_LOADER,
   WSL_RUNTIME_INSTALLER_PROGRAM
 } from './wsl-runtime-installer';
 
-const execFileAsync = promisify(execFile);
 const COMPONENTS = ['clientRuntime', 'hostRuntime', 'providerAdapters', 'contracts'] as const;
 const RUNTIME_TRUST_RECEIPT = '.local/share/agent-fleet/wtmux-runtime-trust-v1.json';
 type RuntimeOperation = 'inspect' | 'ensure' | 'resume' | 'repair' | 'rollback';
@@ -82,7 +80,7 @@ export class WslRuntimeManager {
   private ensuredDistro: string | null = null;
 
   constructor(private readonly options: WslRuntimeManagerOptions) {
-    this.run = options.run ?? runCommand;
+    this.run = options.run ?? runRuntimeCommand;
   }
 
   getState(): WslRuntimeState {
@@ -1193,16 +1191,6 @@ except (OSError, RuntimeError, ValueError) as error:
     print(f"agent-fleet-runtime-trust: {error}", file=sys.stderr)
     raise SystemExit(2)
 `, 'utf8').toString('base64');
-
-async function runCommand(command: string, args: string[], timeoutMs: number): Promise<WslCommandResult> {
-  const result = await execFileAsync(command, args, {
-    windowsHide: true,
-    timeout: timeoutMs,
-    maxBuffer: 512 * 1024,
-    encoding: 'utf8'
-  });
-  return { stdout: result.stdout, stderr: result.stderr };
-}
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`The embedded ${label} is invalid.`);
