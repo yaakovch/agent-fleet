@@ -148,6 +148,28 @@ describe('embedded terminal manager', () => {
     second.manager.dispose();
   });
 
+  it('preserves the unread workspace across tray shutdown and failed-startup idle release', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const statePath = join(root, 'workspace.json');
+    const first = makeManager(statePath);
+    const opened = first.manager.open(session);
+    first.manager.dispose();
+    const saved = readFileSync(statePath, 'utf8');
+    const cold = makeManager(statePath);
+    cold.manager.suspend();
+    cold.manager.dispose();
+    expect(readFileSync(statePath, 'utf8')).toBe(saved);
+    expect(cold.spawn).not.toHaveBeenCalled();
+    const reopened = makeManager(statePath);
+    reopened.manager.open(session);
+    expect(reopened.manager.list()).toHaveLength(1);
+    expect(reopened.manager.list()[0].id).toBe(opened.id);
+    expect(reopened.spawn).toHaveBeenCalledOnce();
+    reopened.manager.restore();
+    expect(reopened.spawn).toHaveBeenCalledOnce();
+    reopened.manager.dispose();
+  });
+
   it('reconciles a restored ended pane when a later fleet snapshot discovers the session', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const statePath = join(root, 'workspace.json');

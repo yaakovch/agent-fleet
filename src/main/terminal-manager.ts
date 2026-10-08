@@ -104,6 +104,7 @@ interface ManagedTab {
 }
 
 export class TerminalManager {
+  private workspaceLoaded = false;
   private suspended = false;
   private readonly tabs = new Map<string, ManagedTab>();
   private readonly ids: WorkspaceIds = {
@@ -118,7 +119,9 @@ export class TerminalManager {
   constructor(private readonly options: TerminalManagerOptions) {}
 
   restore(): TerminalTabDescriptor[] {
+    if (this.workspaceLoaded) return this.list();
     const state = readWorkspaceState(this.options.statePath, this.options.legacyStatePath, this.ids);
+    this.workspaceLoaded = true;
     this.layout = state.layout;
     this.rail = state.rail;
     const assigned = new Set(workspacePanes(this.layout).map((pane) => pane.sessionId).filter((id): id is string => Boolean(id)));
@@ -217,6 +220,7 @@ export class TerminalManager {
 
   open(session: FleetSession, request: WorkspaceOpenRequest = {}): TerminalTabDescriptor {
     if (!session.internalName) throw new Error('Session has no internal tmux identity');
+    if (!this.workspaceLoaded) this.restore();
     const existing = [...this.tabs.values()].find((tab) => tab.descriptor.sessionId === session.id && !tab.closed);
     if (existing) {
       const pane = paneForSession(this.layout, session.id);
@@ -613,6 +617,9 @@ export class TerminalManager {
   }
 
   private persist(): void {
+    // Idle release and shutdown can run before the first live fleet snapshot.
+    // Preserve the saved workspace until it has actually been read.
+    if (!this.workspaceLoaded) return;
     const state: TerminalWorkspaceState = {
       version: 2,
       layout: this.layout,
