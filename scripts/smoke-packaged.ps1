@@ -13,6 +13,16 @@ $root = Join-Path ([System.IO.Path]::GetTempPath()) "ai-limits-smoke-$PID"
 $previousDataDir = $env:AI_LIMITS_DATA_DIR
 $process = $null
 $terminalProcess = $null
+function Get-FleetStartupSnapshot {
+  $run = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
+  $entries = @($run.PSObject.Properties | Where-Object {
+    $_.Name -notlike 'PS*' -and ($_.Name -match 'Fleet|Limits' -or [string]$_.Value -match 'Fleet|Limits')
+  } | Sort-Object Name | ForEach-Object { @{name=$_.Name; value=[string]$_.Value} })
+  $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\AI Limits Widget.lnk'
+  $shortcutHash = if (Test-Path -LiteralPath $shortcut) { (Get-FileHash -LiteralPath $shortcut -Algorithm SHA256).Hash } else { $null }
+  @{entries=$entries; shortcutHash=$shortcutHash} | ConvertTo-Json -Depth 4 -Compress
+}
+$startupBefore = Get-FleetStartupSnapshot
 try {
   $requireFleet = $false
   $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
@@ -51,6 +61,7 @@ try {
     throw 'Packaged app failed to provision its verified WSL runtime.'
   }
   $fleetStatus = 'tray-only Linux paused'
+  if ((Get-FleetStartupSnapshot) -ne $startupBefore) { throw 'Isolated packaged smoke changed the installed Fleet startup configuration.' }
   Write-Output "Packaged smoke test passed: PID $($process.Id), terminal $($terminalStatus.backend), $fleetStatus"
 } finally {
   Remove-Item Env:AGENT_FLEET_ENABLE_TERMINAL_SMOKE -ErrorAction SilentlyContinue

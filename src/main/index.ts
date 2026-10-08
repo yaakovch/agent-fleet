@@ -688,7 +688,8 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
 }
 
 function applyLaunchOnLogin(enabled: boolean): void {
-  if (isPortableBuild()) return;
+  // Isolated profiles do not own the installed application's Windows startup entry.
+  if (process.env.AI_LIMITS_DATA_DIR || isPortableBuild()) return;
   if (app.isPackaged) {
     setLaunchOnLogin(false, app.getAppPath());
     app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath });

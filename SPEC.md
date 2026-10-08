@@ -598,3 +598,4 @@ Windows Keep Linux connections active in the background defaults off. Tray-only 
 Export and retain standalone keep-alive tasks/configurations, locate recreators, disable only verified entries and stop only verified owned processes. Remote work follows the owner's remote-command gate. Prepare verified review packages before any active app restart; Gaming Desktop is the canary, then reachable Work/Work-m. Publish Android through the canonical signed updater after release gates; installation and phone smoke remain owner-operated.
 
 History remains open on both clients through settled resizing. Windows resizes its pinned xterm History reader and stages a fresh capture without replacing the reader snapshot.
+Isolated verification profiles must preserve the installed application's Windows startup registration and shortcut. Packaged smoke compares both before and after its temporary-data run.
