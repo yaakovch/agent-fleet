@@ -22,7 +22,7 @@ import {
 const execFileAsync = promisify(execFile);
 const COMPONENTS = ['clientRuntime', 'hostRuntime', 'providerAdapters', 'contracts'] as const;
 const RUNTIME_TRUST_RECEIPT = '.local/share/agent-fleet/wtmux-runtime-trust-v1.json';
-type RuntimeOperation = 'inspect' | 'ensure' | 'repair' | 'rollback';
+type RuntimeOperation = 'inspect' | 'ensure' | 'resume' | 'repair' | 'rollback';
 interface RuntimeActivation { id: string }
 
 interface RuntimeDescriptor {
@@ -79,6 +79,7 @@ export class WslRuntimeManager {
   private operationGeneration = 0;
   private releaseAdmission: VerifiedReleaseSetAdmission | null = null;
   private embeddedHostRuntimeVersion: string | null = null;
+  private ensuredDistro: string | null = null;
 
   constructor(private readonly options: WslRuntimeManagerOptions) {
     this.run = options.run ?? runCommand;
@@ -92,6 +93,18 @@ export class WslRuntimeManager {
 
   async inspect(): Promise<WslRuntimeState> {
     return this.serialize('inspect', (generation, distro) => this.inspectOperation(generation, distro));
+  }
+
+  async resume(): Promise<WslRuntimeState> {
+    if (this.ensuredDistro !== this.options.distro()) return this.ensure();
+    const state = await this.serialize('resume', async (generation, distro) => {
+      const admission = await this.admitReleaseSet();
+      this.verifyEmbeddedArtifacts(this.descriptor());
+      const inspected = await this.inspectOperation(generation, distro, admission);
+      this.assertAdmissionCurrent(admission);
+      return inspected;
+    });
+    return state.status === 'ready' ? state : this.ensure();
   }
 
   async ensure(): Promise<WslRuntimeState> {
@@ -123,6 +136,7 @@ export class WslRuntimeManager {
           authorityCommitted = true;
         }
         await this.finalizeActivation(activation, distro);
+        this.ensuredDistro = distro;
         return activated;
       } catch (error) {
         if (activation && !authorityCommitted) await this.rejectActivation(activation, distro, error);

@@ -8,11 +8,19 @@ export class LinuxDemand {
   private starting: Promise<void> = Promise.resolve();
   private inFlight = false;
   active = false;
+  failure: unknown;
+
+  get wanted(): boolean { return this.foreground || this.background || this.leases > 0; }
 
   constructor(private readonly options: { start(): Promise<void>; stop(): void; error?(error: unknown): void }) {}
 
   setForeground(value: boolean): void { this.foreground = value; this.update(); }
   setBackground(value: boolean): void { this.background = value; this.update(); }
+  setDemand(foreground: boolean, background: boolean): void {
+    this.foreground = foreground;
+    this.background = background;
+    this.update();
+  }
   acquire(): () => void {
     ++this.leases;
     this.update();
@@ -28,11 +36,21 @@ export class LinuxDemand {
       this.active = true;
       if (this.inFlight) return;
       this.inFlight = true;
+      this.failure = undefined;
       const generation = ++this.generation;
-      this.starting = this.options.start().catch(error => this.options.error?.(error)).then(() => {
+      this.starting = this.options.start().catch(error => {
+        this.failure = error;
+        this.active = false;
+        this.options.stop();
+        this.options.error?.(error);
+        throw error;
+      }).finally(() => {
         this.inFlight = false;
         if (generation !== this.generation && !this.active) this.options.stop();
       });
+      // Foreground activation has no awaiting caller; explicit operations still
+      // receive the rejection from ready() instead of acting on a failed start.
+      void this.starting.catch(() => undefined);
     } else if (this.active && !this.timer) {
       this.timer = setTimeout(() => {
         this.timer = undefined;

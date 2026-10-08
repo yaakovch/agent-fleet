@@ -3,6 +3,26 @@ import { LinuxDemand } from '../src/main/linux-demand';
 
 afterEach(() => vi.useRealTimers());
 
+it('rejects failed startup before an operation and permits an explicit retry', async () => {
+  const start = vi.fn().mockRejectedValueOnce(new Error('WSL timed out')).mockResolvedValue(undefined);
+  const stop = vi.fn(), error = vi.fn();
+  const demand = new LinuxDemand({ start, stop, error });
+  demand.setForeground(true);
+  await expect(demand.ready()).rejects.toThrow('WSL timed out');
+  expect(demand.active).toBe(false);
+  expect(demand.failure).toBeInstanceOf(Error);
+  expect(stop).toHaveBeenCalledOnce();
+  const release = demand.acquire();
+  await demand.ready();
+  expect(start).toHaveBeenCalledTimes(2);
+  expect(demand.failure).toBeUndefined();
+  expect(demand.active).toBe(true);
+  release();
+  demand.setDemand(false, false);
+  demand.setDemand(false, false);
+  expect(start).toHaveBeenCalledTimes(2);
+});
+
 it('never launches for tray-only startup, and coalesces rapid reopen', async () => {
   vi.useFakeTimers();
   const start = vi.fn(async () => {}), stop = vi.fn();

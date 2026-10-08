@@ -142,6 +142,40 @@ function mockedOutput(args: string[], status: ReturnType<typeof readyStatus>): s
 }
 
 describe('app-owned WSL runtime manager', () => {
+  it('verifies runtime and signed admission on warm resume without activating the registry again', async () => {
+    const fixture = resources();
+    const admission = verifiedAdmission();
+    const authority: FleetReleaseSetAuthorityLike = {
+      verifyWindowsRelease: vi.fn(async () => admission), assertCurrent: vi.fn(), commitHealthy: vi.fn()
+    };
+    const run = vi.fn(async (_command: string, args: string[]) => ({ stdout: mockedOutput(args, readyStatus()), stderr: '' }));
+    const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu',
+      windowsVersion: () => '1.0.0', releaseSetAuthority: authority, run });
+    await expect(manager.resume()).resolves.toMatchObject({ status: 'ready' });
+    run.mockClear();
+    await expect(manager.resume()).resolves.toMatchObject({ status: 'ready' });
+    expect(authority.verifyWindowsRelease).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls.some(([, args]) => trustedCommand(args, 'install-registry'))).toBe(false);
+    expect(run.mock.calls.some(([, args]) => args.includes('status'))).toBe(true);
+  });
+
+  it('repairs a runtime that fails fresh verification instead of accepting cached readiness', async () => {
+    const fixture = resources();
+    let unsafe = false;
+    const run = vi.fn(async (_command: string, args: string[]) => {
+      if (trustedCommand(args, 'install')) unsafe = false;
+      const status = { ...readyStatus(), activationFailureCode: unsafe ? 'unsafe' : '' };
+      return { stdout: mockedOutput(args, status), stderr: '' };
+    });
+    const manager = new WslRuntimeManager({ resourcesRoot: fixture.root, distro: () => 'Ubuntu', run });
+    await manager.resume();
+    run.mockClear();
+    unsafe = true;
+    await expect(manager.resume()).resolves.toMatchObject({ status: 'ready' });
+    expect(run.mock.calls.some(([, args]) => trustedCommand(args, 'install'))).toBe(true);
+  });
+
   it('admits the active signed cohort before runtime use and exposes its trusted host version', async () => {
     const fixture = resources();
     const admission = verifiedAdmission();

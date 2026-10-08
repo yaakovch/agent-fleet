@@ -225,7 +225,8 @@ const hostFilePreviewManager = new HostFilePreviewManager({ cacheDirectory: join
   processOwnership: wslProcessOwnership, acquireLinux: () => linuxDemand.acquire(), readyLinux: () => linuxDemand.ready() });
 const linuxDemand = new LinuxDemand({
   start: async () => {
-    await maintainWslRuntime(() => wslRuntimeManager.ensure());
+    const runtime = await maintainWslRuntime(() => wslRuntimeManager.resume());
+    if (runtime.status !== 'ready') throw new Error(runtime.error || runtime.detail);
     if (linuxDemand.active && !isQuitting) { terminalManager.resume(); stateManager.resumeLinux(); }
   },
   stop: () => {
@@ -240,9 +241,8 @@ const linuxDemand = new LinuxDemand({
 });
 
 function updateLinuxDemand(): void {
-  linuxDemand.setBackground(appSettings.keepLinuxConnectionsActive);
-  linuxDemand.setForeground(Boolean(dashboardWindow && !dashboardWindow.isDestroyed()
-    && dashboardWindow.isVisible() && !dashboardWindow.isMinimized()));
+  linuxDemand.setDemand(Boolean(dashboardWindow && !dashboardWindow.isDestroyed()
+    && dashboardWindow.isVisible() && !dashboardWindow.isMinimized()), appSettings.keepLinuxConnectionsActive);
 }
 
 async function withLinux<T>(operation: () => T | Promise<T>): Promise<T> {
@@ -295,7 +295,10 @@ function createFleetBridge(): FleetBridgeSupervisor {
 
 function getFleetView(): FleetBridgeView {
   const view = fleetBridge.getView();
-  if (!linuxDemand.active) { view.paused = true; view.status = 'cached'; }
+  if (linuxDemand.failure && linuxDemand.wanted) {
+    view.status = 'error';
+    view.errorCode = 'bridge_unavailable';
+  } else if (!linuxDemand.active) { view.paused = true; view.status = 'cached'; }
   view.snapshot.limits = stateManager.getState().providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
