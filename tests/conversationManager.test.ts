@@ -352,7 +352,8 @@ describe('native conversation streams', () => {
     const manager = new ConversationManager({
       tempPath: root, getDistro: () => 'Ubuntu', resolveTab: () => tab('draft'),
       sendTerminalInput: vi.fn(() => true), onEvent: vi.fn(), logger: { info: vi.fn(), warn: vi.fn() },
-      thumbnail: () => 'data:image/png;base64,thumbnail'
+      thumbnail: () => 'data:image/png;base64,thumbnail',
+      spawnProcess: vi.fn(() => { throw new Error('Fixture upload failed'); }) as unknown as typeof spawn
     });
     const attempts = await Promise.allSettled(Array.from({ length: 9 }, (_, index) =>
       manager.stage('draft', `image-${index}.png`, 'image/png', PNG)));

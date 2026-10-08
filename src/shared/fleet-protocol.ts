@@ -139,6 +139,7 @@ export interface BridgePairingRequest {
 export type FleetBridgeStatus = 'starting' | 'live' | 'cached' | 'offline' | 'error';
 
 export interface FleetBridgeView {
+  paused?: boolean;
   status: FleetBridgeStatus;
   snapshot: FleetSnapshot;
   cacheSavedAt: string | null;

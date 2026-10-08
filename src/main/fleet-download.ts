@@ -36,6 +36,7 @@ export interface FleetDownloadManagerOptions {
   spawnProcess?: typeof spawn;
   wslExecutable?: () => string;
   processOwnership?: WslProcessOwnership;
+  acquireLinux?: () => () => void;
   maxConcurrent?: number;
   maxQueued?: number;
   cancelTimeoutMs?: number;
@@ -49,6 +50,7 @@ export interface FleetDownloadManagerOptions {
 }
 
 interface ActiveDownload {
+  releaseLinux?: () => void;
   job: FleetDownloadJob;
   target: FleetDownloadTarget;
   distro: string;
@@ -134,6 +136,7 @@ export class FleetDownloadManager {
     let resolveSettled = (): void => undefined;
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
     const active: ActiveDownload = {
+      releaseLinux: this.options.acquireLinux?.(),
       job,
       target: { ...target },
       distro: this.options.distro(),
@@ -388,6 +391,8 @@ export class FleetDownloadManager {
     active.cancelEscalationTimer = null;
     active.cancelDeadlineTimer = null;
     active.phase = 'finished';
+    active.releaseLinux?.();
+    active.releaseLinux = undefined;
     this.emit(active);
     active.resolveSettled();
     if (active.slotHeld) {

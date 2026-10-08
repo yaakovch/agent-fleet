@@ -79,7 +79,7 @@ import {
 } from '../../shared/transport-contract';
 
 type DashboardView = 'overview' | 'workspace' | 'sessions' | 'launcher' | 'schedules' | 'fleet' | 'settings';
-type DashboardScenario = 'live' | 'offline' | 'empty' | 'error';
+type DashboardScenario = 'paused' | 'live' | 'offline' | 'empty' | 'error';
 type ModalState = {
   title: string;
   body: string;
@@ -262,7 +262,7 @@ export class DashboardPrototype {
     this.snapshot = view.snapshot;
     this.workspace.setFleetSnapshot(view.snapshot);
     this.cacheSavedAt = view.cacheSavedAt;
-    this.scenario = view.status === 'live'
+    this.scenario = view.paused ? 'paused' : view.status === 'live'
       ? (view.snapshot.hosts.length ? 'live' : 'empty')
       : view.status === 'error'
         ? 'error'
@@ -980,6 +980,7 @@ export class DashboardPrototype {
 
   private renderScenarioBanner(): string {
     if (this.scenario === 'live') return '';
+    if (this.scenario === 'paused') return `<div class="scenario-banner"><strong>Linux connections paused</strong><span>Showing cached information. Reopen Fleet to refresh. Background Linux alerts are paused.</span></div>`;
     if (this.scenario === 'offline') return `<div class="scenario-banner scenario-offline">${icon('cloud-off')}<div><strong>Controller disconnected</strong><span>Showing verified cache from ${relativeTime(this.cacheSavedAt).toLowerCase()}. Mutations are unavailable until the WSL bridge reconnects.</span></div><button data-action="dashboard-refresh">Retry</button></div>`;
     if (this.scenario === 'error') return `<div class="scenario-banner scenario-error">${icon('circle-x')}<div><strong>Bridge protocol mismatch</strong><span>Hosts remain visible read-only. Update the controller runtime before making changes.</span></div><button data-action="dashboard-repair-host">Review repair</button></div>`;
     return `<div class="scenario-banner scenario-empty">${icon('circle-alert')}<div><strong>No fleet configured yet</strong><span>Local limits still work. Pair a controller or add the first host to start managing sessions.</span></div><button data-action="dashboard-pair">Pair device</button></div>`;
@@ -1227,6 +1228,7 @@ export class DashboardPrototype {
         <label>Controller WSL distribution<select data-fleet-setting="fleetControllerDistro">${distros.map((distro) => `<option value="${escapeAttr(distro)}" ${distro === draft.fleetControllerDistro ? 'selected' : ''}>${escapeHtml(distro)}</option>`).join('')}</select></label>
         <label>Open sessions in<select data-fleet-setting="fleetOpenTarget"><option value="agentFleet" ${draft.fleetOpenTarget === 'agentFleet' ? 'selected' : ''}>Agent Fleet workspace</option><option value="windowsTerminal" ${draft.fleetOpenTarget === 'windowsTerminal' ? 'selected' : ''}>Windows Terminal</option><option value="vscode" ${draft.fleetOpenTarget === 'vscode' ? 'selected' : ''}>Current VS Code window</option></select></label>
         ${settingsToggle('launchOnLogin', 'Launch Agent Fleet on login', 'Recommended for fleet notifications', draft.launchOnLogin)}
+        ${settingsToggle('keepLinuxConnectionsActive', 'Keep Linux connections active in the background', 'Continue Linux notifications and quota checks while Fleet is hidden', draft.keepLinuxConnectionsActive)}
         ${settingsToggle('limitsOverlayEnabled', 'Show limits overlay', 'Transparent, click-through companion window', draft.limitsOverlayEnabled)}
       </div></section>
       <section class="fleet-card dashboard-settings-card"><div class="card-heading"><div><h2>Embedded terminal</h2><p>Appearance for every in-app terminal tab</p></div>${icon('terminal')}</div><div class="dashboard-form-grid">
@@ -1258,6 +1260,7 @@ export class DashboardPrototype {
       this.settingsDraft.fleetOpenTarget = control.value;
     } else if (key === 'launchOnLogin') this.settingsDraft.launchOnLogin = checked;
     else if (key === 'automaticSessionTitles') this.settingsDraft.automaticSessionTitles = checked;
+    else if (key === 'keepLinuxConnectionsActive') this.settingsDraft.keepLinuxConnectionsActive = checked;
     else if (key === 'limitsOverlayEnabled') this.settingsDraft.limitsOverlayEnabled = checked;
     else if (key === 'terminal.theme' && (control.value === 'fleetDark' || control.value === 'midnight' || control.value === 'light')) this.settingsDraft.terminalAppearance.theme = control.value;
     else if (key === 'terminal.fontFamily') this.settingsDraft.terminalAppearance.fontFamily = control.value.slice(0, 160);

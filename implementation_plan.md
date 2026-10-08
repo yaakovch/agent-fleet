@@ -1003,3 +1003,12 @@ Execution authorized; active app restart/reload approval remains separate. This 
 7. Run runtime full quality, Windows quality/package smoke, Android local checks and canonical signed release pipeline full API36/release checks. Synchronize contracts, embedded runtimes and viewer assets; allocate fresh monotonic versions from current state; commit/push clean release sources.
 8. Produce coordinated production packages, hashes and receipts. Inventory current installations, launch targets, Companion profiles and active windows. Roll out gaming-desktop then reachable work/work-m; journal and retain rollback material. Stage active-app activation, describe effects and wait for explicit approval before restart/reload. Publish signed Android update; owner installs and performs phone smoke.
 9. Record exact tests, timings, package/source hashes and per-device prepared/installed/active/verified status. Keep offline machines, unapproved active app activation and unconfirmed phone adoption pending; never reset trust floors or stop tmux sessions.
+
+
+## Stable terminal entry and on-demand WSL — approved execution 2026-10-08
+
+1. Branch from delivered Windows a56d3fc and Android 7d8ebf0e; preserve unrelated work. Reproduce synthetic burst/viewport/size behavior through protected API36 before Android behavior changes and retain baseline evidence.
+2. Implement and validate Windows demand, setting migration, startup/retry guards, transfer leases, paused cache and terminal presentation. Add targeted race/fragmentation/quiet/Show live regressions.
+3. Complete Android bounded parser batches, settled dimensions and presentation, viewport preservation, failure/Show live behavior. Retain before/after synthetic and actual Codex evidence, keyboard/rotation/zoom and 20 matched stability timings; investigate >10% regression.
+4. Run focused checks, required Windows source/package smoke gates and one complete protected Android API36 suite. No shared wire-format change is planned.
+5. Prepare rollback-safe keep-alive inspection/disable scripts and verified review packages. Obtain the required remote command decision before remote inspection. Report unavailable targets explicitly. Active app restart remains a final separate approval after concrete review; publish signed Android through app-release.sh only after all required gates pass.

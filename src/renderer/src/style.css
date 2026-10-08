@@ -1712,3 +1712,8 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .native-turn-activity > button { padding: 5px 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; font-size: .85em; }
 .native-activity-content { margin-top: 8px; padding-left: 12px; border-left: 1px solid var(--chat-border, #34475d); }
 .native-compatibility { display: block; margin: 10px 0; opacity: .75; }
+
+.xterm-runtime { position: relative; }
+.terminal-loading .xterm-screen, .terminal-loading .xterm-scrollable-element { visibility: hidden; }
+.terminal-preparing { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--surface, #0b0f14); color: var(--text, #e5e7eb); }
+.terminal-preparing[hidden] { display: none; }

@@ -1,3 +1,4 @@
+import { LinuxDemand } from './linux-demand';
 import { SessionStateStore } from './session-state-store';
 import { validSessionContent, type SessionIdentity } from '../shared/session-state';
 import {
@@ -123,6 +124,7 @@ const stateManager = new LimitStateManager({
   settings: appSettings,
   settingsDiagnostic: settingsLoadResult.recovered ? settingsLoadResult.message : undefined
 });
+stateManager.suspendLinux();
 const wslProcessOwnership = new WslProcessOwnership();
 const rendererAccess = new RendererAccessPolicy();
 const fleetConfigurationStore = new FleetConfigurationStore(join(dataDirectory, 'fleet-configuration'));
@@ -141,18 +143,21 @@ const wslRuntimeManager = new WslRuntimeManager({
 let fleetBridge = createFleetBridge();
 const runtimeLifecycle = new RuntimeLifecycleCoordinator({
   bridge: () => fleetBridge,
-  runtimeState: () => wslRuntimeManager.getState()
+  runtimeState: () => wslRuntimeManager.getState(),
+  shouldRun: () => linuxDemand.active && !isQuitting
 });
 let terminalRestored = false;
 const terminalManager = new TerminalManager({
+  deferUntilSized: true,
   statePath: join(dataDirectory, 'terminal-workspace-v2.json'),
   legacyStatePath: join(dataDirectory, 'terminal-workspace-v1.json'),
   logger,
   getDistro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
   resolveSession: (sessionId) => getFleetView().snapshot.sessions.find((session) => session.id === sessionId),
   isHostAvailable: (hostId) => {
-    const snapshot = getFleetView().snapshot;
-    return snapshot.controller.status === 'healthy'
+    const view = getFleetView();
+    const snapshot = view.snapshot;
+    return view.status === 'live' && snapshot.controller.status === 'healthy'
       && snapshot.hosts.some((host) => host.id === hostId && host.status === 'healthy');
   },
   onData: (event) => sendContent(IPC_CHANNELS.terminalData, event, 'terminal', event.tabId),
@@ -207,7 +212,8 @@ const fleetDownloadManager = new FleetDownloadManager({
   onComplete: () => {
     if (Notification.isSupported()) showFleetNotification('Download complete', 'A verified repository download is ready.');
   },
-  processOwnership: wslProcessOwnership
+  processOwnership: wslProcessOwnership,
+  acquireLinux: () => linuxDemand.acquire()
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -216,7 +222,35 @@ let dashboardSaveTimer: NodeJS.Timeout | null = null;
 let settingsWindow: BrowserWindow | null = null;
 const hostFilePreviewManager = new HostFilePreviewManager({ cacheDirectory: join(dataDirectory, 'host-file-cache'),
   downloadsDirectory: () => app.getPath('downloads'), distro: () => fleetBridgeLaunchFromSettings(appSettings).distro,
-  processOwnership: wslProcessOwnership });
+  processOwnership: wslProcessOwnership, acquireLinux: () => linuxDemand.acquire(), readyLinux: () => linuxDemand.ready() });
+const linuxDemand = new LinuxDemand({
+  start: async () => {
+    await maintainWslRuntime(() => wslRuntimeManager.ensure());
+    if (linuxDemand.active && !isQuitting) { terminalManager.resume(); stateManager.resumeLinux(); }
+  },
+  stop: () => {
+    savedSessionStore.flush();
+    terminalManager.suspend();
+    conversationManager.sync([]);
+    stateManager.suspendLinux();
+    fleetBridge.stop();
+    sendDashboard(IPC_CHANNELS.fleetStateUpdated, getFleetView());
+  },
+  error: (error) => logger.error('On-demand Linux startup failed', error)
+});
+
+function updateLinuxDemand(): void {
+  linuxDemand.setBackground(appSettings.keepLinuxConnectionsActive);
+  linuxDemand.setForeground(Boolean(dashboardWindow && !dashboardWindow.isDestroyed()
+    && dashboardWindow.isVisible() && !dashboardWindow.isMinimized()));
+}
+
+async function withLinux<T>(operation: () => T | Promise<T>): Promise<T> {
+  const release = linuxDemand.acquire();
+  try { await linuxDemand.ready(); return await operation(); }
+  finally { release(); }
+}
+
 let settingsWindowView: 'settings' | 'onboarding' = 'settings';
 let tray: Tray | null = null;
 let updater: UpdaterManager | null = null;
@@ -238,7 +272,7 @@ function createFleetBridge(): FleetBridgeSupervisor {
   if (!appSettings.automaticSessionTitles) bridge.purgeSessionTitles();
   bridge.on('changed', () => {
     const view = getFleetView();
-    if (!terminalRestored && view.status === 'live') {
+    if (linuxDemand.active && !terminalRestored && view.status === 'live') {
       terminalRestored = true;
       try {
         const restored = terminalManager.restore();
@@ -247,7 +281,7 @@ function createFleetBridge(): FleetBridgeSupervisor {
         terminalRestored = false;
         logger.error('Embedded workspace restore failed; retrying on the next fleet update', error);
       }
-    } else if (terminalRestored) {
+    } else if (linuxDemand.active && terminalRestored) {
       const reconnected = terminalManager.reconcileSessions();
       if (reconnected) logger.info('Reconnected restored workspace sessions', reconnected);
     }
@@ -261,6 +295,7 @@ function createFleetBridge(): FleetBridgeSupervisor {
 
 function getFleetView(): FleetBridgeView {
   const view = fleetBridge.getView();
+  if (!linuxDemand.active) { view.paused = true; view.status = 'cached'; }
   view.snapshot.limits = stateManager.getState().providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -282,7 +317,7 @@ function processFleetNotifications(view: FleetBridgeView): void {
   const paused = Boolean(appSettings.notificationPauseUntil
     && Date.parse(appSettings.notificationPauseUntil) > Date.now());
   const notifications = fleetNotificationTracker.process(view, appSettings.fleetNotifications, {
-    emit: !paused && Notification.isSupported(),
+    emit: linuxDemand.active && !paused && Notification.isSupported(),
     expectedHostRuntimeVersion: wslRuntimeManager.expectedHostRuntimeVersion()
   });
   for (const notification of notifications) {
@@ -369,7 +404,12 @@ function showDashboard(target?: FleetNotificationTarget): void {
     terminalManager.unbindAll();
     conversationManager.sync([]);
   };
-  dashboardWindow.on('hide', () => { savedSessionStore.flush(); clearDashboardContent(); });
+  dashboardWindow.on('show', updateLinuxDemand);
+  dashboardWindow.on('hide', updateLinuxDemand);
+  dashboardWindow.on('minimize', updateLinuxDemand);
+  dashboardWindow.on('restore', updateLinuxDemand);
+  dashboardWindow.on('closed', updateLinuxDemand);
+  dashboardWindow.on('hide', () => savedSessionStore.flush());
   dashboardWindow.webContents.on('did-start-loading', clearDashboardContent);
   secureWindow(dashboardWindow);
   const scheduleSave = (): void => {
@@ -522,7 +562,7 @@ function updateTrayMenu(): void {
           });
         }
       },
-      { label: 'Refresh fleet', click: () => { fleetBridge.refresh(); void stateManager.refreshAll(); } },
+      { label: 'Refresh fleet', click: () => { void withLinux(async () => { fleetBridge.refresh(); await stateManager.refreshAll(); }); } },
       { label: 'Pause notifications for 1 hour', click: () => void pauseFleetNotifications() },
       { label: 'Settings', click: () => createSettingsWindow() },
       ...(!appSettings.onboardingComplete
@@ -630,7 +670,7 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
     fleetNotificationTracker.reset();
     fleetBridge = createFleetBridge();
     try {
-      await maintainWslRuntime(() => wslRuntimeManager.ensure());
+      if (linuxDemand.active) await maintainWslRuntime(() => wslRuntimeManager.ensure());
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
       logger.error('WSL runtime provisioning failed after distribution change', error);
@@ -642,7 +682,8 @@ async function applyAndPersistSettings(settings: WidgetSettings): Promise<Settin
   else if (mainWindow && !overlayWasEnabled && appSettings.limitsOverlayEnabled) setWidgetInteractionMode('passive');
   updateTrayMenu();
   updateTrayTooltip();
-  void stateManager.refreshAll();
+  updateLinuxDemand();
+  if (linuxDemand.active) void stateManager.refreshAll();
   return getSettingsResult();
 }
 
@@ -695,6 +736,21 @@ function handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: 
     if (!isTrustedEvent(event)) throw new Error('Rejected IPC from an untrusted sender');
     assertIpcPayload(channel, args);
     rendererAccess.assertAnyRole(event.sender.id, allowedRendererRoles(channel));
+    const operationChannels = new Set<string>([
+      IPC_CHANNELS.refreshNow, IPC_CHANNELS.refreshFleet, IPC_CHANNELS.openFleetSession,
+      IPC_CHANNELS.openFleetSessionExternal, IPC_CHANNELS.terminalRetry,
+      IPC_CHANNELS.conversationSend, IPC_CHANNELS.conversationAnswer, IPC_CHANNELS.conversationApprove,
+      IPC_CHANNELS.killFleetSession, IPC_CHANNELS.renameFleetSession, IPC_CHANNELS.resetFleetSessionName,
+      IPC_CHANNELS.getFleetSessionModel, IPC_CHANNELS.setFleetSessionModel, IPC_CHANNELS.cancelFleetSessionModel,
+      IPC_CHANNELS.launchFleetFavorite, IPC_CHANNELS.cancelFleetSchedule, IPC_CHANNELS.createFleetContinueSchedule,
+      IPC_CHANNELS.dismissFleetAttention, IPC_CHANNELS.updateFleetSchedule, IPC_CHANNELS.runFleetDoctor,
+      IPC_CHANNELS.updateFleetHost, IPC_CHANNELS.connectFleetHost, IPC_CHANNELS.createFleetSession,
+      IPC_CHANNELS.listFleetDirectory, IPC_CHANNELS.createFleetDirectory, IPC_CHANNELS.listFleetRepository,
+      IPC_CHANNELS.searchFleetRepository, IPC_CHANNELS.startFleetDownload, IPC_CHANNELS.openHostFile,
+      IPC_CHANNELS.createFleetPairingInvitation, IPC_CHANNELS.reviewFleetPairing,
+      IPC_CHANNELS.testCodexProfile, IPC_CHANNELS.discoverWsl, IPC_CHANNELS.repairRuntime, IPC_CHANNELS.rollbackRuntime
+    ]);
+    if (operationChannels.has(channel)) return withLinux(() => listener(event, ...(args as never[])));
     return listener(event, ...(args as never[]));
   });
 }
@@ -824,7 +880,7 @@ handle(IPC_CHANNELS.terminalSyncBindings, (event, tabIds) => {
   const existing = new Set(terminalManager.list()
     .filter((tab) => tab.viewMode === 'terminal')
     .map((tab) => tab.id));
-  const requested = values.filter((id): id is string => typeof id === 'string' && existing.has(id));
+  const requested = linuxDemand.active ? values.filter((id): id is string => typeof id === 'string' && existing.has(id)) : [];
   rendererAccess.setBindings(senderId, 'terminal', requested);
   const tabs = terminalManager.syncBindings(requested);
   rendererAccess.setBindings(senderId, 'terminal', tabs.map((tab) => tab.id));
@@ -927,7 +983,7 @@ handle(IPC_CHANNELS.conversationStart, (event, tabId, view) => {
   if (typeof tabId !== 'string' || !terminalManager.list()
     .some((tab) => tab.id === tabId && tab.viewMode === 'native' && tab.tool !== 'shell')) return false;
   rendererAccess.grant(senderId, 'conversation', tabId);
-  const started = conversationManager.start(tabId, view === 'detailed' ? 'detailed' : 'conversation');
+  const started = linuxDemand.active && conversationManager.start(tabId, view === 'detailed' ? 'detailed' : 'conversation');
   if (!started) rendererAccess.revoke(senderId, 'conversation', tabId);
   return started;
 });
@@ -970,7 +1026,7 @@ handle(IPC_CHANNELS.conversationSync, (event, tabIds, view) => {
   const eligible = new Set(terminalManager.list()
     .filter((tab) => tab.viewMode === 'native' && tab.tool !== 'shell')
     .map((tab) => tab.id));
-  const requested = values.filter((id): id is string => typeof id === 'string' && eligible.has(id));
+  const requested = linuxDemand.active ? values.filter((id): id is string => typeof id === 'string' && eligible.has(id)) : [];
   rendererAccess.setBindings(senderId, 'conversation', requested);
   const started = conversationManager.sync(requested, view === 'detailed' ? 'detailed' : 'conversation');
   rendererAccess.setBindings(senderId, 'conversation', started);
@@ -1794,7 +1850,7 @@ handle(IPC_CHANNELS.getUpdaterState, () => updater?.getState() ?? ({ status: 'di
 handle(IPC_CHANNELS.checkForUpdates, () => updater?.checkNow());
 handle(IPC_CHANNELS.restartToUpdate, () => updater?.restartToUpdate());
 handle(IPC_CHANNELS.openReleasePage, () => shell.openExternal(RELEASE_URL));
-handle(IPC_CHANNELS.getRuntimeState, () => wslRuntimeManager.inspect());
+handle(IPC_CHANNELS.getRuntimeState, () => linuxDemand.active ? wslRuntimeManager.inspect() : wslRuntimeManager.getState());
 handle(IPC_CHANNELS.repairRuntime, () => maintainWslRuntime(() => wslRuntimeManager.repair()));
 handle(IPC_CHANNELS.rollbackRuntime, () => maintainWslRuntime(() => wslRuntimeManager.rollback()));
 handle(IPC_CHANNELS.openSettings, () => createSettingsWindow());
@@ -1879,12 +1935,7 @@ if (terminalSmokePath) {
       }
     });
     updater.setEnabled(appSettings.automaticUpdates);
-    stateManager.start();
-    try {
-      await maintainWslRuntime(() => wslRuntimeManager.ensure());
-    } catch (error) {
-      logger.error('Verified WSL runtime provisioning failed', error);
-    }
+    updateLinuxDemand();
     if (!appSettings.onboardingComplete) createSettingsWindow('onboarding');
     if (!app.isPackaged) showDashboard();
     logger.info(PRODUCT_NAME, app.getVersion(), app.isPackaged ? 'packaged' : 'development', migrationResult);

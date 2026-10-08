@@ -23,6 +23,30 @@ class FakePty implements PtyProcess {
 }
 
 describe('embedded terminal manager', () => {
+  it('defers attachment until measured dimensions and detaches once without accepting stale input', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
+    const spawn = vi.fn(() => new FakePty());
+    const manager = new TerminalManager({ deferUntilSized: true,
+      statePath: join(root, 'workspace.json'), logger: { info: vi.fn(), warn: vi.fn() },
+      getDistro: () => 'Ubuntu', resolveSession: () => session,
+      onData: vi.fn(), onStatus: vi.fn(), onClosed: vi.fn(), spawnPty: spawn,
+      resolveWslExecutable: () => WINDOWS_WSL
+    });
+    const tab = manager.open(session);
+    expect(spawn).not.toHaveBeenCalled();
+    manager.resize(tab.id, 100, 40);
+    expect(spawn).toHaveBeenCalledOnce();
+    manager.suspend();
+    expect(spawn.mock.results[0].value.killed).toBe(true);
+    expect(manager.input(tab.id, 'unverified')).toBe(false);
+    manager.resize(tab.id, 110, 40);
+    manager.reconcileSessions();
+    expect(spawn).toHaveBeenCalledOnce();
+    manager.resume();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(manager.list()[0].internalName).toBe(session.internalName);
+    manager.dispose();
+  });
   it('replaces Windows PTYs without leaking signal-rejecting terminal processes', () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-fleet-terminal-')); roots.push(root);
     const ownership = new WslProcessOwnership();

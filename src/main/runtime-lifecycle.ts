@@ -9,6 +9,7 @@ export interface RuntimeLifecycleBridge {
 export interface RuntimeLifecycleOptions {
   bridge(): RuntimeLifecycleBridge;
   runtimeState(): WslRuntimeState;
+  shouldRun?(): boolean;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 6_500;
@@ -57,7 +58,7 @@ export class RuntimeLifecycleCoordinator {
     try {
       const state = await operation();
       if (generation === this.generation) {
-        if (state.status === 'ready') this.options.bridge().start();
+        if (state.status === 'ready' && this.options.shouldRun?.() !== false) this.options.bridge().start();
         this.resumeAfterFailure = false;
       }
       return state;
@@ -69,7 +70,7 @@ export class RuntimeLifecycleCoordinator {
         } catch {
           // Preserve the original operation error and leave the bridge stopped.
         }
-        if (this.resumeAfterFailure && runtimeRemainsReady) this.options.bridge().start();
+        if (this.resumeAfterFailure && runtimeRemainsReady && this.options.shouldRun?.() !== false) this.options.bridge().start();
         this.resumeAfterFailure = false;
       }
       throw error;

@@ -213,9 +213,13 @@ export function getWslCodexLaunch(profile: WslCodexProfile): CodexLaunchSpec {
 
 export async function collectCodexProfileLimits(
   profile: WslCodexProfile,
-  timeoutMs = CODEX_PROFILE_TIMEOUT_MS
+  timeoutMs = CODEX_PROFILE_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<ProviderLimitSnapshot> {
   const client = new CodexAppServerClient(getWslCodexLaunch(profile), timeoutMs);
+  const abort = (): void => { void client.dispose(); };
+  signal?.throwIfAborted();
+  signal?.addEventListener('abort', abort, { once: true });
   try {
     await client.start();
     const response = await client.readRateLimits();
@@ -232,6 +236,7 @@ export async function collectCodexProfileLimits(
       windows: {}
     };
   } finally {
+    signal?.removeEventListener('abort', abort);
     await client.dispose();
   }
 }

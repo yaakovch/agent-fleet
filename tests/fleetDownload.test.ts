@@ -44,6 +44,26 @@ describe('fleet repository downloads', () => {
     await vi.waitFor(() => expect(manager.get(job.id)).toMatchObject({ state: 'completed', name: 'Linux_report.pdf' }));
     await manager.stop();
   });
+  it('retains Linux demand through local verification and releases it exactly once', async () => {
+    const child = fakeChild(), release = vi.fn();
+    let verified!: (value: boolean) => void;
+    const manager = new FleetDownloadManager({
+      distro: () => 'Ubuntu', downloadsDirectory: () => 'D:\\private', onUpdate: () => undefined,
+      acquireLinux: () => release, spawnProcess: (() => child) as never, wslExecutable: () => 'wsl.exe',
+      verifyArtifact: () => new Promise<boolean>(resolve => { verified = resolve; })
+    });
+    const job = manager.start(target());
+    child.stdout.write(JSON.stringify({ status: 'downloaded', name: 'file.bin', size: 1, sha256: 'ab'.repeat(32) }) + '\n');
+    child.emit('close', 0);
+    await vi.waitFor(() => expect(verified).toBeTypeOf('function'));
+    expect(release).not.toHaveBeenCalled();
+    verified(true);
+    await vi.waitFor(() => expect(manager.get(job.id)?.state).toBe('completed'));
+    expect(release).toHaveBeenCalledOnce();
+    await manager.stop();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('maps a local Windows Downloads path into a direct WSL argument', () => {
     expect(windowsPathToWsl('C:\\Users\\Yaakov\\Downloads')).toBe('/mnt/c/Users/Yaakov/Downloads');
     expect(() => windowsPathToWsl('\\\\server\\share')).toThrow(/local drive/i);

@@ -13,7 +13,7 @@ import {
   rollbackLatestSettings,
   saveSettings
 } from '../src/main/settings-store';
-import { createDefaultSettings, type CodexProfileSettings } from '../src/shared/settings';
+import { createDefaultSettings, normalizeSettings, type CodexProfileSettings } from '../src/shared/settings';
 
 const tempDirs: string[] = [];
 
@@ -22,6 +22,13 @@ afterEach(() => {
 });
 
 describe('settings store', () => {
+  it('migrates version 5 by adding background Linux demand off and preserving other settings', () => {
+    const current = { ...createDefaultSettings(), launchOnLogin: true, activeOpacity: 0.4 };
+    const { keepLinuxConnectionsActive: _, ...previous } = current;
+    const result = normalizeSettings({ ...previous, version: 5 });
+    expect(result.migrated).toBe(true);
+    expect(result.settings).toEqual({ ...current, keepLinuxConnectionsActive: false });
+  });
   it('loads machine-neutral onboarding defaults when settings are missing', () => {
     const root = makeTempDir();
     const result = loadSettings(join(root, 'settings.json'));
@@ -50,7 +57,7 @@ describe('settings store', () => {
     expect(quarantined).toBeTruthy();
     expect(readFileSync(join(root, quarantined!), 'utf8')).toBe('{not-json');
     saveSettings(result.settings, settingsPath);
-    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).version).toBe(5);
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8')).version).toBe(6);
     expect(readFileSync(join(root, quarantined!), 'utf8')).toBe('{not-json');
   });
 
@@ -124,7 +131,7 @@ describe('settings store', () => {
     );
     const result = loadSettings(settingsPath);
     expect(result.migrated).toBe(true);
-    expect(result.settings.version).toBe(5);
+    expect(result.settings.version).toBe(6);
     expect(result.settings.automaticSessionTitles).toBe(true);
     expect(result.settings.fleetOpenTarget).toBe('agentFleet');
     expect(result.settings.codexProfiles[0].codexHome).toBe('/home/testuser/.codex-work');

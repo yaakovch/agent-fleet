@@ -33,6 +33,7 @@ function smokeCommand(): SmokeCommand {
 export async function runPackagedTerminalSmoke(destination: string): Promise<boolean> {
   const active: { pty?: nodePty.IPty } = {};
   let output = '';
+  let processExitCode: number | undefined;
   try {
     const command = smokeCommand();
     const ok = await new Promise<boolean>((resolve) => {
@@ -44,7 +45,8 @@ export async function runPackagedTerminalSmoke(destination: string): Promise<boo
         resolve(value);
       };
       const timer = setTimeout(() => {
-        try { active.pty?.kill(); } catch { /* already stopped */ }
+        const pty = active.pty; active.pty = undefined;
+        try { pty?.kill(); } catch { /* already stopped */ }
         finish(false);
       }, 20_000);
       active.pty = nodePty.spawn(command.executable, command.arguments, {
@@ -54,9 +56,15 @@ export async function runPackagedTerminalSmoke(destination: string): Promise<boo
       active.pty.onData((data) => {
         if (output.length < 64 * 1024) output += data;
       });
-      active.pty.onExit(({ exitCode }) => finish(exitCode === 0 && output.includes(MARKER)));
+      active.pty.onExit(({ exitCode }) => {
+        // A completed ConPTY handle must not be killed again in finally. Let
+        // the final queued pipe data arrive before checking its marker.
+        active.pty = undefined;
+        processExitCode = exitCode;
+        setTimeout(() => finish(exitCode === 0 && output.includes(MARKER)), 100);
+      });
     });
-    writeFileSync(destination, `${JSON.stringify({ status: ok ? 'ok' : 'failed', marker: ok, backend: command.backend })}\n`, { mode: 0o600 });
+    writeFileSync(destination, `${JSON.stringify({ status: ok ? 'ok' : 'failed', marker: output.includes(MARKER), backend: command.backend, exitCode: processExitCode, output: output.slice(-1024) })}\n`, { mode: 0o600 });
     return ok;
   } catch (error) {
     const message = error instanceof Error ? error.message.split(/\r?\n/u)[0].slice(0, 240) : 'terminal smoke failed';

@@ -11,6 +11,26 @@ import {
 import { createDefaultSettings } from '../src/shared/settings';
 
 describe('multi-profile state manager', () => {
+  it('aborts idle quota work and never launches the remaining profiles or timer', async () => {
+    vi.useFakeTimers();
+    let finish!: (value: ProviderLimitSnapshot) => void;
+    let signal: AbortSignal | undefined;
+    const collect = vi.fn((_profile, nextSignal) => {
+      signal = nextSignal;
+      return new Promise<ProviderLimitSnapshot>(resolve => { finish = resolve; });
+    });
+    const manager = new LimitStateManager({ profiles: TEST_PROFILES, collectCodexProfile: collect,
+      loadCache: () => ({}), saveCache: () => {} });
+    manager.start();
+    manager.suspendLinux();
+    expect(signal?.aborted).toBe(true);
+    finish(makeCodexSnapshot('codex1', 10));
+    await vi.advanceTimersByTimeAsync(CODEX_REFRESH_MS * 2);
+    await manager.refreshAll();
+    expect(collect).toHaveBeenCalledOnce();
+    expect(manager.getState().linuxPaused).toBe(true);
+    manager.stop(); vi.useRealTimers();
+  });
   it('refreshes sequentially, continues after failure, sorts by average remaining, and pins Claude last', async () => {
     const order: string[] = [];
     let active = 0;

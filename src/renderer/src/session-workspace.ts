@@ -1,3 +1,4 @@
+import { TerminalPresentation } from './terminal-presentation';
 import type { SavedSessionState, SavedSessionContent, SavedQuestionDraft } from '../../shared/session-state';
 import { questionFormContent } from '../../shared/session-state';
 import { Terminal } from '@xterm/xterm';
@@ -64,6 +65,9 @@ import { linkedText, renderSafeMarkdownSource } from './safe-markdown';
 import { hostFileReferences, hostFileRowReferences, hostFileTarget } from '../../shared/host-file';
 
 interface TerminalRuntime {
+  presentation: TerminalPresentation;
+  resizeTimer?: ReturnType<typeof setTimeout>;
+  lastSize?: string;
   terminal: Terminal;
   fit: FitAddon;
   search: SearchAddon;
@@ -194,12 +198,15 @@ export class SessionWorkspace {
     this.resizeObserver = new ResizeObserver(() => this.fitVisible());
     this.resizeObserver.observe(this.element);
     window.limitsWidget.onTerminalData(({ tabId, data }) => {
-      this.runtimes.get(tabId)?.terminal.write(data);
+      this.runtimes.get(tabId)?.presentation.output(data);
       this.noteTerminalHistoryActivity(tabId, false);
     });
     window.limitsWidget.onTerminalStatus(({ tab }) => {
       const previous = this.tabs.get(tab.id);
       if (previous && terminalDescriptorEqual(previous, tab)) return;
+      const runtime = this.runtimes.get(tab.id);
+      if (tab.failure || tab.status === 'ended' || tab.status === 'unavailable' || tab.status === 'offline') runtime?.presentation.fail();
+      else if (tab.status === 'connecting' || tab.status === 'reconnecting') runtime?.presentation.begin();
       this.upsertTab(tab);
     });
     window.limitsWidget.onTerminalClosed(({ tabId }) => this.remove(tabId));
@@ -843,6 +850,8 @@ export class SessionWorkspace {
     this.tabs.delete(tabId);
     this.workspaceState = { ...this.workspaceState, tabs: [...this.tabs.values()] };
     this.clearTerminalHistory(tabId);
+    this.runtimes.get(tabId)?.presentation.dispose();
+    clearTimeout(this.runtimes.get(tabId)?.resizeTimer);
     this.runtimes.get(tabId)?.terminal.dispose();
     this.runtimes.delete(tabId);
     this.nativeStates.delete(tabId);
@@ -857,7 +866,7 @@ export class SessionWorkspace {
     const previousStructure = this.currentStructureSignature();
     const nextIds = new Set(state.tabs.map((tab) => tab.id));
     for (const [id, runtime] of this.runtimes) {
-      if (!nextIds.has(id)) { this.clearTerminalHistory(id); runtime.terminal.dispose(); this.runtimes.delete(id); }
+      if (!nextIds.has(id)) { this.clearTerminalHistory(id); runtime.presentation.dispose(); clearTimeout(runtime.resizeTimer); runtime.terminal.dispose(); this.runtimes.delete(id); }
     }
     for (const [id, native] of this.nativeStates) if (!nextIds.has(id)) {
       this.conversationContentCache?.removeSession(native.sessionIdentity);
@@ -1075,7 +1084,17 @@ export class SessionWorkspace {
         }
         return true;
       });
-      runtime = { terminal, fit, search, element };
+      const overlay = document.createElement('div');
+      overlay.className = 'terminal-preparing';
+      const label = document.createElement('span'); label.textContent = 'Preparing terminal…';
+      const live = document.createElement('button'); live.textContent = 'Show live';
+      overlay.append(label, live); element.append(overlay);
+      const presentation = new TerminalPresentation((data, done) => terminal.write(data, done), (loading, offer) => {
+        element.classList.toggle('terminal-loading', loading);
+        overlay.hidden = !loading; live.hidden = !offer;
+      });
+      live.addEventListener('click', () => presentation.showLive());
+      runtime = { terminal, fit, search, element, presentation };
       this.runtimes.set(tab.id, runtime);
     }
     host.append(runtime.element);
@@ -2670,6 +2689,22 @@ export class SessionWorkspace {
   }
 
   private fitRuntime(runtime: TerminalRuntime): void {
+    if (!runtime.element.isConnected) return;
+    const proposed = runtime.fit.proposeDimensions();
+    if (!proposed || proposed.cols < 4 || proposed.rows < 4) {
+      clearTimeout(runtime.resizeTimer);
+      runtime.lastSize = undefined;
+      return;
+    }
+    const signature = `${proposed.cols}:${proposed.rows}`;
+    if (runtime.lastSize === signature) return;
+    runtime.lastSize = signature;
+    runtime.presentation.prepareDimensions();
+    clearTimeout(runtime.resizeTimer);
+    runtime.resizeTimer = setTimeout(() => this.applyRuntimeSize(runtime), 150);
+  }
+
+  private applyRuntimeSize(runtime: TerminalRuntime): void {
     if (!runtime || !this.element.isConnected) return;
     try {
       const tabId = [...this.runtimes.entries()].find(([, value]) => value === runtime)?.[0];
@@ -2677,6 +2712,7 @@ export class SessionWorkspace {
       const previousRows = runtime.terminal.rows;
       if (tabId && runtime.historyTerminal) this.closeTerminalHistory(tabId);
       runtime.fit.fit();
+      runtime.presentation.dimensions();
       if (tabId) {
         if (runtime.terminal.cols !== previousColumns || runtime.terminal.rows !== previousRows) {
           const state = this.terminalHistories.get(tabId);
@@ -2690,7 +2726,7 @@ export class SessionWorkspace {
         }
         void window.limitsWidget.terminalResize(tabId, runtime.terminal.cols, runtime.terminal.rows);
       }
-    } catch { /* the terminal is temporarily hidden */ }
+    } catch { runtime.lastSize = undefined; /* retry when visible again */ }
   }
 
   private fitVisible(): void {

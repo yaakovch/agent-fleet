@@ -35,6 +35,7 @@ export interface DiagnosticItem {
 }
 
 export interface CombinedLimitState {
+  linuxPaused?: boolean;
   updatedAt: number;
   refreshing: boolean;
   providers: ProviderLimitSnapshot[];

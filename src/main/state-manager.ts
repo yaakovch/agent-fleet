@@ -24,7 +24,7 @@ interface StateManagerDependencies {
   settingsDiagnostic?: string;
   profiles?: readonly WslCodexProfile[];
   claudeEnabled?: boolean;
-  collectCodexProfile?: (profile: WslCodexProfile) => Promise<ProviderLimitSnapshot>;
+  collectCodexProfile?: (profile: WslCodexProfile, signal?: AbortSignal) => Promise<ProviderLimitSnapshot>;
   collectClaude?: () => ProviderLimitSnapshot;
   loadCache?: () => Partial<Record<CodexProfileId, CachedProfile>>;
   saveCache?: (snapshots: readonly ProviderLimitSnapshot[]) => void;
@@ -35,7 +35,7 @@ export class LimitStateManager extends EventEmitter {
   private codexSortMode: CodexSortMode;
   private claudeEnabled: boolean;
   private settingsDiagnostic: string | undefined;
-  private readonly collectCodexProfile: (profile: WslCodexProfile) => Promise<ProviderLimitSnapshot>;
+  private readonly collectCodexProfile: (profile: WslCodexProfile, signal?: AbortSignal) => Promise<ProviderLimitSnapshot>;
   private readonly collectClaude: () => ProviderLimitSnapshot;
   private readonly loadCache: () => Partial<Record<CodexProfileId, CachedProfile>>;
   private readonly saveCache: (snapshots: readonly ProviderLimitSnapshot[]) => void;
@@ -43,6 +43,8 @@ export class LimitStateManager extends EventEmitter {
   private claudeProvider: ProviderLimitSnapshot;
   private settingsGeneration = 0;
   private started = false;
+  private suspended = false;
+  private refreshAbort = new AbortController();
   private refreshing = false;
   private codexRefreshPromise: Promise<void> | null = null;
   private codexTimer: NodeJS.Timeout | null = null;
@@ -55,7 +57,7 @@ export class LimitStateManager extends EventEmitter {
     this.codexSortMode = settings.codexSortMode;
     this.claudeEnabled = dependencies.claudeEnabled ?? settings.claudeEnabled;
     this.settingsDiagnostic = dependencies.settingsDiagnostic;
-    this.collectCodexProfile = dependencies.collectCodexProfile ?? collectCodexProfileLimits;
+    this.collectCodexProfile = dependencies.collectCodexProfile ?? ((profile, signal) => collectCodexProfileLimits(profile, undefined, signal));
     this.collectClaude = dependencies.collectClaude ?? collectClaudeLimits;
     this.loadCache = dependencies.loadCache ?? loadCodexCache;
     this.saveCache = dependencies.saveCache ?? saveCodexCache;
@@ -84,6 +86,17 @@ export class LimitStateManager extends EventEmitter {
     this.claudeTimer = null;
   }
 
+  suspendLinux(): void {
+    this.suspended = true;
+    this.stop();
+    this.refreshAbort.abort();
+  }
+
+  resumeLinux(): void {
+    this.suspended = false;
+    this.start();
+  }
+
   getState(): CombinedLimitState {
     const providers = sortProviderSnapshots([
       ...this.profiles.map((profile) => withFreshness(
@@ -93,6 +106,7 @@ export class LimitStateManager extends EventEmitter {
       ...(this.claudeEnabled ? [withFreshness(this.claudeProvider)] : [])
     ], this.profiles.map((profile) => profile.id), this.codexSortMode);
     return {
+      ...(this.suspended ? { linuxPaused: true } : {}),
       updatedAt: Math.floor(Date.now() / 1000),
       refreshing: this.refreshing,
       providers,
@@ -107,7 +121,14 @@ export class LimitStateManager extends EventEmitter {
   }
 
   async refreshCodex(): Promise<void> {
-    if (this.codexRefreshPromise) return this.codexRefreshPromise;
+    if (this.suspended) return;
+    if (this.codexRefreshPromise) {
+      const pending = this.codexRefreshPromise;
+      await pending;
+      if (this.refreshAbort.signal.aborted && !this.suspended) return this.refreshCodex();
+      return;
+    }
+    this.refreshAbort = new AbortController();
     this.refreshing = true;
     this.emitChanged();
     this.codexRefreshPromise = this.performCodexRefresh();
@@ -139,16 +160,17 @@ export class LimitStateManager extends EventEmitter {
   }
 
   private async performCodexRefresh(): Promise<void> {
-    while (true) {
+    while (!this.suspended) {
       const generation = this.settingsGeneration;
       const profiles = this.profiles;
       const previousProviders = this.codexProviders;
       const nextProviders: Partial<Record<CodexProfileId, ProviderLimitSnapshot>> = {};
       const nextSnapshots: ProviderLimitSnapshot[] = [];
       for (const profile of profiles) {
+        if (this.suspended || this.refreshAbort.signal.aborted) return;
         let result: ProviderLimitSnapshot;
         try {
-          result = await this.collectCodexProfile(profile);
+          result = await this.collectCodexProfile(profile, this.refreshAbort.signal);
         } catch (error) {
           result = {
             id: profile.id,
@@ -161,6 +183,7 @@ export class LimitStateManager extends EventEmitter {
             windows: {}
           };
         }
+        if (this.suspended || this.refreshAbort.signal.aborted) return;
         if (generation !== this.settingsGeneration) break;
         const snapshot = mergeCodexResult(result, previousProviders[profile.id]);
         nextProviders[profile.id] = snapshot;

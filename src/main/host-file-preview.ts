@@ -18,6 +18,8 @@ import type { FleetDownloadJob } from '../shared/app';
 protocol.registerSchemesAsPrivileged([{ scheme: 'fleet-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
 interface PreviewOptions {
+  acquireLinux?: () => () => void;
+  readyLinux?: () => Promise<void>;
   cacheDirectory: string;
   downloadsDirectory: () => string;
   distro: () => string;
@@ -58,7 +60,7 @@ export class HostFilePreviewManager {
         preview.message = 'Transfer cancelled. Refresh to retry.'; this.update(preview); return this.state(preview);
       }
       if (preview.busy) return this.state(preview);
-      if (action === 'refresh') { void this.track(preview, this.refresh(preview)); return this.state(preview); }
+      if (action === 'refresh') { void this.trackLinux(preview, () => this.refresh(preview)); return this.state(preview); }
       preview.busy = true;
       try {
         const job = preview.job;
@@ -97,7 +99,7 @@ export class HostFilePreviewManager {
     const preview: Preview = { id, window, session: { ...session }, reference, directory,
       message: 'Inspecting current host file…', generation: 0, busy: false, closed: false, operations: new Set(),
       manager: new FleetDownloadManager({ distro: this.options.distro, downloadsDirectory: () => directory,
-        processOwnership: this.options.processOwnership, maxConcurrent: 1, maxQueued: 0,
+        processOwnership: this.options.processOwnership, acquireLinux: this.options.acquireLinux, maxConcurrent: 1, maxQueued: 0,
         onUpdate: (job) => { preview.job = job; preview.message = job.state === 'completed' ? 'Verified current host file' : job.message; this.update(preview); } }) };
     const senderId = window.webContents.id;
     this.previews.set(senderId, preview);
@@ -132,7 +134,7 @@ export class HostFilePreviewManager {
     window.on('closed', () => { preview.closed = true; this.previews.delete(senderId); preview.abort?.abort();
       void Promise.allSettled([preview.manager.stop(), ...preview.operations]).then(() => rm(directory, { recursive: true, force: true })); });
     await window.loadFile(join(import.meta.dirname, '../renderer/host-file-preview.html'));
-    void this.track(preview, this.refresh(preview));
+    void this.trackLinux(preview, () => this.refresh(preview));
   }
 
   async stop(): Promise<void> {
@@ -143,8 +145,16 @@ export class HostFilePreviewManager {
 
   private track<T>(preview: Preview, operation: Promise<T>): Promise<T> {
     preview.operations.add(operation);
-    void operation.finally(() => preview.operations.delete(operation)).catch(() => undefined);
+    void operation.finally(() => { preview.operations.delete(operation); }).catch(() => undefined);
     return operation;
+  }
+  private trackLinux<T>(preview: Preview, operation: () => Promise<T>): Promise<T> {
+    const release = this.options.acquireLinux?.();
+    const pending = (async () => {
+      try { await this.options.readyLinux?.(); return await operation(); }
+      finally { release?.(); }
+    })();
+    return this.track(preview, pending);
   }
   private owner(senderId: number, mainFrame: boolean): Preview {
     const preview = this.previews.get(senderId);

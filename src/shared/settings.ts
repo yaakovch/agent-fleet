@@ -36,7 +36,7 @@ export interface CodexProfileSettings {
 }
 
 export interface WidgetSettings {
-  version: 5;
+  version: 6;
   codexProfiles: CodexProfileSettings[];
   codexSortMode: CodexSortMode;
   claudeEnabled: boolean;
@@ -50,6 +50,7 @@ export interface WidgetSettings {
   fleetOpenTarget: FleetOpenTarget;
   terminalAppearance: TerminalAppearanceSettings;
   limitsOverlayEnabled: boolean;
+  keepLinuxConnectionsActive: boolean;
   fleetNotifications: FleetNotificationSettings;
   notificationPauseUntil: string | null;
 }
@@ -76,7 +77,7 @@ export interface SettingsImportPreview {
   warnings: string[];
 }
 
-export const SETTINGS_VERSION = 5;
+export const SETTINGS_VERSION = 6;
 export const SETTINGS_EXPORT_FORMAT = 'ai-limits-widget-settings';
 export const SETTINGS_EXPORT_VERSION = 1;
 export const MIN_OPACITY = 0;
@@ -119,6 +120,7 @@ export function createDefaultSettings(): WidgetSettings {
       scrollback: 10_000
     },
     limitsOverlayEnabled: true,
+    keepLinuxConnectionsActive: false,
     fleetNotifications: createDefaultFleetNotifications(),
     notificationPauseUntil: null
   };
@@ -131,7 +133,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
   }
 
   const raw = input as Record<string, unknown>;
-  if (![1, 2, 3, 4, SETTINGS_VERSION].includes(Number(raw.version))) {
+  if (![1, 2, 3, 4, 5, SETTINGS_VERSION].includes(Number(raw.version))) {
     return { settings: defaults, recovered: true, message: 'Settings version was unsupported; defaults loaded' };
   }
 
@@ -162,6 +164,7 @@ export function normalizeSettings(input: unknown): SettingsLoadResult {
       terminalAppearance: normalizeTerminalAppearance(raw.terminalAppearance, defaults.terminalAppearance),
       limitsOverlayEnabled:
         typeof raw.limitsOverlayEnabled === 'boolean' ? raw.limitsOverlayEnabled : defaults.limitsOverlayEnabled,
+      keepLinuxConnectionsActive: raw.keepLinuxConnectionsActive === true,
       fleetNotifications: normalizeFleetNotifications(raw.fleetNotifications, defaults.fleetNotifications),
       notificationPauseUntil: normalizeInstantOrNull(raw.notificationPauseUntil)
     },

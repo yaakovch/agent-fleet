@@ -72,6 +72,7 @@ export interface PtyProcess {
 }
 
 export interface TerminalManagerOptions {
+  deferUntilSized?: boolean;
   statePath: string;
   legacyStatePath?: string;
   logger: Pick<Logger, 'info' | 'warn'>;
@@ -88,6 +89,7 @@ export interface TerminalManagerOptions {
 }
 
 interface ManagedTab {
+  sized: boolean;
   descriptor: TerminalTabDescriptor;
   process: PtyProcess | null;
   reconnectIndex: number;
@@ -102,6 +104,7 @@ interface ManagedTab {
 }
 
 export class TerminalManager {
+  private suspended = false;
   private readonly tabs = new Map<string, ManagedTab>();
   private readonly ids: WorkspaceIds = {
     pane: () => `pane-${randomUUID()}`,
@@ -153,6 +156,7 @@ export class TerminalManager {
   }
 
   reconcileSessions(): number {
+    if (this.suspended) return 0;
     let reconnected = 0;
     for (const tab of this.tabs.values()) {
       if (tab.closed) continue;
@@ -306,6 +310,23 @@ export class TerminalManager {
     for (const tab of this.tabs.values()) tab.bound = false;
   }
 
+  resume(): void { this.suspended = false; this.reconcileSessions(); }
+
+  suspend(): void {
+    this.suspended = true;
+    this.persist();
+    for (const tab of this.tabs.values()) {
+      if (tab.reconnectTimer) clearTimeout(tab.reconnectTimer);
+      tab.reconnectTimer = null;
+      this.stopProcess(tab);
+      tab.pendingOutput = '';
+      tab.pendingOutputOverflowed = false;
+      tab.descriptor.status = 'offline';
+      tab.descriptor.statusMessage = 'Paused · reopen Fleet to reconnect';
+      this.emitStatus(tab);
+    }
+  }
+
   getHealth(): TerminalHealth {
     const tabs = [...this.tabs.values()].filter((tab) => !tab.closed);
     const failureCodes = [...new Set(tabs.map((tab) => tab.descriptor.failure?.code).filter((code): code is TerminalFailureCode => Boolean(code)))];
@@ -381,9 +402,13 @@ export class TerminalManager {
     const tab = this.tabs.get(tabId);
     if (!tab || !Number.isInteger(columns) || !Number.isInteger(rows)
       || columns < 2 || columns > 500 || rows < 2 || rows > 300) return false;
+    const firstSize = !tab.sized;
+    tab.sized = true;
+    if (!firstSize && tab.columns === columns && tab.rows === rows) return true;
     tab.columns = columns;
     tab.rows = rows;
     tab.process?.resize(columns, rows);
+    if (firstSize && !tab.process) this.start(tab);
     return true;
   }
 
@@ -433,6 +458,7 @@ export class TerminalManager {
 
   private createManagedTab(descriptor: TerminalTabDescriptor): ManagedTab {
     return {
+      sized: !this.options.deferUntilSized,
       descriptor: { ...descriptor }, process: null, reconnectIndex: 0, reconnectTimer: null,
       generation: 0, closed: false, columns: 120, rows: 36,
       bound: false, pendingOutput: '', pendingOutputOverflowed: false
@@ -440,7 +466,7 @@ export class TerminalManager {
   }
 
   private start(tab: ManagedTab): void {
-    if (this.quitting || tab.closed || tab.process) return;
+    if (this.suspended || this.quitting || tab.closed || tab.process || !tab.sized) return;
     const session = this.options.resolveSession(tab.descriptor.sessionId);
     if (!session?.internalName) {
       tab.descriptor.status = 'ended';

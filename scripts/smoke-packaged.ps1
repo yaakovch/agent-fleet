@@ -24,28 +24,23 @@ try {
   $env:AI_LIMITS_DATA_DIR = $root
   $process = Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru
   $logPath = Join-Path $root 'logs\main.log'
-  $fleetReady = $false
-  $startupAttempts = if ($requireFleet) { 40 } else { 5 }
-  for ($attempt = 0; $attempt -lt $startupAttempts; $attempt += 1) {
-    Start-Sleep -Seconds 1
-    if ($process.HasExited) { throw "Packaged app exited with code $($process.ExitCode)" }
-    if ((Test-Path -LiteralPath $logPath) -and
-      (Select-String -LiteralPath $logPath -Quiet -Pattern 'Embedded workspace restored')) {
-      $fleetReady = $true
-      break
-    }
-  }
+  # Tray-only startup must not acquire a Linux backend. Explicit terminal smoke below may do so.
+  Start-Sleep -Seconds 5
+  if ($process.HasExited) { throw "Packaged app exited with code $($process.ExitCode)" }
   if (-not (Test-Path -LiteralPath $logPath)) { throw 'Packaged app did not initialize its isolated data directory.' }
-  if ($requireFleet -and -not $fleetReady) {
-    throw 'Packaged app did not receive a real fleet snapshot from the embedded runtime.'
+  if (Select-String -LiteralPath $logPath -Quiet -Pattern 'Embedded workspace restored|Fleet bridge exited') {
+    throw 'Tray-only startup unexpectedly started the Linux bridge.'
   }
+  $linuxChildren = @(Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $process.Id -and $_.Name -eq 'wsl.exe' })
+  if ($linuxChildren.Count) { throw 'Tray-only startup retained a WSL child.' }
   $renderer = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $process.Id -and $_.CommandLine -match '--type=renderer' }
   if (-not $renderer -or $renderer.CommandLine -notmatch '--enable-sandbox') { throw 'Packaged renderer sandbox was not enabled.' }
   $terminalResult = Join-Path $root 'terminal-smoke.json'
   $env:AGENT_FLEET_ENABLE_TERMINAL_SMOKE = '1'
   $terminalProcess = Start-Process -FilePath $Executable -ArgumentList "--agent-fleet-terminal-smoke=$terminalResult" -WindowStyle Hidden -Wait -PassThru
   if ($terminalProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $terminalResult)) {
-    throw "Packaged terminal smoke failed with code $($terminalProcess.ExitCode)"
+    $detail = if (Test-Path -LiteralPath $terminalResult) { Get-Content -LiteralPath $terminalResult -Raw } else { 'no terminal receipt' }
+    throw "Packaged terminal smoke failed with code $($terminalProcess.ExitCode): $detail"
   }
   $terminalStatus = Get-Content -LiteralPath $terminalResult -Raw | ConvertFrom-Json
   if ($terminalStatus.status -ne 'ok' -or -not $terminalStatus.marker -or $terminalStatus.backend -notin @('wsl', 'conpty')) {
@@ -55,7 +50,7 @@ try {
     (Select-String -LiteralPath $logPath -Quiet -Pattern 'Verified WSL runtime provisioning failed|WSL runtime provisioning failed after distribution change')) {
     throw 'Packaged app failed to provision its verified WSL runtime.'
   }
-  $fleetStatus = if ($requireFleet) { 'fleet live' } else { 'fleet skipped (Ubuntu unavailable)' }
+  $fleetStatus = 'tray-only Linux paused'
   Write-Output "Packaged smoke test passed: PID $($process.Id), terminal $($terminalStatus.backend), $fleetStatus"
 } finally {
   Remove-Item Env:AGENT_FLEET_ENABLE_TERMINAL_SMOKE -ErrorAction SilentlyContinue

@@ -17,6 +17,19 @@ const READY_STATE: WslRuntimeState = {
 };
 
 describe('runtime lifecycle coordinator', () => {
+  it('does not restart the bridge when demand disappears during provisioning', async () => {
+    const bridge = createBridge(false);
+    const pending = deferred<WslRuntimeState>();
+    let demanded = true;
+    const coordinator = new RuntimeLifecycleCoordinator({
+      bridge: () => bridge, runtimeState: () => READY_STATE, shouldRun: () => demanded
+    });
+    const result = coordinator.maintain(() => pending.promise);
+    demanded = false;
+    pending.resolve(READY_STATE);
+    await result;
+    expect(bridge.start).not.toHaveBeenCalled();
+  });
   it('awaits shutdown work but releases the caller at a hard deadline', async () => {
     vi.useFakeTimers();
     await expect(awaitBoundedShutdown([Promise.resolve(), Promise.reject(new Error('ignored'))], 20))
