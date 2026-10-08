@@ -1012,3 +1012,5 @@ Execution authorized; active app restart/reload approval remains separate. This 
 3. Complete Android bounded parser batches, settled dimensions and presentation, viewport preservation, failure/Show live behavior. Retain before/after synthetic and actual Codex evidence, keyboard/rotation/zoom and 20 matched stability timings; investigate >10% regression.
 4. Run focused checks, required Windows source/package smoke gates and one complete protected Android API36 suite. No shared wire-format change is planned.
 5. Prepare rollback-safe keep-alive inspection/disable scripts and verified review packages. Obtain the required remote command decision before remote inspection. Report unavailable targets explicitly. Active app restart remains a final separate approval after concrete review; publish signed Android through app-release.sh only after all required gates pass.
+
+History remains open on both clients through settled resizing. Windows resizes its pinned xterm History reader and stages a fresh capture without replacing the reader snapshot.

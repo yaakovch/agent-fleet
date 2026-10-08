@@ -2710,16 +2710,17 @@ export class SessionWorkspace {
       const tabId = [...this.runtimes.entries()].find(([, value]) => value === runtime)?.[0];
       const previousColumns = runtime.terminal.cols;
       const previousRows = runtime.terminal.rows;
-      if (tabId && runtime.historyTerminal) this.closeTerminalHistory(tabId);
       runtime.fit.fit();
+      if (tabId && this.terminalHistories.get(tabId)?.active) runtime.historyFit?.fit();
       runtime.presentation.dimensions();
       if (tabId) {
         if (runtime.terminal.cols !== previousColumns || runtime.terminal.rows !== previousRows) {
           const state = this.terminalHistories.get(tabId);
           if (state) {
-            state.snapshot = null;
+            // A reader keeps its pinned snapshot; a fresh capture can wait as pending.
+            if (!state.active) state.snapshot = null;
             state.status = 'idle';
-            state.updated = false;
+            state.updated = state.active;
             state.generation += 1;
           }
           this.scheduleTerminalHistory(tabId);
