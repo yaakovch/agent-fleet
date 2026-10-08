@@ -184,7 +184,7 @@ export function cloneSettings(settings: WidgetSettings): WidgetSettings {
 }
 
 function normalizeFleetOpenTarget(value: unknown, version: unknown): FleetOpenTarget {
-  if (version !== SETTINGS_VERSION) return 'agentFleet';
+  if (Number(version) < 5) return 'agentFleet';
   return value === 'vscode' || value === 'windowsTerminal' ? value : 'agentFleet';
 }
 

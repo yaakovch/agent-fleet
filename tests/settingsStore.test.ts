@@ -22,12 +22,15 @@ afterEach(() => {
 });
 
 describe('settings store', () => {
-  it('migrates version 5 by adding background Linux demand off and preserving other settings', () => {
-    const current = { ...createDefaultSettings(), launchOnLogin: true, activeOpacity: 0.4 };
+  it.each(['agentFleet', 'vscode', 'windowsTerminal'] as const)('migrates version 5 without changing the %s session target or other settings', (fleetOpenTarget) => {
+    const current = { ...createDefaultSettings(), launchOnLogin: true, activeOpacity: 0.4, automaticUpdates: false, fleetOpenTarget };
     const { keepLinuxConnectionsActive: _, ...previous } = current;
-    const result = normalizeSettings({ ...previous, version: 5 });
+    const settingsPath = join(makeTempDir(), 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify({ ...previous, version: 5 }));
+    const result = loadSettings(settingsPath);
     expect(result.migrated).toBe(true);
     expect(result.settings).toEqual({ ...current, keepLinuxConnectionsActive: false });
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual(result.settings);
   });
   it('loads machine-neutral onboarding defaults when settings are missing', () => {
     const root = makeTempDir();

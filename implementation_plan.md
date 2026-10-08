@@ -1007,6 +1007,8 @@ Execution authorized; active app restart/reload approval remains separate. This 
 
 ## Stable terminal entry and on-demand WSL — approved execution 2026-10-08
 
+Rollout verification found that incrementing the schema from v5 to v6 could reset an explicit VS Code or Windows Terminal session target. Preserve all v5 session target choices and verify the persisted migration for all three targets before final activation. The existing host-state alert suppression remains the prior approved policy; its dormant raw preference is normalized off as in beta.33.
+
 1. Branch from delivered Windows a56d3fc and Android 7d8ebf0e; preserve unrelated work. Reproduce synthetic burst/viewport/size behavior through protected API36 before Android behavior changes and retain baseline evidence.
 2. Implement and validate Windows demand, setting migration, startup/retry guards, transfer leases, paused cache and terminal presentation. Add targeted race/fragmentation/quiet/Show live regressions.
 3. Complete Android bounded parser batches, settled dimensions and presentation, viewport preservation, failure/Show live behavior. Retain before/after synthetic and actual Codex evidence, keyboard/rotation/zoom and 20 matched stability timings; investigate >10% regression.
