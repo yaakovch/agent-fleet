@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-beta.35 - 2026-10-09
+
+- Render readable, scrollable Native tables and passive task-list states.
+- Preserve new-session selections and show persistent failure feedback. Retry a
+  definite stale revision once; require checking Sessions when the outcome is unknown.
+
 ## 0.11.0-beta.27 - 2026-08-09
 
 - Hardened runtime, updater, IPC, filesystem, pairing, external-link, and

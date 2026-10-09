@@ -3,9 +3,14 @@ import { classifyExternalLink } from '../../shared/external-link';
 import { hostFileTarget, hostFileReferences } from '../../shared/host-file';
 
 const SAFE_MARKDOWN_RENDERER = new marked.Renderer();
+const defaultTableRenderer = SAFE_MARKDOWN_RENDERER.table;
+SAFE_MARKDOWN_RENDERER.table = function (table) {
+  return `<div class="native-markdown-table" role="region" aria-label="Table" tabindex="0">${defaultTableRenderer.call(this, table)}</div>`;
+};
 let linkLabelDepth = 0;
 SAFE_MARKDOWN_RENDERER.html = ({ text }) => escapeHtml(text);
 SAFE_MARKDOWN_RENDERER.image = ({ text }) => `<span class="native-markdown-image-omitted">[Image omitted: ${escapeHtml(text || 'remote image')}]</span>`;
+SAFE_MARKDOWN_RENDERER.checkbox = ({ checked }) => `<span role="img" aria-label="${checked ? 'Completed' : 'Incomplete'}">${checked ? '☑' : '☐'}</span> `;
 SAFE_MARKDOWN_RENDERER.link = function ({ href, tokens }) {
   let label: string;
   ++linkLabelDepth;

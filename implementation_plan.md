@@ -1017,3 +1017,16 @@ Rollout verification found that incrementing the schema from v5 to v6 could rese
 
 History remains open on both clients through settled resizing. Windows resizes its pinned xterm History reader and stages a fresh capture without replacing the reader snapshot.
 Verify isolated packaged startup leaves the existing Windows login registration and shortcut unchanged; temporary profiles must not apply global launch-on-login settings.
+
+
+## Native Markdown and session creation compatibility — 2026-10-09
+
+- Reproduce Android formatting gaps with JVM regressions before applying pinned Markwon extensions and parser-based code/table rendering. Retain safe link handling and prevent HTML/image execution or loading.
+- Add Windows task-state rendering and parity regressions for the existing GFM renderer.
+- Retry session creation once only after a definite stale rejection, with a fresh snapshot and request key. Preserve the form on both platforms, retain offline selections, prevent duplicate submissions and show persistent uncertainty guidance. Record Android session.create diagnostic events without paths or transcript content.
+- Validate focused parsers/recovery, real Windows bridge retries and launcher state, Android emulator table/copy/scroll and form interactions, then repository gates. Retain source/APK identities and inspected artifacts.
+- Keep the actual phone failure separate from deterministic regressions; obtain More → Diagnostics → Run checks → Export → preview → Share ZIP. Publication, installation and host runtime changes require separate authorization.
+
+Publication approved by the owner on 2026-10-09: commit/push and publish Windows
+0.11.0-beta.35 and signed Android .107. Installation, active app restarts, host
+runtime changes and physical-phone automation remain outside this authorization.

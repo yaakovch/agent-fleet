@@ -183,6 +183,9 @@ export class DashboardPrototype {
   private launcherLabel = '';
   private launcherTool: FleetTool = 'codex';
   private launcherDrawer = false;
+  private launcherCreating = false;
+  private launcherCreationError = '';
+  private launcherCreationMayHaveCompleted = false;
   private settings: WidgetSettings = createDefaultSettings();
   private settingsDraft: WidgetSettings = createDefaultSettings();
   private readonly workspace = new SessionWorkspace(
@@ -204,8 +207,12 @@ export class DashboardPrototype {
         this.render();
       } else if (input.dataset.launcherLabel !== undefined) {
         this.launcherLabel = input.value;
-        const launch = this.root.querySelector<HTMLButtonElement>('[data-action="dashboard-launch"]');
-        if (launch) launch.disabled = !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(input.value.trim());
+        const canLaunch = this.scenario === 'live' && !this.launcherCreating && !this.launcherCreationMayHaveCompleted
+          && this.snapshot.physicalHosts.some((host) => host.id === this.launcherHostId && host.status === 'healthy')
+          && this.snapshot.executionTargets.some((target) => target.physicalHostId === this.launcherHostId
+            && target.id === this.launcherBackend && target.status !== 'unavailable')
+          && Boolean(this.launcherSelectedPath) && /^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(input.value.trim());
+        this.root.querySelectorAll<HTMLButtonElement>('[data-action="dashboard-launch"]').forEach((launch) => { launch.disabled = !canLaunch; });
       } else if (input.dataset.repositorySearch !== undefined) {
         this.repositoryQuery = input.value;
       }
@@ -355,11 +362,16 @@ export class DashboardPrototype {
     if (this.workspace.handleAction(action, target)) return true;
     const control = target.closest<HTMLElement>('[data-action]') ?? target;
     if (action === 'workspace-new-session') {
+      if (!this.launcherDrawer) {
+        this.launcherCreationError = '';
+        this.launcherCreationMayHaveCompleted = false;
+      }
       this.launcherDrawer = true;
       this.render();
       return true;
     }
     if (action === 'launcher-close') {
+      if (this.launcherCreating) return true;
       this.launcherDrawer = false;
       this.render();
       return true;
@@ -633,6 +645,7 @@ export class DashboardPrototype {
       return true;
     }
     if (action === 'dashboard-launch') {
+      if (this.launcherCreating || this.launcherCreationMayHaveCompleted) return true;
       const label = this.root.querySelector<HTMLInputElement>('[data-launcher-label]')?.value.trim() ?? this.launcherLabel;
       if (!this.launcherHostId || !this.launcherSelectedPath || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(label)) {
         return this.showToast('Use a folder and enter a valid session label');
@@ -644,14 +657,29 @@ export class DashboardPrototype {
       }
       const transportHost = transportHostId(this.snapshot, this.launcherHostId, this.launcherBackend);
       if (!transportHost) return this.showToast('The selected target is no longer available');
+      const selectedPath = this.launcherSelectedPath;
+      this.launcherCreating = true;
+      this.launcherCreationError = '';
+      this.render();
       void window.limitsWidget.createFleetSession(
         transportHost, label, this.launcherBackend, this.launcherTool,
         this.launcherSelectedPath, this.launcherLocation,
         { placement }
       ).then((result) => {
-        if (result.ok) this.rememberLauncherPath(this.launcherSelectedPath);
+        this.launcherCreating = false;
+        if (result.ok) this.rememberLauncherPath(selectedPath);
         if (result.ok) this.launcherDrawer = false;
+        else {
+          this.launcherCreationError = result.message;
+          this.launcherCreationMayHaveCompleted = result.creationMayHaveCompleted === true;
+        }
+        this.render();
         this.showToast(result.message);
+      }).catch(() => {
+        this.launcherCreating = false;
+        this.launcherCreationError = 'Creation may have completed. Check Sessions before starting another session.';
+        this.launcherCreationMayHaveCompleted = true;
+        this.render();
       });
       return true;
     }
@@ -1050,16 +1078,17 @@ export class DashboardPrototype {
   }
 
   private renderLauncher(): string {
-    const hosts = this.snapshot.physicalHosts.filter((host) => host.status === 'healthy');
-    const selectedHostId = hosts.some((host) => host.id === this.launcherHostId) ? this.launcherHostId : hosts[0]?.id ?? '';
+    const hosts = this.snapshot.physicalHosts;
+    const selectedHostId = hosts.some((host) => host.id === this.launcherHostId) ? this.launcherHostId
+      : this.launcherHostId || hosts.find((host) => host.status === 'healthy')?.id || hosts[0]?.id || '';
     if (selectedHostId !== this.launcherHostId) {
       this.launcherHostId = selectedHostId;
       this.resetLauncherDirectory();
     }
     const targets = this.snapshot.executionTargets.filter((target) =>
-      target.physicalHostId === selectedHostId && target.status !== 'unavailable'
+      target.physicalHostId === selectedHostId
     );
-    if (!targets.some((target) => target.id === this.launcherBackend)) {
+    if (!this.launcherSelectedPath && !targets.some((target) => target.id === this.launcherBackend)) {
       this.launcherBackend = targets[0]?.id ?? 'linux';
       this.resetLauncherDirectory();
     }
@@ -1068,7 +1097,10 @@ export class DashboardPrototype {
     }
     const directory = this.launcherDirectory;
     const recents = this.launcherLocation === 'custom' ? this.launcherRecents() : [];
-    const canLaunch = this.scenario === 'live' && Boolean(selectedHostId && this.launcherSelectedPath && this.launcherLabel.trim());
+    const canLaunch = this.scenario === 'live' && !this.launcherCreating && !this.launcherCreationMayHaveCompleted
+      && hosts.some((host) => host.id === selectedHostId && host.status === 'healthy')
+      && targets.some((target) => target.id === this.launcherBackend && target.status !== 'unavailable')
+      && Boolean(selectedHostId && this.launcherSelectedPath && /^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(this.launcherLabel.trim()));
     const browser = this.launcherDirectoryLoading
       ? `<div class="location-loading">${icon('refresh-cw')}Loading folders…</div>`
       : this.launcherDirectoryError
@@ -1086,6 +1118,9 @@ export class DashboardPrototype {
     return `<div class="launcher-layout">
       <section class="fleet-card launcher-form">
         <div class="card-heading"><div><h2>Start a session</h2><p>Choose the host and folder, then launch</p></div><span class="safe-badge">${icon('shield-check')}Safe argv</span></div>
+        ${this.launcherCreating ? '<p role="status">Creating session…</p>' : ''}
+        ${this.launcherCreationError ? `<div class="location-error" role="alert">${escapeHtml(this.launcherCreationError)}${this.launcherCreationMayHaveCompleted ? '<p>Check Sessions before starting another session.</p>' : ''}</div>` : ''}
+        <fieldset class="launcher-fields" ${this.launcherCreating ? 'disabled' : ''}>
         <div class="launcher-grid">
           <label>Host<select data-launcher-host>${hosts.map((host) => `<option value="${escapeAttr(host.id)}" ${host.id === selectedHostId ? 'selected' : ''}>${escapeHtml(host.name)}</option>`).join('')}</select></label>
           <label>Target<select data-launcher-backend>${targets.map((target) => `<option value="${target.id}" ${this.launcherBackend === target.id ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}</select></label>
@@ -1095,6 +1130,7 @@ export class DashboardPrototype {
         ${browser}
         <div class="launcher-final"><label>Session label<input data-launcher-label maxlength="64" value="${escapeAttr(this.launcherLabel)}" placeholder="Choose a folder first"></label><span>${this.launcherSelectedPath ? `${icon('check')}Folder selected` : 'Use a folder to continue'}</span></div>
         <div class="launcher-summary"><span class="tool-icon">${icon('terminal')}</span><div><strong>New managed tmux session</strong><p>The host validates the folder, label, and fixed tool before launch.</p></div><div class="launcher-placement-actions"><button class="primary-button" data-action="dashboard-launch" data-placement="replace" ${canLaunch ? '' : 'disabled'}>${icon('rocket')}Open here</button><button data-action="dashboard-launch" data-placement="split-right" ${canLaunch ? '' : 'disabled'}>Split right</button><button data-action="dashboard-launch" data-placement="split-down" ${canLaunch ? '' : 'disabled'}>Split down</button></div></div>
+        </fieldset>
       </section>
       <aside class="dashboard-stack">
         <section class="fleet-card"><div class="card-heading"><div><h2>Favorites</h2><p>Synced launcher presets</p></div>${icon('star')}</div><div class="favorite-list">${this.snapshot.favorites.map((favorite) => `<button data-action="dashboard-favorite" data-preset-id="${escapeAttr(favorite.id)}"><span class="tool-icon">${toolIcon(favorite.tool)}</span><span><strong>${escapeHtml(favorite.name)}</strong><small>${escapeHtml(favorite.hostId)} · ${escapeHtml(favorite.project)}</small></span>${icon('chevron-right')}</button>`).join('')}</div></section>

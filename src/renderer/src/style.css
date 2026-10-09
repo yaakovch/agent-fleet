@@ -1717,3 +1717,11 @@ button svg { width: 15px; height: 15px; stroke-width: 2; flex: 0 0 auto; }
 .terminal-loading .xterm-screen, .terminal-loading .xterm-scrollable-element { visibility: hidden; }
 .terminal-preparing { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 12px; background: var(--surface, #0b0f14); color: var(--text, #e5e7eb); }
 .terminal-preparing[hidden] { display: none; }
+.launcher-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+
+.native-markdown-table { max-width: 100%; overflow-x: auto; margin: 10px 0; }
+.native-markdown-table:focus-visible { outline: 2px solid #72c7e6; outline-offset: 2px; }
+.native-markdown table { border-collapse: collapse; min-width: 100%; }
+.native-markdown th, .native-markdown td { border: 1px solid #3a4a5d; padding: 8px 12px; min-width: 110px; vertical-align: top; }
+.native-markdown th { background: #1c2a3b; font-weight: 600; }
+.native-markdown tbody tr:nth-child(even) { background: #101821; }

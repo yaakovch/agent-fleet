@@ -173,7 +173,7 @@ const api = {
     path: string,
     locationKind: 'project' | 'custom',
     request?: WorkspaceOpenRequest
-  ): Promise<{ ok: boolean; message: string }> =>
+  ): Promise<{ ok: boolean; message: string; creationMayHaveCompleted?: boolean }> =>
     invoke(IPC_CHANNELS.createFleetSession, hostId, label, backend, tool, path, locationKind, request),
   listFleetDirectory: (hostId: string, backend: 'linux' | 'windows', path: string): Promise<FleetDirectoryResult> =>
     invoke(IPC_CHANNELS.listFleetDirectory, hostId, backend, path),

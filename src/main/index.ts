@@ -1585,11 +1585,15 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
     });
     if (result.sessionId) {
     const opened = await openFleetSessionById(result.sessionId, parseWorkspaceOpenRequest(request));
-      return { ok: opened.ok, message: opened.ok ? `Created and opened ${project}` : `Created ${project}; ${opened.message}` };
+      return { ok: opened.ok, message: opened.ok ? `Created and opened ${project}` : `Created ${project}; ${opened.message}`, creationMayHaveCompleted: !opened.ok };
     }
     return { ok: true, message: `Created ${project}` };
   } catch (error) {
-    return fleetMutationFailure(error);
+    return {
+      ...fleetMutationFailure(error),
+      creationMayHaveCompleted: !(error instanceof FleetMutationError)
+        || !['stale_revision', 'host_offline', 'invalid_request', 'backpressure'].includes(error.code)
+    };
   }
 });
 

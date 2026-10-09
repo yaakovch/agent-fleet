@@ -22,6 +22,64 @@ afterEach(() => {
 });
 
 describe('fleet bridge supervisor', () => {
+  it('accepts a completed refresh even when the fleet revision stays the same', async () => {
+    const transport = createRespondingChild(fixture);
+    const supervisor = new FleetBridgeSupervisor({
+      cachePath: join(temporaryDirectory(), 'refresh-cache.json'),
+      launch: { command: 'fixture', args: [], distro: 'Test Linux' },
+      spawnProcess: (() => transport.child) as never, logger
+    });
+    try {
+      supervisor.start();
+      const refreshed = await supervisor.refreshAndWait(500);
+      expect(refreshed.status).toBe('live');
+      expect(transport.writes).toHaveBeenCalledTimes(2);
+    } finally { supervisor.stop(); }
+  });
+
+  it('retries a stale create through the real supervisor with fresh revision and key', async () => {
+    const stdout = new PassThrough();
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let snapshots = 0;
+    let creations = 0;
+    const child = Object.assign(new EventEmitter(), {
+      stdout, stderr: new PassThrough(), killed: false, kill: vi.fn(() => true),
+      stdin: new Writable({ write(chunk, _encoding, callback) {
+        const request = JSON.parse(chunk.toString());
+        requests.push(request);
+        const base = { protocolVersion: 1, type: 'response', requestId: request.requestId,
+          timestamp: new Date().toISOString() };
+        if (request.method === 'fleet.snapshot') {
+          snapshots++;
+          stdout.write(`${JSON.stringify({ ...base, ok: true, result: { ...fixture,
+            revision: snapshots === 1 ? 'revision-old' : 'revision-fresh' } })}\n`);
+        } else if (++creations === 1) {
+          stdout.write(`${JSON.stringify({ ...base, ok: false, error: { code: 'stale_revision', message: 'Fleet changed' } })}\n`);
+        } else {
+          stdout.write(`${JSON.stringify({ ...base, ok: true, result: { operationId: 'created-operation',
+            status: 'completed', sessionId: 'created-session', snapshot: { ...fixture, revision: 'revision-fresh' } } })}\n`);
+        }
+        callback();
+      } })
+    });
+    const supervisor = new FleetBridgeSupervisor({ cachePath: join(temporaryDirectory(), 'create-cache.json'),
+      launch: { command: 'fixture', args: [], distro: 'Test Linux' },
+      spawnProcess: (() => child) as never, logger });
+    try {
+      supervisor.start();
+      const result = await supervisor.mutate('session.create', { hostId: fixture.hosts[0].id,
+        project: 'Example', backend: 'windows', tool: 'codex', idempotencyKey: 'original-key',
+        path: 'C:\\projects\\Example', locationKind: 'project' });
+      expect(result.sessionId).toBe('created-session');
+      const creates = requests.filter((request) => request.method === 'session.create');
+      expect(creates).toHaveLength(2);
+      expect(creates[0].params.expectedRevision).toBe('revision-old');
+      expect(creates[1].params.expectedRevision).toBe('revision-fresh');
+      expect(creates[0].params.idempotencyKey).toBe('original-key');
+      expect(creates[1].params.idempotencyKey).not.toBe('original-key');
+    } finally { supervisor.stop(); }
+  });
+
   it('reconciles a quiet five-minute host with at least 80% fewer snapshots and reacts immediately to changed status', () => {
     vi.useFakeTimers();
     const reply = { ...fixture, presentationRevision: 'presentation-1' };

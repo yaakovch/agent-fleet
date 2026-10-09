@@ -599,3 +599,16 @@ Export and retain standalone keep-alive tasks/configurations, locate recreators,
 
 History remains open on both clients through settled resizing. Windows resizes its pinned xterm History reader and stages a fresh capture without replacing the reader snapshot.
 Isolated verification profiles must preserve the installed application's Windows startup registration and shortcut. Packaged smoke compares both before and after its temporary-data run.
+
+
+## Native Markdown and session creation compatibility — 2026-10-09
+
+Both clients display GFM tables, task checkbox states, strikethrough, explicit and bare safe links, line breaks, headings, lists, quotes and code fences. Raw HTML stays literal and remote images remain explicit placeholders. Android tables expose a horizontally scrollable grid and a Copy table action (tab-separated plain text); Windows uses its existing selectable HTML table. These platform controls differ to retain Android text selection and fit narrow screens.
+
+New-session creation keeps the selected physical host, execution target, folder, label and tool across snapshot refreshes and failures. The form stays open until confirmed success, disables editing/submission while pending, and displays persistent failure details. A definite pre-execution stale-revision rejection permits one fresh-snapshot retry with a new idempotency key. Unknown outcomes never retry automatically and require checking Sessions before another manual attempt. Only successful creation records a recent folder.
+
+This work changes client behavior without changing the shared wire contract. The original phone's two failed Windows Git Bash attempts remain unclassified until its metadata-only diagnostics archive is received. No release rollout is authorized by this implementation task.
+
+Publication approved by the owner on 2026-10-09: commit/push and publish Windows
+0.11.0-beta.35 and signed Android .107. Installation, active app restarts, host
+runtime changes and physical-phone automation remain outside this authorization.

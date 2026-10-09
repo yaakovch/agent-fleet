@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { retryStaleSessionCreation } from './session-create-recovery';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -195,8 +197,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
   }
 
   refreshAndWait(timeoutMs = 5_000): Promise<FleetBridgeView> {
-    const revision = this.snapshot?.revision ?? '';
-    const presentationRevision = this.snapshot?.presentationRevision ?? '';
+    const snapshotBeforeRefresh = this.snapshot;
     return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (error?: FleetMutationError) => {
@@ -208,8 +209,7 @@ export class FleetBridgeSupervisor extends EventEmitter {
       };
       const changed = () => {
         const view = this.getView();
-        if (view.status === 'live' && (view.snapshot.revision !== revision
-          || (view.snapshot.presentationRevision ?? '') !== presentationRevision)) finish();
+        if (view.status === 'live' && this.snapshot !== snapshotBeforeRefresh) finish();
         else if (view.status === 'error' || this.stopped) finish(new FleetMutationError('host_offline', 'Fleet controller is not live'));
       };
       const timeout = setTimeout(() => finish(new FleetMutationError('timeout', 'Fleet refresh timed out')), timeoutMs);
@@ -242,6 +242,14 @@ export class FleetBridgeSupervisor extends EventEmitter {
   mutate(method: 'session.model.set' | 'session.model.cancel', params: Record<string, unknown>): Promise<FleetModelControlMutationResult>;
   mutate(method: Exclude<FleetMutationMethod, 'directory.list' | 'repository.list' | 'repository.search' | 'session.model.get' | 'session.model.set' | 'session.model.cancel'>, params: Record<string, unknown>): Promise<FleetMutationResult>;
   mutate(method: FleetMutationMethod, params: Record<string, unknown>): Promise<FleetMutationResult | FleetDirectoryListing | FleetRepositoryPage | FleetModelControlState | FleetModelControlMutationResult> {
+    if (method === 'session.create') {
+      return retryStaleSessionCreation(
+        (key) => this.sendMutation(method, { ...params, idempotencyKey: key }),
+        () => this.refreshAndWait(),
+        String(params.idempotencyKey),
+        randomUUID
+      );
+    }
     const transientRead = method === 'directory.list' || method === 'repository.list' || method === 'repository.search'
       || method === 'session.model.get';
     if (transientRead && this.status !== 'live' && !this.stopped && this.child && !this.child.killed) {
