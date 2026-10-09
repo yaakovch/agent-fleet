@@ -34,19 +34,19 @@
     "@electron/fuses": "^2.1.3",
     "@types/archiver": "^8.0.0",
     "@types/node": "^26.1.1",
-    "electron": "^43.1.0",
-    "electron-builder": "^26.15.3",
+    "electron": "^43.7.9",
+    "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "electron@43.1.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.1": true,
     "@esbuild/win32-x64@0.25.12": true,
-    "@esbuild/win32-x64@0.28.1": true
+    "@esbuild/win32-x64@0.28.1": true,
+    "electron@43.7.9": true
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

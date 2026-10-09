@@ -2,6 +2,8 @@
 
 ## 0.11.0-beta.35 - 2026-10-09
 
+- Refresh release dependencies within their existing major versions, including
+  Electron 43.7.9, so the complete high-severity release audit passes.
 - Render readable, scrollable Native tables and passive task-list states.
 - Preserve new-session selections and show persistent failure feedback. Retry a
   definite stale revision once; require checking Sessions when the outcome is unknown.

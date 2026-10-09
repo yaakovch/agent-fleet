@@ -612,3 +612,8 @@ This work changes client behavior without changing the shared wire contract. The
 Publication approved by the owner on 2026-10-09: commit/push and publish Windows
 0.11.0-beta.35 and signed Android .107. Installation, active app restarts, host
 runtime changes and physical-phone automation remain outside this authorization.
+
+Release preflight found existing high-severity advisories, including the packaged
+Electron runtime. Refresh compatible locked dependencies within existing major
+version ranges, retain the complete high-severity release audit, and rerun source
+quality plus Windows packaging/smoke before publication. No forced major upgrades.
