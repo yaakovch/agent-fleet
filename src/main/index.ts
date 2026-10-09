@@ -1,5 +1,5 @@
 import { LinuxDemand } from './linux-demand';
-import { DiagnosticOperationJournal } from './diagnostic-operations';
+import { DiagnosticOperationJournal, connectionDiagnosticStatus } from './diagnostic-operations';
 const diagnosticOperations = new DiagnosticOperationJournal();
 import { SessionStateStore } from './session-state-store';
 import { validSessionContent, type SessionIdentity } from '../shared/session-state';
@@ -275,13 +275,12 @@ function createFleetBridge(): FleetBridgeSupervisor {
   if (!appSettings.automaticSessionTitles) bridge.purgeSessionTitles();
   bridge.on('changed', () => {
     const view = getFleetView();
-    if (!view.paused && ['live', 'offline', 'error'].includes(view.status)) {
-      const unavailable = view.snapshot.physicalHosts.find((host) => host.status !== 'healthy');
-      const code = view.errorCode || unavailable?.errorCode || (view.status === 'live' ? '' : 'host_offline');
-      const signature = `${view.status}:${code}`;
+    const diagnostic = connectionDiagnosticStatus(view.status, view.errorCode, view.snapshot.physicalHosts, view.paused);
+    if (diagnostic) {
+      const signature = `${diagnostic.status}:${diagnostic.code}`;
       if (signature !== lastDiagnosticState) {
         lastDiagnosticState = signature;
-        diagnosticOperations.record('fleet.refresh', code ? 'failure' : 'healthy', code);
+        diagnosticOperations.record('fleet.refresh', diagnostic.status, diagnostic.code);
       }
     }
     if (linuxDemand.active && !terminalRestored && view.status === 'live') {
@@ -1571,23 +1570,27 @@ handle(IPC_CHANNELS.openFleetDownloadFolder, (_event, jobId) => {
   return { ok: true, message: 'Opened Downloads', job };
 });
 handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend, tool, path, locationKind, request) => {
+  const operation = backend === 'windows' ? 'session.create.windows' : backend === 'linux' ? 'session.create.linux' : 'session.create';
+  const started = Date.now();
+  diagnosticOperations.record(operation, 'pending');
+  const rejectCreation = (message: string, code = 'invalid_request') => {
+    diagnosticOperations.record(operation, 'failure', code, Date.now() - started);
+    return { ok: false, message };
+  };
   if (![hostId, project, backend, tool, path, locationKind].every((value) => typeof value === 'string')) {
-    return { ok: false, message: 'Launcher selection is invalid' };
+    return rejectCreation('Launcher selection is invalid');
   }
   const fleet = getFleetView().snapshot;
   const host = fleet.hosts.find((item) => item.id === hostId && item.status === 'healthy');
   if (!host || !/^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(project)) {
-    return { ok: false, message: 'Host or session label is invalid' };
+    return rejectCreation('Host or session label is invalid', !host ? 'host_offline' : 'invalid_request');
   }
-  if (backend !== 'linux' && backend !== 'windows') return { ok: false, message: 'Backend is invalid' };
-  if (!['shell', 'codex', 'claude', 'copilot'].includes(tool)) return { ok: false, message: 'Tool is invalid' };
+  if (backend !== 'linux' && backend !== 'windows') return rejectCreation('Backend is invalid');
+  if (!['shell', 'codex', 'claude', 'copilot'].includes(tool)) return rejectCreation('Tool is invalid');
   if ((locationKind !== 'project' && locationKind !== 'custom') || !validFleetPath(path, backend, false)) {
-    return { ok: false, message: 'Selected folder is invalid' };
+    return rejectCreation('Selected folder is invalid');
   }
-  if (backend === 'windows' && host.platform !== 'wsl') return { ok: false, message: 'Windows backend requires a WSL host' };
-  const operation = backend === 'windows' ? 'session.create.windows' : 'session.create.linux';
-  const started = Date.now();
-  diagnosticOperations.record(operation, 'pending');
+  if (backend === 'windows' && host.platform !== 'wsl') return rejectCreation('Windows backend requires a WSL host');
   let creationCompleted = false;
   try {
     const result = await fleetBridge.mutate('session.create', {

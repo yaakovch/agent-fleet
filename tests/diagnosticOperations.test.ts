@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { DiagnosticOperationJournal, diagnosticOperationsNdjson } from '../src/main/diagnostic-operations';
+import { DiagnosticOperationJournal, diagnosticOperationsNdjson, connectionDiagnosticStatus } from '../src/main/diagnostic-operations';
 
 describe('metadata-only creation diagnostics', () => {
+  it('records a live snapshot with an unavailable host as failure even without an error code', () => {
+    expect(connectionDiagnosticStatus('live', '', [{ status: 'offline', errorCode: '' }]))
+      .toEqual({ status: 'failure', code: 'host_offline' });
+    expect(connectionDiagnosticStatus('live', '', [{ status: 'healthy', errorCode: '' }]))
+      .toEqual({ status: 'healthy', code: '' });
+  });
+  it('ignores intentional paused connections and startup while retaining transport failures', () => {
+    expect(connectionDiagnosticStatus('offline', '', [], true)).toBeNull();
+    expect(connectionDiagnosticStatus('starting', '', [])).toBeNull();
+    expect(connectionDiagnosticStatus('error', 'SNAPSHOT_TIMEOUT', []))
+      .toEqual({ status: 'failure', code: 'SNAPSHOT_TIMEOUT' });
+  });
   it('retains creation time and failure code while dropping private content and unknown tokens', () => {
     const now = Date.parse('2026-10-09T12:11:00Z');
     const body = diagnosticOperationsNdjson([

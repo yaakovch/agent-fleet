@@ -23,6 +23,14 @@ export interface DiagnosticOperation {
   durationMs: number;
 }
 
+export function connectionDiagnosticStatus(status: string, errorCode: string,
+  hosts: readonly { status: string; errorCode: string }[], paused = false): { status: string; code: string } | null {
+  if (paused || !['live', 'offline', 'error'].includes(status)) return null;
+  const unavailable = hosts.find((host) => host.status !== 'healthy');
+  const code = errorCode || unavailable?.errorCode || (unavailable || status !== 'live' ? 'host_offline' : '');
+  return { status: code ? 'failure' : 'healthy', code };
+}
+
 /** Export fixed metadata fields only; never serialize exception or journal content. */
 export function diagnosticOperationsNdjson(input: readonly unknown[], now = Date.now()): string {
   const records: DiagnosticOperation[] = [];
