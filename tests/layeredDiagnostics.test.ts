@@ -95,7 +95,7 @@ describe('layered diagnostics v2', () => {
     expect(() => assertLayeredDiagnosticReport(JSON.parse(fixture('diagnostics-private-path-v2.json')))).toThrow();
   });
 
-  it('exports exactly one redacted report even when inputs contain canaries', () => {
+  it('exports layered report and metadata-only operations even with canary inputs', () => {
     const value = input();
     value.wslRuntime.detail = 'token=secret-canary at C:\\Users\\person\\private';
     const entries = createDiagnosticsEntries({
@@ -110,7 +110,7 @@ describe('layered diagnostics v2', () => {
       updateConfigured: value.updateConfigured,
       processOwnership: value.processOwnership
     });
-    expect(Object.keys(entries)).toEqual(['diagnostics-v2.json']);
+    expect(Object.keys(entries)).toEqual(['diagnostics-v2.json', 'operations-v1.ndjson']);
     expect(JSON.stringify(entries)).not.toContain('secret-canary');
     expect(JSON.stringify(entries)).not.toContain('C:\\Users');
   });

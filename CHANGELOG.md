@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-beta.36 - 2026-10-09
+
+- Export bounded creation and connection operation codes alongside the health
+  report. Omit messages, paths and identifiers; retain the strict report schema.
+- Distinguish confirmed creation from a subsequent open failure in diagnostics.
+
 ## 0.11.0-beta.35 - 2026-10-09
 
 - Refresh release dependencies within their existing major versions, including

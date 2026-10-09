@@ -1,4 +1,6 @@
 import { LinuxDemand } from './linux-demand';
+import { DiagnosticOperationJournal } from './diagnostic-operations';
+const diagnosticOperations = new DiagnosticOperationJournal();
 import { SessionStateStore } from './session-state-store';
 import { validSessionContent, type SessionIdentity } from '../shared/session-state';
 import {
@@ -263,6 +265,7 @@ const fleetNotificationTracker = new FleetNotificationTracker();
 const lastDoctorResults = new Map<string, FleetDoctorResult>();
 
 function createFleetBridge(): FleetBridgeSupervisor {
+  let lastDiagnosticState = '';
   const bridge = new FleetBridgeSupervisor({
     cachePath: join(dataDirectory, 'fleet-cache-v1.json'),
     launch: fleetBridgeLaunchFromSettings(appSettings),
@@ -272,6 +275,15 @@ function createFleetBridge(): FleetBridgeSupervisor {
   if (!appSettings.automaticSessionTitles) bridge.purgeSessionTitles();
   bridge.on('changed', () => {
     const view = getFleetView();
+    if (!view.paused && ['live', 'offline', 'error'].includes(view.status)) {
+      const unavailable = view.snapshot.physicalHosts.find((host) => host.status !== 'healthy');
+      const code = view.errorCode || unavailable?.errorCode || (view.status === 'live' ? '' : 'host_offline');
+      const signature = `${view.status}:${code}`;
+      if (signature !== lastDiagnosticState) {
+        lastDiagnosticState = signature;
+        diagnosticOperations.record('fleet.refresh', code ? 'failure' : 'healthy', code);
+      }
+    }
     if (linuxDemand.active && !terminalRestored && view.status === 'live') {
       terminalRestored = true;
       try {
@@ -1573,6 +1585,10 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
     return { ok: false, message: 'Selected folder is invalid' };
   }
   if (backend === 'windows' && host.platform !== 'wsl') return { ok: false, message: 'Windows backend requires a WSL host' };
+  const operation = backend === 'windows' ? 'session.create.windows' : 'session.create.linux';
+  const started = Date.now();
+  diagnosticOperations.record(operation, 'pending');
+  let creationCompleted = false;
   try {
     const result = await fleetBridge.mutate('session.create', {
       hostId,
@@ -1583,12 +1599,17 @@ handle(IPC_CHANNELS.createFleetSession, async (_event, hostId, project, backend,
       locationKind,
       idempotencyKey: randomUUID()
     });
+    creationCompleted = true;
+    diagnosticOperations.record(operation, 'healthy', '', Date.now() - started);
     if (result.sessionId) {
     const opened = await openFleetSessionById(result.sessionId, parseWorkspaceOpenRequest(request));
+      if (!opened.ok) diagnosticOperations.record(operation, 'failure', 'created_open_failed', Date.now() - started);
       return { ok: opened.ok, message: opened.ok ? `Created and opened ${project}` : `Created ${project}; ${opened.message}`, creationMayHaveCompleted: !opened.ok };
     }
     return { ok: true, message: `Created ${project}` };
   } catch (error) {
+    diagnosticOperations.record(operation, 'failure',
+      creationCompleted ? 'created_open_failed' : error instanceof FleetMutationError ? error.code : 'operation_failed', Date.now() - started);
     return {
       ...fleetMutationFailure(error),
       creationMayHaveCompleted: !(error instanceof FleetMutationError)
@@ -1844,6 +1865,7 @@ handle(IPC_CHANNELS.exportDiagnostics, async () => {
   });
   if (result.canceled || !result.filePath) return { canceled: true, message: 'Diagnostics export canceled' };
   await writeDiagnosticsArchive(result.filePath, {
+    operations: diagnosticOperations.entries(),
     app: getAppInfo(),
     fleet: getFleetView(),
     doctors: [...lastDoctorResults.values()],

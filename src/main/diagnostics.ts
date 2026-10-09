@@ -2,6 +2,7 @@ import { createWriteStream } from 'node:fs';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { diagnosticOperationsNdjson } from './diagnostic-operations';
 import type { AppInfo } from '../shared/app';
 import type { FleetBridgeView, FleetDoctorResult } from '../shared/fleet-protocol';
 import type { TerminalHealth } from '../shared/terminal';
@@ -13,6 +14,7 @@ import {
 } from '../shared/layered-diagnostics';
 
 interface DiagnosticsInput {
+  operations?: readonly unknown[];
   app: AppInfo;
   fleet: FleetBridgeView;
   doctors: FleetDoctorResult[];
@@ -51,7 +53,10 @@ export async function writeDiagnosticsArchive(destination: string, input: Diagno
 
 export function createDiagnosticsEntries(input: DiagnosticsInput): Record<string, string> {
   const report = createDiagnosticsReport(input);
-  return { 'diagnostics-v2.json': `${JSON.stringify(report, null, 2)}\n` };
+  return {
+    'diagnostics-v2.json': `${JSON.stringify(report, null, 2)}\n`,
+    'operations-v1.ndjson': diagnosticOperationsNdjson(input.operations ?? [])
+  };
 }
 
 export function createDiagnosticsReport(input: DiagnosticsInput): LayeredDiagnosticReport {
