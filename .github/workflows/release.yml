@@ -105,7 +105,7 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/win-unpacked -DestinationPath dist/unsigned-app.zip -CompressionLevel Optimal
       - id: upload-app
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-app
           path: dist/unsigned-app.zip
@@ -137,7 +137,7 @@ jobs:
         run: |
           Compress-Archive -Path dist/Agent-Fleet-*-Setup-x64.exe,dist/Agent-Fleet-*-Portable-x64.exe -DestinationPath dist/unsigned-release.zip -CompressionLevel Optimal
       - id: upload-release
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-release
           path: dist/unsigned-release.zip
@@ -175,7 +175,7 @@ jobs:
             dist/bom.json
       - name: Upload signed release bundle
         id: upload-signed-release
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ steps.release-mode.outputs.artifact_name }}
           path: |
